@@ -1,0 +1,10 @@
+$transitions: (
+  fast: 120ms,
+  regular: 220ms,
+  slow: 380ms,
+);
+
+@mixin transition($speed: regular, $properties: all) {
+  $duration: map-get($transitions, $speed);
+  transition: $properties $duration ease;
+}

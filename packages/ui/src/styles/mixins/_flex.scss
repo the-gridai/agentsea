@@ -1,0 +1,38 @@
+@mixin flex($align: false, $justify: false, $direction: false, $wrap: false, $inline: false) {
+  display: flex;
+  @if ($direction) {
+    flex-direction: $direction;
+  }
+  @if ($justify) {
+    justify-content: $justify;
+  }
+  @if ($align) {
+    align-items: $align;
+  }
+  @if ($wrap) {
+    flex-wrap: $wrap;
+  }
+  @if ($inline) {
+    display: inline-flex;
+  }
+}
+
+@mixin flex-col {
+  @include flex(flex-start, $direction: column);
+}
+
+@mixin flex-center {
+  @include flex(center, center);
+}
+
+@mixin flex-center-col {
+  @include flex(center, center, column);
+}
+
+@mixin flex-sides {
+  @include flex(center, space-between);
+}
+
+@mixin gap($n: 1) {
+  gap: pad($n);
+}

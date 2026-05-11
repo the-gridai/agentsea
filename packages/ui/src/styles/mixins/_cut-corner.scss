@@ -1,0 +1,12 @@
+// Match grid-ui's "cut-corner" decorative chamfer using clip-path.
+@mixin cut-corner($corner: bottom-left, $size: 6px) {
+  @if $corner == bottom-left {
+    clip-path: polygon(0 0, 100% 0, 100% 100%, $size 100%, 0 calc(100% - #{$size}));
+  } @else if $corner == bottom-right {
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - #{$size}), calc(100% - #{$size}) 100%, 0 100%);
+  } @else if $corner == top-left {
+    clip-path: polygon($size 0, 100% 0, 100% 100%, 0 100%, 0 $size);
+  } @else if $corner == top-right {
+    clip-path: polygon(0 0, calc(100% - #{$size}) 0, 100% $size, 100% 100%, 0 100%);
+  }
+}

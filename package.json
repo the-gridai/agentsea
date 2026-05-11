@@ -1,0 +1,34 @@
+{
+  "name": "grid-spawn",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Grid Spawn — a multi-tenant control plane for AI agent VMs that wires The Grid (Cortex) into one-command spawns on cloud providers.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "overrides": {
+    "next": {
+      "postcss": "8.5.10"
+    }
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace=@grid-spawn/ui",
+    "dev:clean": "npm run dev:clean --workspace=@grid-spawn/ui",
+    "build": "npm run build --workspaces --if-present",
+    "build:cli": "npm run build --workspace=@grid-spawn/cli",
+    "dev:cli": "npm run build:cli && npm run start --workspace=@grid-spawn/cli",
+    "grid-spawn": "npm exec --workspace=@grid-spawn/cli -- grid-spawn",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "format": "prettier --check \"packages/*/src/**/*.{ts,tsx,scss,json,md}\" \"packages/*/README.md\" \"README.md\" \"manifest.json\"",
+    "format:fix": "prettier --write \"packages/*/src/**/*.{ts,tsx,scss,json,md}\" \"packages/*/README.md\" \"README.md\" \"manifest.json\""
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20.10",
+    "npm": ">=10"
+  }
+}

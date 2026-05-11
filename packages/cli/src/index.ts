@@ -1,0 +1,1205 @@
+#!/usr/bin/env bun
+
+import type { Manifest } from "./manifest.js";
+
+import { readFileSync } from "node:fs";
+import { getErrorMessage, isString, toRecord } from "@grid-spawn/sdk";
+import pc from "picocolors";
+import pkg from "../package.json" with { type: "json" };
+import {
+  cmdAgentInfo,
+  cmdAgentInteractive,
+  cmdAgents,
+  cmdCloudInfo,
+  cmdClouds,
+  cmdDelete,
+  cmdExport,
+  cmdFeedback,
+  cmdFix,
+  cmdHelp,
+  cmdHistoryExport,
+  cmdInteractive,
+  cmdLast,
+  cmdLink,
+  cmdList,
+  cmdListClear,
+  cmdMatrix,
+  cmdPick,
+  cmdPullHistory,
+  cmdRun,
+  cmdRunHeadless,
+  cmdStatus,
+  cmdTree,
+  cmdUninstall,
+  cmdUpdate,
+  findClosestKeyByNameOrKey,
+  isInteractiveTTY,
+  loadManifestWithSpinner,
+  resolveAgentKey,
+  resolveCloudKey,
+} from "./commands/index.js";
+import { expandEqualsFlags, findUnknownFlag } from "./flags.js";
+import { agentKeys, cloudKeys, getCacheAge, loadManifest } from "./manifest.js";
+import { expandFastProvisionVariant, getFeatureFlag, initFeatureFlags } from "./shared/feature-flags.js";
+import { getInstallRefPath } from "./shared/paths.js";
+import { asyncTryCatch, asyncTryCatchIf, isFileError, isNetworkError, tryCatch, tryCatchIf } from "./shared/result.js";
+import { captureError, initTelemetry, setTelemetryContext } from "./shared/telemetry.js";
+import { checkForUpdates } from "./update-check.js";
+
+const VERSION = pkg.version;
+
+// Initialize telemetry early — captures uncaught errors and exit flush.
+// Disabled with SPAWN_TELEMETRY=0.
+initTelemetry(VERSION);
+
+// Attribution: if the user installed via a tagged URL (SPAWN_REF=reddit|x|...),
+// the install script persisted the ref to ~/.config/spawn/.ref. Read it once
+// and attach to every telemetry event so PostHog can segment by acquisition channel.
+tryCatchIf(isFileError, () => {
+  const ref = readFileSync(getInstallRefPath(), "utf8").trim();
+  if (ref && /^[a-zA-Z0-9_-]+$/.test(ref)) {
+    setTelemetryContext("ref", ref);
+  }
+});
+
+function handleError(err: unknown): never {
+  captureError("cli_error", err);
+  const msg = getErrorMessage(err);
+  console.error(pc.red(`Error: ${msg}`));
+  console.error(`\nRun ${pc.cyan("grid-spawn help")} for usage information.`);
+  process.exit(1);
+}
+
+/** Extract a flag and its value from args, returning [value, remainingArgs] */
+function extractFlagValue(
+  args: string[],
+  flags: string[],
+  usageHint: string,
+): [
+  string | undefined,
+  string[],
+] {
+  const idx = args.findIndex((arg) => flags.includes(arg));
+  if (idx === -1) {
+    return [
+      undefined,
+      args,
+    ];
+  }
+
+  if (args[idx + 1] === undefined || args[idx + 1].startsWith("-")) {
+    console.error(pc.red(`Error: ${pc.bold(args[idx])} requires a value`));
+console.error(`\nUsage: ${pc.cyan(usageHint)}`);
+    process.exit(1);
+  }
+
+  const value = args[idx + 1];
+  const remaining = [
+    ...args,
+  ];
+  remaining.splice(idx, 2);
+  return [
+    value,
+    remaining,
+  ];
+}
+
+/** Extract all occurrences of a repeatable flag, mutating args in place. */
+function extractAllFlagValues(args: string[], flag: string, usageHint: string): string[] {
+  const values: string[] = [];
+  let idx = args.indexOf(flag);
+  while (idx !== -1) {
+    if (args[idx + 1] === undefined || args[idx + 1].startsWith("-")) {
+      console.error(pc.red(`Error: ${pc.bold(flag)} requires a value`));
+console.error(`\nUsage: ${pc.cyan(usageHint)}`);
+      process.exit(1);
+    }
+    values.push(args[idx + 1]);
+    args.splice(idx, 2);
+    idx = args.indexOf(flag);
+  }
+  return values;
+}
+
+const HELP_FLAGS = [
+  "--help",
+  "-h",
+  "help",
+];
+
+/** Check for unknown flags and show an actionable error */
+function checkUnknownFlags(args: string[]): void {
+  const unknown = findUnknownFlag(args);
+  if (unknown) {
+    console.error(pc.red(`Unknown flag: ${pc.bold(unknown)}`));
+    console.error();
+    console.error("  Supported flags:");
+    console.error(`    ${pc.cyan("--prompt, -p")}        Provide a prompt for non-interactive execution`);
+    console.error(`    ${pc.cyan("--prompt-file, -f")}   Read prompt from a file`);
+    console.error(`    ${pc.cyan("--dry-run, -n")}       Preview what would be provisioned`);
+    console.error(`    ${pc.cyan("--debug")}             Show all commands being executed`);
+    console.error(`    ${pc.cyan("--headless")}          Non-interactive mode (no prompts, no SSH session)`);
+    console.error(`    ${pc.cyan("--output json")}       Output structured JSON to stdout`);
+    console.error(`    ${pc.cyan("--custom")}            Show interactive size/region pickers`);
+    console.error(`    ${pc.cyan("--zone, --region")}    Set zone/region (e.g. us-east1-b, nyc3)`);
+    console.error(`    ${pc.cyan("--size, --machine-type")}  Set instance size (e.g. e2-standard-4, s-2vcpu-2gb)`);
+    console.error(`    ${pc.cyan("--model, -m <id>")}    Set the LLM model (e.g. openai/gpt-5.3-codex)`);
+    console.error(`    ${pc.cyan("--name")}              Set the spawn/resource name`);
+    console.error(`    ${pc.cyan("--reauth")}            Force re-prompting for cloud credentials`);
+    console.error(`    ${pc.cyan("--config <path>")}     Load config from JSON file`);
+    console.error(`    ${pc.cyan("--steps <list>")}      Comma-separated setup steps to enable`);
+    console.error(`    ${pc.cyan("--repo <slug|url>")}  Clone a template repo and apply spawn.md`);
+    console.error(`    ${pc.cyan("--beta tarball")}      Use pre-built tarball for agent install (repeatable)`);
+    console.error(`    ${pc.cyan("--beta images")}       Use pre-built DO marketplace images (faster boot)`);
+    console.error(`    ${pc.cyan("--beta parallel")}     Parallelize server boot with setup prompts`);
+    console.error(`    ${pc.cyan("--beta docker")}       Use Docker CE app image on Hetzner/GCP (faster boot)`);
+    console.error(`    ${pc.cyan("--beta sandbox")}      Run local agents in a Docker container (sandboxed)`);
+    console.error(`    ${pc.cyan("--beta recursive")}    Install spawn CLI on VM for recursive spawning`);
+    console.error(`    ${pc.cyan("--help, -h")}          Show help information`);
+    console.error(`    ${pc.cyan("--version, -v")}       Show version`);
+    console.error();
+    console.error(`  For ${pc.cyan("grid-spawn pick")}:`);
+    console.error(`    ${pc.cyan("--default")}           Pre-selected value in the picker`);
+    console.error();
+    console.error(`  For ${pc.cyan("grid-spawn link")}:`);
+    console.error(`    ${pc.cyan("-a, --agent")}         Agent running on the server`);
+    console.error(`    ${pc.cyan("-c, --cloud")}         Cloud provider the server is on`);
+    console.error(`    ${pc.cyan("-u, --user")}          SSH user (default: root)`);
+    console.error(`    ${pc.cyan("--name")}              Custom name for this linked spawn`);
+    console.error();
+    console.error(`  For ${pc.cyan("grid-spawn list")}:`);
+    console.error(`    ${pc.cyan("-a, --agent")}         Filter history by agent`);
+    console.error(`    ${pc.cyan("-c, --cloud")}         Filter history by cloud`);
+    console.error(`    ${pc.cyan("--clear")}             Clear all spawn history`);
+    console.error();
+    console.error(`  For ${pc.cyan("grid-spawn delete")}:`);
+    console.error(`    ${pc.cyan("--name <name>")}       Filter by server name or ID`);
+    console.error(`    ${pc.cyan("--yes, -y")}           Skip confirmation (required for non-interactive)`);
+    console.error();
+    console.error(`  Run ${pc.cyan("grid-spawn help")} for full usage information.`);
+    process.exit(1);
+  }
+}
+
+/** Show info for a name that could be an agent or cloud, or show an error with suggestions */
+function showUnknownCommandError(name: string, manifest: Manifest): never {
+  const agentMatch = findClosestKeyByNameOrKey(name, agentKeys(manifest), (k) => manifest.agents[k].name);
+  const cloudMatch = findClosestKeyByNameOrKey(name, cloudKeys(manifest), (k) => manifest.clouds[k].name);
+
+  console.error(pc.red(`Unknown agent or cloud: ${pc.bold(name)}`));
+  console.error();
+  if (agentMatch || cloudMatch) {
+    const suggestions: string[] = [];
+    if (agentMatch) {
+      suggestions.push(`${pc.cyan(agentMatch)} (agent: ${manifest.agents[agentMatch].name})`);
+    }
+    if (cloudMatch) {
+      suggestions.push(`${pc.cyan(cloudMatch)} (cloud: ${manifest.clouds[cloudMatch].name})`);
+    }
+    console.error(`  Did you mean ${suggestions.join(" or ")}?`);
+  }
+  console.error();
+  console.error(`  Run ${pc.cyan("grid-spawn agents")} to see available agents.`);
+  console.error(`  Run ${pc.cyan("grid-spawn clouds")} to see available clouds.`);
+  console.error(`  Run ${pc.cyan("grid-spawn help")} for usage information.`);
+  process.exit(1);
+}
+
+async function showInfoOrError(name: string): Promise<void> {
+  const manifest = await loadManifestWithSpinner();
+
+  // Direct key match — pass pre-loaded manifest to avoid a redundant spinner
+  if (manifest.agents[name]) {
+    await cmdAgentInfo(name, manifest);
+    return;
+  }
+  if (manifest.clouds[name]) {
+    await cmdCloudInfo(name, manifest);
+    return;
+  }
+
+  // Try resolving display names and case-insensitive matches
+  const resolvedAgent = resolveAgentKey(manifest, name);
+  if (resolvedAgent) {
+    await cmdAgentInfo(resolvedAgent, manifest);
+    return;
+  }
+  const resolvedCloud = resolveCloudKey(manifest, name);
+  if (resolvedCloud) {
+    await cmdCloudInfo(resolvedCloud, manifest);
+    return;
+  }
+
+  showUnknownCommandError(name, manifest);
+}
+
+async function handleDefaultCommand(
+  agent: string,
+  cloud: string | undefined,
+  prompt?: string,
+  dryRun?: boolean,
+  debug?: boolean,
+  headless?: boolean,
+  outputFormat?: string,
+): Promise<void> {
+  setTelemetryContext("agent", agent);
+  if (cloud) {
+    setTelemetryContext("cloud", cloud);
+  }
+  if (cloud && HELP_FLAGS.includes(cloud)) {
+    await showInfoOrError(agent);
+    return;
+  }
+  if (headless) {
+    if (!cloud) {
+      if (outputFormat === "json") {
+        console.log(
+          JSON.stringify({
+            status: "error",
+            error_code: "VALIDATION_ERROR",
+            error_message: "--headless requires both <agent> and <cloud>",
+          }),
+        );
+      } else {
+        console.error(pc.red("Error: --headless requires both <agent> and <cloud>"));
+console.error(`\nUsage: ${pc.cyan("grid-spawn <agent> <cloud> --headless --output json")}`);
+      }
+      process.exit(3);
+    }
+    await cmdRunHeadless(agent, cloud, {
+      prompt,
+      debug,
+      outputFormat,
+      spawnName: process.env.SPAWN_NAME,
+    });
+    return;
+  }
+  if (cloud) {
+    await cmdRun(agent, cloud, prompt, dryRun, debug);
+    return;
+  }
+  if (dryRun) {
+    console.error(pc.red("Error: --dry-run requires both <agent> and <cloud>"));
+console.error(`\nUsage: ${pc.cyan("grid-spawn <agent> <cloud> --dry-run")}`);
+    process.exit(1);
+  }
+  if (prompt) {
+    await suggestCloudsForPrompt(agent);
+    process.exit(1);
+  }
+
+  // Check if the single argument is a cloud name before routing to agent-interactive.
+  // This fixes: `spawn digitalocean` telling users to run `spawn digitalocean` for
+  // setup instructions, but `spawn digitalocean` routing to "Unknown agent: digitalocean".
+  const cloudCheckResult = await asyncTryCatchIf(isNetworkError, () => loadManifest());
+  if (cloudCheckResult.ok) {
+    const resolvedCloud = resolveCloudKey(cloudCheckResult.data, agent);
+    if (resolvedCloud) {
+      await cmdCloudInfo(resolvedCloud, cloudCheckResult.data);
+      return;
+    }
+  }
+
+  // Interactive cloud selection when agent is provided without cloud
+  if (isInteractiveTTY()) {
+    await cmdAgentInteractive(agent, prompt, dryRun);
+    return;
+  }
+
+  await showInfoOrError(agent);
+}
+
+/** Show "prompt requires cloud" error and suggest available clouds for the agent */
+async function suggestCloudsForPrompt(agent: string): Promise<void> {
+  console.error(pc.red("Error: --prompt requires both <agent> and <cloud>"));
+  console.error(`\nUsage: ${pc.cyan(`grid-spawn ${agent} <cloud> --prompt "your prompt here"`)}`);
+
+  const manifestResult = await asyncTryCatchIf(isNetworkError, () => loadManifest());
+  if (manifestResult.ok) {
+    const manifest = manifestResult.data;
+    const resolvedAgent = resolveAgentKey(manifest, agent);
+    if (!resolvedAgent) {
+      return;
+    }
+
+    const clouds = cloudKeys(manifest).filter(
+      (c: string) => manifest.matrix[`${c}/${resolvedAgent}`] === "implemented",
+    );
+    if (clouds.length === 0) {
+      return;
+    }
+
+    const agentName = manifest.agents[resolvedAgent].name;
+console.error(`\nAvailable clouds for ${pc.bold(agentName)}:`);
+    for (const c of clouds.slice(0, 5)) {
+      console.error(`  ${pc.cyan(`grid-spawn ${resolvedAgent} ${c} --prompt "..."`)}`);
+    }
+    if (clouds.length > 5) {
+      console.error(`  Run ${pc.cyan(`grid-spawn ${resolvedAgent}`)} to see all ${clouds.length} clouds.`);
+    }
+  }
+}
+
+/** Print a descriptive error for a failed prompt file read and exit */
+function handlePromptFileError(promptFile: string, err: unknown): never {
+  // SECURITY: Strip control characters to prevent terminal injection via crafted paths.
+  // validatePromptFilePath() rejects these early, but this is defense-in-depth for
+  // error paths that run before validation (e.g., stat failures).
+  // Inline the same regex from security.ts to avoid async import in a sync function.
+  const safePath = promptFile.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "");
+  const errObj = toRecord(err);
+  const code = isString(errObj?.code) ? errObj.code : "";
+  if (code === "ENOENT") {
+    console.error(pc.red(`Prompt file not found: ${pc.bold(safePath)}`));
+    console.error("\nCheck the path and try again.");
+  } else if (code === "EACCES") {
+    console.error(pc.red(`Permission denied reading prompt file: ${pc.bold(safePath)}`));
+console.error(`\nCheck file permissions: ${pc.cyan(`ls -la ${safePath}`)}`);
+  } else if (code === "EISDIR") {
+    console.error(pc.red(`'${safePath}' is a directory, not a file.`));
+    console.error("\nProvide a path to a text file containing your prompt.");
+  } else {
+    console.error(pc.red(`Error reading prompt file '${safePath}': ${getErrorMessage(err)}`));
+  }
+  process.exit(1);
+}
+
+/** Read and validate a prompt file, exiting on any error */
+async function readPromptFile(promptFile: string): Promise<string> {
+  const { validatePromptFilePath, validatePromptFileStats } = await import("./security.js");
+  const { readFileSync, statSync } = await import("node:fs");
+
+  const validateResult = tryCatch(() => validatePromptFilePath(promptFile));
+  if (!validateResult.ok) {
+    console.error(pc.red(getErrorMessage(validateResult.error)));
+    process.exit(1);
+  }
+
+  const statsResult = tryCatch(() => {
+    const stats = statSync(promptFile);
+    validatePromptFileStats(promptFile, stats);
+  });
+  if (!statsResult.ok) {
+    const err = statsResult.error;
+    const errRec = toRecord(err);
+    const code = isString(errRec?.code) ? errRec.code : "";
+    if (code === "ENOENT" || code === "EACCES" || code === "EISDIR") {
+      handlePromptFileError(promptFile, err);
+    }
+    console.error(pc.red(getErrorMessage(err)));
+    process.exit(1);
+  }
+
+  const readResult = tryCatchIf(isFileError, () => readFileSync(promptFile, "utf-8"));
+  if (readResult.ok) {
+    return readResult.data;
+  }
+  handlePromptFileError(promptFile, readResult.error);
+}
+
+/** Parse --prompt / -p and --prompt-file flags, returning the resolved prompt text and remaining args */
+async function resolvePrompt(args: string[]): Promise<
+  [
+    string | undefined,
+    string[],
+  ]
+> {
+  let [prompt, filteredArgs] = extractFlagValue(
+    args,
+    [
+      "--prompt",
+      "-p",
+    ],
+    'grid-spawn <agent> <cloud> --prompt "your prompt here"',
+  );
+
+  const [promptFile, finalArgs] = extractFlagValue(
+    filteredArgs,
+    [
+      "--prompt-file",
+      "-f",
+    ],
+    "grid-spawn <agent> <cloud> --prompt-file instructions.txt",
+  );
+  filteredArgs = finalArgs;
+
+  if (prompt && promptFile) {
+    console.error(pc.red("Error: --prompt and --prompt-file cannot be used together"));
+    console.error("\nUse one or the other:");
+    console.error(`  ${pc.cyan('grid-spawn <agent> <cloud> --prompt "your prompt here"')}`);
+    console.error(`  ${pc.cyan("grid-spawn <agent> <cloud> --prompt-file instructions.txt")}`);
+    process.exit(1);
+  }
+
+  if (promptFile) {
+    prompt = await readPromptFile(promptFile);
+  }
+
+  return [
+    prompt,
+    filteredArgs,
+  ];
+}
+
+/** Handle the case when no command is given (interactive mode or help) */
+async function handleNoCommand(prompt: string | undefined, dryRun?: boolean): Promise<void> {
+  if (dryRun) {
+    console.error(pc.red("Error: --dry-run requires both <agent> and <cloud>"));
+console.error(`\nUsage: ${pc.cyan("grid-spawn <agent> <cloud> --dry-run")}`);
+    process.exit(1);
+  }
+  if (prompt) {
+    console.error(pc.red("Error: --prompt requires both <agent> and <cloud>"));
+console.error(`\nUsage: ${pc.cyan('grid-spawn <agent> <cloud> --prompt "your prompt here"')}`);
+    process.exit(1);
+  }
+  if (isInteractiveTTY()) {
+    await cmdInteractive();
+  } else {
+    console.error(pc.yellow("Cannot run interactive picker: not a terminal"));
+    console.error(pc.dim("  (stdin/stdout is piped or redirected)"));
+    console.error();
+    console.error(`  Launch directly:  ${pc.cyan("grid-spawn <agent> <cloud>")}`);
+    console.error(`  Rerun previous:   ${pc.cyan("grid-spawn list")}`);
+    console.error(`  Browse agents:    ${pc.cyan("grid-spawn agents")}`);
+    console.error(`  Browse clouds:    ${pc.cyan("grid-spawn clouds")}`);
+    console.error(`  Full help:        ${pc.cyan("grid-spawn help")}`);
+    console.error();
+    process.exit(1);
+  }
+}
+
+function formatCacheAge(seconds: number): string {
+  if (!Number.isFinite(seconds)) {
+    return "no cache";
+  }
+  if (seconds < 60) {
+    return "just now";
+  }
+  if (seconds < 3600) {
+    return `${Math.floor(seconds / 60)}m ago`;
+  }
+  if (seconds < 86400) {
+    return `${Math.floor(seconds / 3600)}h ago`;
+  }
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+function showVersion(): void {
+  console.log(`grid-spawn v${VERSION}`);
+  const binPath = process.argv[1];
+  if (binPath) {
+    console.log(pc.dim(`  ${binPath}`));
+  }
+  console.log(
+    pc.dim(
+      `  ${process.versions.bun ? "bun" : "node"} ${process.versions.bun ?? process.versions.node}  ${process.platform} ${process.arch}`,
+    ),
+  );
+  const age = getCacheAge();
+  console.log(pc.dim(`  manifest cache: ${formatCacheAge(age)}`));
+  console.log(pc.dim("  https://github.com/Spectral-Finance/grid-spawn"));
+  console.log(pc.dim(`  Run ${pc.cyan("grid-spawn feedback")} to tell us what to improve.`));
+}
+
+const IMMEDIATE_COMMANDS: Record<string, () => void> = {
+  help: cmdHelp,
+  "--help": cmdHelp,
+  "-h": cmdHelp,
+  version: showVersion,
+  "--version": showVersion,
+  "-v": showVersion,
+  "-V": showVersion,
+};
+
+const SUBCOMMANDS: Record<string, () => Promise<void>> = {
+  matrix: cmdMatrix,
+  m: cmdMatrix,
+  agents: cmdAgents,
+  clouds: cmdClouds,
+  uninstall: cmdUninstall,
+  update: cmdUpdate,
+  last: cmdLast,
+  rerun: cmdLast,
+};
+
+// list/ls/history handled separately for -a/-c flag parsing
+const LIST_COMMANDS = new Set([
+  "list",
+  "ls",
+  "history",
+]);
+
+// delete/rm/destroy handled separately for -a/-c flag parsing
+const DELETE_COMMANDS = new Set([
+  "delete",
+  "rm",
+  "destroy",
+  "kill",
+]);
+
+// fix handled separately for optional positional spawn-id argument
+const FIX_COMMANDS = new Set([
+  "fix",
+  "repair",
+  "refresh",
+]);
+
+// status handled separately for --prune/--json flag parsing
+const STATUS_COMMANDS = new Set([
+  "status",
+  "ps",
+]);
+
+// Common verb prefixes that users naturally try (e.g. "spawn run claude sprite")
+// These are not real subcommands -- we strip them and forward to the default handler
+const VERB_ALIASES = new Set([
+  "run",
+  "launch",
+  "start",
+  "deploy",
+  "exec",
+]);
+
+/** Warn when extra positional arguments are silently ignored */
+function warnExtraArgs(filteredArgs: string[], maxExpected: number): void {
+  const extra = filteredArgs.slice(maxExpected);
+  if (extra.length > 0) {
+    console.error(pc.yellow(`Extra argument${extra.length > 1 ? "s" : ""} ignored: ${extra.join(", ")}`));
+    console.error(pc.dim(`  Usage: grid-spawn <agent> <cloud> [--prompt "..."]`));
+    console.error();
+  }
+}
+
+/** Parse -a/--agent <agent> and -c/--cloud <cloud> filter flags from args.
+ *  Also accepts a bare positional arg as a filter (e.g. "spawn list claude"). */
+function parseListFilters(args: string[]): {
+  agentFilter?: string;
+  cloudFilter?: string;
+} {
+  let agentFilter: string | undefined;
+  let cloudFilter: string | undefined;
+  const positional: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "-a" || args[i] === "--agent") {
+      if (!args[i + 1] || args[i + 1].startsWith("-")) {
+        console.error(pc.red(`Error: ${pc.bold(args[i])} requires an agent name`));
+console.error(`\nUsage: ${pc.cyan("grid-spawn list -a <agent>")}`);
+        process.exit(1);
+      }
+      agentFilter = args[i + 1];
+      i++;
+    } else if (args[i] === "-c" || args[i] === "--cloud") {
+      if (!args[i + 1] || args[i + 1].startsWith("-")) {
+        console.error(pc.red(`Error: ${pc.bold(args[i])} requires a cloud name`));
+console.error(`\nUsage: ${pc.cyan("grid-spawn list -c <cloud>")}`);
+        process.exit(1);
+      }
+      cloudFilter = args[i + 1];
+      i++;
+    } else if (!args[i].startsWith("-")) {
+      positional.push(args[i]);
+    }
+  }
+
+  // Support bare positional filter: "spawn list claude" or "spawn list hetzner"
+  if (!agentFilter && !cloudFilter && positional.length > 0) {
+    agentFilter = positional[0];
+  }
+
+  return {
+    agentFilter,
+    cloudFilter,
+  };
+}
+
+/** Check if trailing args contain a help flag */
+function hasTrailingHelpFlag(args: string[]): boolean {
+  return args.slice(1).some((a) => HELP_FLAGS.includes(a));
+}
+
+const VERSION_FLAGS = [
+  "--version",
+  "-v",
+  "-V",
+];
+
+/** Check if trailing args contain a version flag */
+function hasTrailingVersionFlag(args: string[]): boolean {
+  return args.slice(1).some((a) => VERSION_FLAGS.includes(a));
+}
+
+/** Handle list/ls/history commands with filters and --clear */
+async function dispatchListCommand(filteredArgs: string[]): Promise<void> {
+  if (hasTrailingHelpFlag(filteredArgs)) {
+    cmdHelp();
+    return;
+  }
+  if (filteredArgs.slice(1).includes("--clear")) {
+    const forceYes = filteredArgs.slice(1).includes("--yes") || filteredArgs.slice(1).includes("-y");
+    await cmdListClear(forceYes);
+    return;
+  }
+  const { agentFilter, cloudFilter } = parseListFilters(filteredArgs.slice(1));
+  await cmdList(agentFilter, cloudFilter);
+}
+
+/** Handle delete/rm/destroy commands with filters */
+async function dispatchDeleteCommand(filteredArgs: string[]): Promise<void> {
+  if (hasTrailingHelpFlag(filteredArgs)) {
+    cmdHelp();
+    return;
+  }
+  const args = filteredArgs.slice(1);
+  const forceYes = args.includes("--yes") || args.includes("-y");
+  let nameFilter: string | undefined;
+  const nameIdx = args.indexOf("--name");
+  if (nameIdx !== -1 && args[nameIdx + 1]) {
+    nameFilter = args[nameIdx + 1];
+  }
+  const cleanArgs = args.filter((a) => a !== "--yes" && a !== "-y" && a !== "--name" && a !== nameFilter);
+  const { agentFilter, cloudFilter } = parseListFilters(cleanArgs);
+  await cmdDelete(agentFilter, cloudFilter, nameFilter, forceYes);
+}
+
+/** Handle status/ps commands with --prune and --json flags */
+async function dispatchStatusCommand(filteredArgs: string[]): Promise<void> {
+  if (hasTrailingHelpFlag(filteredArgs)) {
+    cmdHelp();
+    return;
+  }
+  const args = filteredArgs.slice(1);
+  const prune = args.includes("--prune");
+  const json = args.includes("--json");
+  const { agentFilter, cloudFilter } = parseListFilters(args);
+  await cmdStatus({
+    prune,
+    json,
+    agentFilter,
+    cloudFilter,
+  });
+}
+
+/** Handle named subcommands (agents, clouds, matrix, etc.) */
+async function dispatchSubcommand(cmd: string, filteredArgs: string[]): Promise<void> {
+  if (hasTrailingHelpFlag(filteredArgs)) {
+    cmdHelp();
+    return;
+  }
+
+  // "spawn agents <name>" or "spawn clouds <name>" -> show info for that name
+  if ((cmd === "agents" || cmd === "clouds") && filteredArgs.length > 1 && !filteredArgs[1].startsWith("-")) {
+    const name = filteredArgs[1];
+    warnExtraArgs(filteredArgs, 2);
+    console.error(pc.dim(`Tip: next time you can just run ${pc.cyan(`grid-spawn ${name}`)}`));
+    console.error();
+    await showInfoOrError(name);
+    return;
+  }
+
+  warnExtraArgs(filteredArgs, 1);
+  await SUBCOMMANDS[cmd]();
+}
+
+/** Handle verb aliases like "spawn run claude sprite" -> "spawn claude sprite" */
+async function dispatchVerbAlias(
+  cmd: string,
+  filteredArgs: string[],
+  prompt: string | undefined,
+  dryRun: boolean,
+  debug: boolean,
+  headless: boolean,
+  outputFormat?: string,
+): Promise<void> {
+  if (hasTrailingHelpFlag(filteredArgs)) {
+    cmdHelp();
+    return;
+  }
+  if (hasTrailingVersionFlag(filteredArgs)) {
+    showVersion();
+    return;
+  }
+  if (filteredArgs.length > 1) {
+    const remaining = filteredArgs.slice(1);
+    warnExtraArgs(remaining, 2);
+    await handleDefaultCommand(remaining[0], remaining[1], prompt, dryRun, debug, headless, outputFormat);
+    return;
+  }
+  console.error(pc.red(`Error: ${pc.bold(cmd)} requires an agent and cloud`));
+console.error(`\nUsage: ${pc.cyan("grid-spawn <agent> <cloud>")}`);
+  console.error(pc.dim(`  The "${cmd}" keyword is optional -- just use ${pc.cyan("grid-spawn <agent> <cloud>")} directly.`));
+  process.exit(1);
+}
+
+/** Handle slash notation: "spawn claude/hetzner" -> "spawn claude hetzner" */
+async function dispatchSlashNotation(
+  cmd: string,
+  prompt: string | undefined,
+  dryRun: boolean,
+  debug: boolean,
+  headless: boolean,
+  outputFormat?: string,
+): Promise<boolean> {
+  const parts = cmd.split("/");
+  if (parts.length === 2 && parts[0] && parts[1]) {
+    if (!headless) {
+      console.error(pc.dim(`Tip: use a space instead of slash: ${pc.cyan(`grid-spawn ${parts[0]} ${parts[1]}`)}`));
+      console.error();
+    }
+    await handleDefaultCommand(parts[0], parts[1], prompt, dryRun, debug, headless, outputFormat);
+    return true;
+  }
+  return false;
+}
+
+/** Dispatch a named command or fall through to agent/cloud handling */
+async function dispatchCommand(
+  cmd: string,
+  filteredArgs: string[],
+  prompt: string | undefined,
+  dryRun: boolean,
+  debug: boolean,
+  headless: boolean,
+  outputFormat?: string,
+): Promise<void> {
+  if (IMMEDIATE_COMMANDS[cmd]) {
+    warnExtraArgs(filteredArgs, 1);
+    IMMEDIATE_COMMANDS[cmd]();
+    return;
+  }
+
+  if (cmd === "tree") {
+    if (hasTrailingHelpFlag(filteredArgs)) {
+      cmdHelp();
+      return;
+    }
+    const jsonFlag = filteredArgs.slice(1).includes("--json");
+    await cmdTree(jsonFlag);
+    return;
+  }
+  if (cmd === "pull-history") {
+    await cmdPullHistory();
+    return;
+  }
+  if (LIST_COMMANDS.has(cmd)) {
+    // Handle "history export" subcommand
+    if (cmd === "history" && filteredArgs[1] === "export") {
+      cmdHistoryExport();
+      return;
+    }
+    await dispatchListCommand(filteredArgs);
+    return;
+  }
+  if (DELETE_COMMANDS.has(cmd)) {
+    await dispatchDeleteCommand(filteredArgs);
+    return;
+  }
+  if (FIX_COMMANDS.has(cmd)) {
+    if (hasTrailingHelpFlag(filteredArgs)) {
+      cmdHelp();
+      return;
+    }
+    // Optional positional argument: spawn fix [spawn-id]
+    const spawnId = filteredArgs[1] && !filteredArgs[1].startsWith("-") ? filteredArgs[1] : undefined;
+    await cmdFix(spawnId);
+    return;
+  }
+  if (STATUS_COMMANDS.has(cmd)) {
+    await dispatchStatusCommand(filteredArgs);
+    return;
+  }
+  if (SUBCOMMANDS[cmd]) {
+    await dispatchSubcommand(cmd, filteredArgs);
+    return;
+  }
+  if (cmd === "link" || cmd === "reconnect") {
+    if (hasTrailingHelpFlag(filteredArgs)) {
+      cmdHelp();
+      return;
+    }
+    await cmdLink(filteredArgs);
+    return;
+  }
+  if (cmd === "export") {
+    if (hasTrailingHelpFlag(filteredArgs)) {
+      cmdHelp();
+      return;
+    }
+    const targetArg = filteredArgs[1] && !filteredArgs[1].startsWith("-") ? filteredArgs[1] : undefined;
+    await cmdExport(targetArg);
+    return;
+  }
+  if (VERB_ALIASES.has(cmd)) {
+    await dispatchVerbAlias(cmd, filteredArgs, prompt, dryRun, debug, headless, outputFormat);
+    return;
+  }
+
+  if (filteredArgs.length === 1 && cmd.includes("/")) {
+    if (await dispatchSlashNotation(cmd, prompt, dryRun, debug, headless, outputFormat)) {
+      return;
+    }
+  }
+
+  if (hasTrailingHelpFlag(filteredArgs)) {
+    cmdHelp();
+    return;
+  }
+  if (hasTrailingVersionFlag(filteredArgs)) {
+    showVersion();
+    return;
+  }
+
+  warnExtraArgs(filteredArgs, 2);
+  await handleDefaultCommand(filteredArgs[0], filteredArgs[1], prompt, dryRun, debug, headless, outputFormat);
+}
+
+async function main(): Promise<void> {
+  const rawArgs = process.argv.slice(2);
+
+  // ── `spawn pick` — bypass all flag parsing; used by bash scripts ──────────
+  // Must be handled before expandEqualsFlags / resolvePrompt so that pick's
+  // own --prompt flag is not mistakenly consumed by the top-level prompt logic.
+  // Runs before initFeatureFlags() — this is a hot path called by shell
+  // scripts and must stay fast; it has no code paths that gate on a flag.
+  if (rawArgs[0] === "pick") {
+    const pickResult = await asyncTryCatch(() => cmdPick(expandEqualsFlags(rawArgs.slice(1))));
+    if (!pickResult.ok) {
+      handleError(pickResult.error);
+    }
+    return;
+  }
+
+  // ── `spawn feedback` — bypass flag parsing; rest of args are the message ───
+  // Also runs before initFeatureFlags() for the same reason as `pick`.
+  if (rawArgs[0] === "feedback") {
+    await cmdFeedback(rawArgs.slice(1));
+    return;
+  }
+
+  // Fetch feature flags (1.5s timeout, fail-open). Must run before any code
+  // path that gates on a flag — currently the SPAWN_BETA composition for the
+  // `fast_provision` experiment. Placed AFTER the pick/feedback bypasses so
+  // those fast paths never pay the flag-fetch cost.
+  await initFeatureFlags();
+
+  const args = expandEqualsFlags(rawArgs);
+
+  // Pre-scan for --output json before checkForUpdates() so install script
+  // stdout can be redirected to stderr, preventing JSON output pollution.
+  const preOutputIdx = args.indexOf("--output");
+  const isJsonOutput = preOutputIdx !== -1 && args[preOutputIdx + 1] === "json";
+
+  await checkForUpdates(isJsonOutput);
+
+  const [prompt, filteredArgs] = await resolvePrompt(args);
+
+  // Extract --dry-run / -n boolean flag
+  const dryRunIdx = filteredArgs.findIndex((a) => a === "--dry-run" || a === "-n");
+  const dryRun = dryRunIdx !== -1;
+  if (dryRun) {
+    filteredArgs.splice(dryRunIdx, 1);
+  }
+
+  // Extract --debug boolean flag
+  const debugIdx = filteredArgs.indexOf("--debug");
+  const debug = debugIdx !== -1;
+  if (debug) {
+    filteredArgs.splice(debugIdx, 1);
+  }
+
+  // Extract --headless boolean flag
+  const headlessIdx = filteredArgs.indexOf("--headless");
+  const headless = headlessIdx !== -1;
+  if (headless) {
+    filteredArgs.splice(headlessIdx, 1);
+  }
+
+  // Extract --custom boolean flag
+  const customIdx = filteredArgs.indexOf("--custom");
+  const custom = customIdx !== -1;
+  if (custom) {
+    filteredArgs.splice(customIdx, 1);
+    process.env.SPAWN_CUSTOM = "1";
+  }
+
+  // Extract --reauth boolean flag
+  const reauthIdx = filteredArgs.indexOf("--reauth");
+  if (reauthIdx !== -1) {
+    filteredArgs.splice(reauthIdx, 1);
+    process.env.SPAWN_REAUTH = "1";
+  }
+
+  // Extract --fast boolean flag — enables images + tarballs + parallel setup
+  const fastIdx = filteredArgs.indexOf("--fast");
+  if (fastIdx !== -1) {
+    filteredArgs.splice(fastIdx, 1);
+    process.env.SPAWN_FAST = "1";
+  }
+
+  // Extract all --beta <feature> flags (repeatable, opt-in to experimental features)
+  const VALID_BETA_FEATURES = new Set([
+    "tarball",
+    "images",
+    "parallel",
+    "docker",
+    "recursive",
+    "sandbox",
+    "skills",
+  ]);
+  const betaFeatures = extractAllFlagValues(filteredArgs, "--beta", "grid-spawn <agent> <cloud> --beta parallel");
+  const userOptedIntoBeta = betaFeatures.length > 0 || process.env.SPAWN_FAST === "1";
+  for (const flag of betaFeatures) {
+    if (!VALID_BETA_FEATURES.has(flag)) {
+      console.error(pc.red(`Unknown beta feature: ${pc.bold(flag)}`));
+      console.error("\nAvailable beta features:");
+      console.error(`  ${pc.cyan("tarball")}     Use pre-built tarball for agent installation`);
+      console.error(`  ${pc.cyan("images")}      Use pre-built DO marketplace images (faster boot)`);
+      console.error(`  ${pc.cyan("parallel")}    Parallelize server boot with setup prompts`);
+      console.error(`  ${pc.cyan("docker")}      Use Docker CE app image on Hetzner/GCP (faster boot)`);
+      console.error(`  ${pc.cyan("sandbox")}     Run local agents in a Docker container (sandboxed)`);
+      console.error(`  ${pc.cyan("skills")}      Pre-install MCP servers and tools on the VM`);
+      console.error(`  ${pc.cyan("recursive")}   Install spawn CLI on VM for recursive spawning`);
+      process.exit(1);
+    }
+  }
+  // --fast implies all beta features
+  if (process.env.SPAWN_FAST === "1") {
+    betaFeatures.push("tarball", "images", "parallel", "docker");
+  }
+
+  // fast_provision experiment: if the user did NOT pass --beta or --fast,
+  // bucket them on the PostHog `fast_provision` flag. The `test` variant
+  // turns on images + docker + sandbox by default; control behaves as before.
+  // - images:  pre-built DO marketplace images (cloud-side faster boot)
+  // - docker:  Docker CE host image on Hetzner/GCP (cloud-side faster boot)
+  // - sandbox: local agents run in a Docker container (local-side faster boot)
+  // Exposure is captured for both variants so PostHog can compute conversion.
+  // Bundle composition lives in expandFastProvisionVariant() for unit testing.
+  if (!userOptedIntoBeta) {
+    const variant = getFeatureFlag("fast_provision", "control");
+    const variantStr = isString(variant) ? variant : "control";
+    betaFeatures.push(...expandFastProvisionVariant(variantStr));
+  }
+
+  if (betaFeatures.length > 0) {
+    process.env.SPAWN_BETA = [
+      ...new Set(betaFeatures),
+    ].join(",");
+  }
+
+  // Extract --model / -m <value> flag → MODEL_ID env var (must be before --config so it takes priority)
+  const [modelFlag, modelFilteredArgs] = extractFlagValue(
+    filteredArgs,
+    [
+      "--model",
+      "-m",
+    ],
+    'grid-spawn <agent> <cloud> --model "openai/gpt-5.3-codex"',
+  );
+  filteredArgs.splice(0, filteredArgs.length, ...modelFilteredArgs);
+  if (modelFlag) {
+    process.env.MODEL_ID = modelFlag;
+  }
+
+  // Extract --config <path> flag — load config file and apply as defaults
+  const [configPath, configFilteredArgs] = extractFlagValue(
+    filteredArgs,
+    [
+      "--config",
+    ],
+    "grid-spawn <agent> <cloud> --config setup.json",
+  );
+  filteredArgs.splice(0, filteredArgs.length, ...configFilteredArgs);
+
+  if (configPath) {
+    const { loadSpawnConfig } = await import("./shared/spawn-config.js");
+    const configResult = tryCatch(() => loadSpawnConfig(configPath));
+    if (!configResult.ok) {
+      console.error(pc.red(`Error loading config file: ${getErrorMessage(configResult.error)}`));
+      process.exit(1);
+    }
+    const config = configResult.data;
+    if (config) {
+      // Apply config values as defaults (explicit flags take priority)
+      if (config.model && !process.env.MODEL_ID) {
+        process.env.MODEL_ID = config.model;
+      }
+      if (config.steps && !process.env.SPAWN_ENABLED_STEPS) {
+        process.env.SPAWN_ENABLED_STEPS = config.steps.join(",");
+      }
+      if (config.name && !process.env.SPAWN_NAME) {
+        process.env.SPAWN_NAME = config.name;
+      }
+      if (config.setup?.telegram_bot_token && !process.env.TELEGRAM_BOT_TOKEN) {
+        process.env.TELEGRAM_BOT_TOKEN = config.setup.telegram_bot_token;
+      }
+      if (config.setup?.github_token && !process.env.GITHUB_TOKEN) {
+        process.env.GITHUB_TOKEN = config.setup.github_token;
+      }
+    }
+  }
+
+  // Extract --steps <value> flag — comma-separated list of setup steps
+  const [stepsFlag, stepsFilteredArgs] = extractFlagValue(
+    filteredArgs,
+    [
+      "--steps",
+    ],
+    "grid-spawn <agent> <cloud> --steps github,browser,telegram",
+  );
+  filteredArgs.splice(0, filteredArgs.length, ...stepsFilteredArgs);
+  if (stepsFlag !== undefined) {
+    // --steps "" means disable all optional steps
+    process.env.SPAWN_ENABLED_STEPS = stepsFlag;
+  }
+
+  // Extract --output <format> flag
+  const [outputFormat, outputFilteredArgs] = extractFlagValue(
+    filteredArgs,
+    [
+      "--output",
+    ],
+    "grid-spawn <agent> <cloud> --headless --output json",
+  );
+  // Replace filteredArgs contents in-place (splice + push to maintain reference)
+  filteredArgs.splice(0, filteredArgs.length, ...outputFilteredArgs);
+
+  // Validate --output value
+  if (outputFormat && outputFormat !== "json") {
+    console.error(pc.red(`Error: --output only supports "json" (got "${outputFormat}")`));
+console.error(`\nUsage: ${pc.cyan("grid-spawn <agent> <cloud> --headless --output json")}`);
+    process.exit(1);
+  }
+
+  // Extract --name <value> flag
+  const [nameFlag, nameFilteredArgs] = extractFlagValue(
+    filteredArgs,
+    [
+      "--name",
+    ],
+    'grid-spawn <agent> <cloud> --name "my-dev-box"',
+  );
+  filteredArgs.splice(0, filteredArgs.length, ...nameFilteredArgs);
+  if (nameFlag) {
+    process.env.SPAWN_NAME = nameFlag;
+  }
+
+  // Extract --repo <user/repo> flag — clone a template repo and apply spawn.md
+  const [repoFlag, repoFilteredArgs] = extractFlagValue(
+    filteredArgs,
+    [
+      "--repo",
+    ],
+    'grid-spawn <agent> <cloud> --repo "user/my-template"',
+  );
+  filteredArgs.splice(0, filteredArgs.length, ...repoFilteredArgs);
+  if (repoFlag) {
+    process.env.SPAWN_REPO = repoFlag;
+  }
+
+  // Extract --zone / --region <value> flag (maps to cloud-specific env vars)
+  const [zoneFlag, zoneFilteredArgs] = extractFlagValue(
+    filteredArgs,
+    [
+      "--zone",
+      "--region",
+    ],
+    "grid-spawn <agent> gcp --zone us-east1-b",
+  );
+  filteredArgs.splice(0, filteredArgs.length, ...zoneFilteredArgs);
+  if (zoneFlag) {
+    process.env.GCP_ZONE = zoneFlag;
+    process.env.DO_REGION = zoneFlag;
+    process.env.HETZNER_LOCATION = zoneFlag;
+    process.env.AWS_DEFAULT_REGION = zoneFlag;
+  }
+
+  // Extract --machine-type / --size <value> flag (maps to cloud-specific env vars)
+  const [sizeFlag, sizeFilteredArgs] = extractFlagValue(
+    filteredArgs,
+    [
+      "--machine-type",
+      "--size",
+    ],
+    "grid-spawn <agent> gcp --machine-type e2-standard-4",
+  );
+  filteredArgs.splice(0, filteredArgs.length, ...sizeFilteredArgs);
+  if (sizeFlag) {
+    process.env.GCP_MACHINE_TYPE = sizeFlag;
+    process.env.DO_DROPLET_SIZE = sizeFlag;
+    process.env.HETZNER_SERVER_TYPE = sizeFlag;
+    process.env.LIGHTSAIL_BUNDLE = sizeFlag;
+  }
+
+  // --output implies --headless
+  const effectiveHeadless = headless || !!outputFormat;
+
+  // Validate --custom + --headless incompatibility
+  if (custom && effectiveHeadless) {
+    if (outputFormat === "json") {
+      console.log(
+        JSON.stringify({
+          status: "error",
+          error_code: "VALIDATION_ERROR",
+          error_message: "--custom and --headless cannot be used together",
+        }),
+      );
+    } else {
+      console.error(pc.red("Error: --custom and --headless cannot be used together"));
+      console.error(
+        `\n${pc.cyan("--custom")} enables interactive pickers, but ${pc.cyan("--headless")} disables all prompts.`,
+      );
+    }
+    process.exit(3);
+  }
+
+  checkUnknownFlags(filteredArgs);
+
+  const cmd = filteredArgs[0];
+
+  const cmdResult = await asyncTryCatch(async () => {
+    if (!cmd) {
+      if (effectiveHeadless) {
+        if (outputFormat === "json") {
+          console.log(
+            JSON.stringify({
+              status: "error",
+              error_code: "VALIDATION_ERROR",
+              error_message: "--headless requires both <agent> and <cloud>",
+            }),
+          );
+        } else {
+          console.error(pc.red("Error: --headless requires both <agent> and <cloud>"));
+console.error(`\nUsage: ${pc.cyan("grid-spawn <agent> <cloud> --headless --output json")}`);
+        }
+        process.exit(3);
+      }
+      await handleNoCommand(prompt, dryRun);
+    } else {
+      await dispatchCommand(cmd, filteredArgs, prompt, dryRun, debug, effectiveHeadless, outputFormat);
+    }
+  });
+  if (!cmdResult.ok) {
+    if (effectiveHeadless && outputFormat === "json") {
+      console.log(
+        JSON.stringify({
+          status: "error",
+          error_code: "UNEXPECTED_ERROR",
+          error_message: getErrorMessage(cmdResult.error),
+        }),
+      );
+      process.exit(1);
+    }
+    handleError(cmdResult.error);
+  }
+}
+
+main().then(
+  // Let the process exit naturally so fire-and-forget telemetry fetches
+  // complete before the event loop drains. process.exit(0) would abort
+  // in-flight requests, silently dropping spawn_deleted and funnel events.
+  () => {},
+  (err) => {
+    handleError(err);
+  },
+);

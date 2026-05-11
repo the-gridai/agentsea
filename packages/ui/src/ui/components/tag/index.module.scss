@@ -1,0 +1,53 @@
+@import "src/styles/index";
+
+.tag {
+  @include flex-center;
+  @include gap(1);
+  @include br(s);
+  @include text(text-xs, semi);
+  @include padding(0.5, 1.5);
+
+  width: max-content;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+
+  &__icon {
+    @include flex-center;
+    width: 0.7em;
+    height: 0.7em;
+  }
+
+  &--size-s {
+    @include text(text-xs, semi);
+    @include padding(0.25, 1);
+  }
+
+  &--variant-neutral {
+    background: c(base-2);
+    color: c(text-2);
+  }
+  &--variant-highlight {
+    background: c(highlight, 0.18);
+    color: c(text-accent);
+  }
+  &--variant-accent {
+    background: c(accent, 0.22);
+    color: c(text-highlight);
+  }
+  &--variant-positive {
+    background: c(positive, 0.22);
+    color: c(text-positive);
+  }
+  &--variant-negative {
+    background: c(negative, 0.22);
+    color: c(text-negative);
+  }
+  &--variant-warning {
+    background: c(warning, 0.22);
+    color: c(warning);
+  }
+  &--variant-info {
+    background: c(text-highlight, 0.18);
+    color: c(text-highlight);
+  }
+}

@@ -1,0 +1,853 @@
+// sprite/sprite.ts — Core Sprite provider: CLI installation, auth, provisioning, execution
+
+import type { VMConnection } from "../history.js";
+
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { dirname as posixDirname } from "node:path/posix";
+import { getErrorMessage } from "@grid-spawn/sdk";
+import { getUserHome } from "../shared/paths.js";
+import { asyncTryCatch } from "../shared/result.js";
+import { killWithTimeout, sleep, spawnInteractive, validateRemotePath } from "../shared/ssh.js";
+import {
+  getServerNameFromEnv,
+  logError,
+  logInfo,
+  logStep,
+  logStepDone,
+  logStepInline,
+  logWarn,
+  promptSpawnNameShared,
+} from "../shared/ui.js";
+
+// ─── Configurable Constants ──────────────────────────────────────────────────
+
+const CONNECTIVITY_POLL_DELAY = Number.parseInt(process.env.SPRITE_CONNECTIVITY_POLL_DELAY || "5", 10);
+
+/** Timeout for the `sprite create` API call (seconds). Prevents indefinite hangs.
+ * Raised from 300s to 600s to accommodate slower Sprite API responses in long
+ * E2E runs where HTTP timeouts were observed (net/http: Client.Timeout). #2934 */
+const CREATE_TIMEOUT_SECS = Number.parseInt(process.env.SPRITE_CREATE_TIMEOUT || "600", 10);
+
+// ─── State ───────────────────────────────────────────────────────────────────
+
+interface SpriteState {
+  name: string;
+  org: string;
+}
+
+const _state: SpriteState = {
+  name: "",
+  org: "",
+};
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Run a command locally and return { exitCode, stdout, stderr }. */
+function spawnSync(args: string[]): {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+} {
+  const proc = Bun.spawnSync(args, {
+    stdio: [
+      "ignore",
+      "pipe",
+      "pipe",
+    ],
+  });
+  return {
+    exitCode: proc.exitCode,
+    stdout: new TextDecoder().decode(proc.stdout),
+    stderr: new TextDecoder().decode(proc.stderr),
+  };
+}
+
+// ─── Retry Wrapper ───────────────────────────────────────────────────────────
+
+/**
+ * Retry wrapper for transient Sprite CLI errors (TLS timeouts, connection resets, etc.)
+ * Retries up to 3 times with 3s backoff for known transient errors.
+ */
+async function spriteRetry<T>(desc: string, fn: () => Promise<T>): Promise<T> {
+  const maxRetries = 3;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const result = await asyncTryCatch(fn);
+    if (result.ok) {
+      return result.data;
+    }
+
+    lastError = result.error;
+    const msg = getErrorMessage(result.error);
+
+    if (attempt >= maxRetries) {
+      break;
+    }
+
+    // Only retry on transient network errors and auth expiry (#2934)
+    if (
+      /TLS handshake timeout|connection closed|connection reset|connection refused|i\/o timeout|Client\.Timeout|request canceled|authentication failed/i.test(
+        msg,
+      )
+    ) {
+      logWarn(`${desc}: Transient error, retrying (${attempt}/${maxRetries})...`);
+      await sleep(3000 * attempt);
+      continue;
+    }
+
+    // Non-transient error — don't retry
+    break;
+  }
+  throw lastError;
+}
+
+// ─── Sprite CLI Detection ────────────────────────────────────────────────────
+
+function getSpriteCmd(): string | null {
+  if (
+    Bun.spawnSync(
+      [
+        "which",
+        "sprite",
+      ],
+      {
+        stdio: [
+          "ignore",
+          "pipe",
+          "ignore",
+        ],
+      },
+    ).exitCode === 0
+  ) {
+    return "sprite";
+  }
+  const commonPaths = [
+    join(getUserHome(), ".local/bin/sprite"),
+    "/data/data/com.termux/files/usr/bin/sprite",
+    "/usr/local/bin/sprite",
+    "/usr/bin/sprite",
+  ];
+  for (const p of commonPaths) {
+    if (existsSync(p)) {
+      return p;
+    }
+  }
+  return null;
+}
+
+// ─── Sprite CLI Installation ─────────────────────────────────────────────────
+
+export async function ensureSpriteCli(): Promise<void> {
+  const cmd = getSpriteCmd();
+  if (cmd) {
+    // Log version if available
+    const { stdout } = spawnSync([
+      cmd,
+      "version",
+    ]);
+    const ver = stdout.match(/v?\d+\.\d+\.\d+(-rc\d+)?/)?.[0];
+    if (ver) {
+      logInfo(`sprite ${ver} already installed`);
+    } else {
+      logInfo("sprite already installed");
+    }
+    return;
+  }
+
+  logStep("Installing sprite CLI...");
+  const proc = Bun.spawn(
+    [
+      "sh",
+      "-c",
+      "curl --proto '=https' -fsSL https://sprites.dev/install.sh | bash",
+    ],
+    {
+      stdio: [
+        "ignore",
+        "inherit",
+        "inherit",
+      ],
+    },
+  );
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    logError("Failed to install sprite CLI");
+    logError("Manual installation: visit https://sprites.dev for instructions");
+    logError("Or try: curl -fsSL https://sprites.dev/install.sh | bash");
+    throw new Error("Sprite CLI install failed");
+  }
+
+  // Add to PATH
+  const localBin = join(getUserHome(), ".local/bin");
+  if (!process.env.PATH?.includes(localBin)) {
+    process.env.PATH = `${localBin}:${process.env.PATH}`;
+  }
+
+  if (!getSpriteCmd()) {
+    logError("Sprite CLI installation completed but command not found in PATH");
+    logError(`Try adding to PATH: export PATH="$HOME/.local/bin:$PATH"`);
+    throw new Error("sprite not in PATH");
+  }
+  logInfo("Sprite CLI installed");
+}
+
+// ─── Authentication ──────────────────────────────────────────────────────────
+
+export async function ensureSpriteAuthenticated(): Promise<void> {
+  const cmd = getSpriteCmd()!;
+
+  // Check if already authenticated
+  const check = spawnSync([
+    cmd,
+    "org",
+    "list",
+  ]);
+  if (check.exitCode === 0) {
+    logInfo("Already authenticated with Sprite");
+    detectOrg(check.stdout);
+    return;
+  }
+
+  logStep("Logging in to Sprite...");
+  const proc = Bun.spawn(
+    [
+      cmd,
+      "login",
+    ],
+    {
+      stdio: [
+        "inherit",
+        "inherit",
+        "inherit",
+      ],
+    },
+  );
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    logError("Sprite login failed");
+    logError("Try running 'sprite login' manually and follow the prompts");
+    throw new Error("Sprite login failed");
+  }
+
+  // Verify login succeeded
+  const verify = spawnSync([
+    cmd,
+    "org",
+    "list",
+  ]);
+  if (verify.exitCode !== 0) {
+    logError("Sprite login completed but authentication check still fails");
+    logError("Try running 'sprite login' manually");
+    throw new Error("Sprite auth verification failed");
+  }
+
+  detectOrg(verify.stdout);
+  logInfo("Sprite authentication successful");
+}
+
+function detectOrg(output: string): void {
+  if (process.env.SPRITE_ORG) {
+    _state.org = process.env.SPRITE_ORG;
+    return;
+  }
+  const match = output.match(/Currently selected org: (\S+)/);
+  if (match) {
+    _state.org = match[1];
+  }
+}
+
+function orgFlags(): string[] {
+  if (_state.org) {
+    return [
+      "-o",
+      _state.org,
+    ];
+  }
+  return [];
+}
+
+// ─── Server Name ─────────────────────────────────────────────────────────────
+
+/** Set the active sprite name for subsequent runSprite/uploadFileSprite/
+ *  downloadFileSprite calls. Used by reconnect-style flows (e.g. spawn export)
+ *  that operate on an existing sprite without going through createSprite. */
+export function setSpriteName(name: string): void {
+  if (!name || !/^[a-zA-Z0-9_.-]+$/.test(name)) {
+    throw new Error("setSpriteName: name must be non-empty and match [a-zA-Z0-9_.-]+");
+  }
+  _state.name = name;
+}
+
+export async function promptSpawnName(): Promise<void> {
+  return promptSpawnNameShared("Sprite");
+}
+
+export async function getServerName(): Promise<string> {
+  return getServerNameFromEnv("SPRITE_NAME");
+}
+
+// ─── Provisioning ────────────────────────────────────────────────────────────
+
+export async function createSprite(name: string): Promise<void> {
+  const cmd = getSpriteCmd()!;
+
+  // Check if sprite already exists
+  const listResult = spawnSync([
+    cmd,
+    ...orgFlags(),
+    "list",
+  ]);
+  if (listResult.exitCode === 0) {
+    const lines = listResult.stdout.split("\n");
+    for (const line of lines) {
+      const firstToken = line.split(/\s/)[0];
+      if (firstToken === name) {
+        logInfo(`Sprite '${name}' already exists`);
+        _state.name = name;
+        return;
+      }
+    }
+  }
+
+  logStep(`Creating sprite '${name}'...`);
+  await spriteRetry("sprite create", async () => {
+    const proc = Bun.spawn(
+      [
+        cmd,
+        ...orgFlags(),
+        "create",
+        "-skip-console",
+        name,
+      ],
+      {
+        stdio: [
+          "ignore",
+          "inherit",
+          "pipe",
+        ],
+      },
+    );
+    // Drain stderr before awaiting exit to prevent pipe buffer deadlock
+    const stderrText = new Response(proc.stderr).text();
+    // Kill the process if it exceeds the create timeout — prevents indefinite
+    // hangs when the Sprite API blocks for certain agents (kilocode, opencode)
+    const timer = setTimeout(() => killWithTimeout(proc), CREATE_TIMEOUT_SECS * 1000);
+    const createResult = await asyncTryCatch(() => proc.exited);
+    clearTimeout(timer);
+    if (!createResult.ok) {
+      throw new Error(`sprite create timed out after ${CREATE_TIMEOUT_SECS}s for '${name}'`);
+    }
+    if (createResult.data !== 0) {
+      throw new Error(`Failed to create sprite '${name}': ${await stderrText}`);
+    }
+  });
+
+  // Wait for sprite to appear in list
+  logStep("Waiting for sprite to be provisioned...");
+  const maxWait = 30;
+  let elapsed = 0;
+  while (elapsed < maxWait) {
+    const check = spawnSync([
+      cmd,
+      ...orgFlags(),
+      "list",
+    ]);
+    if (check.exitCode === 0) {
+      const lines = check.stdout.split("\n");
+      for (const line of lines) {
+        const firstToken = line.split(/\s/)[0];
+        if (firstToken === name) {
+          logInfo(`Sprite '${name}' provisioned`);
+          _state.name = name;
+          return;
+        }
+      }
+    }
+    await sleep(2000);
+    elapsed += 2;
+  }
+
+  logError(`Sprite '${name}' not found after ${maxWait}s`);
+  throw new Error("Sprite provisioning timeout");
+}
+
+export async function verifySpriteConnectivity(maxAttempts = 6): Promise<void> {
+  const cmd = getSpriteCmd()!;
+
+  logStep("Verifying sprite connectivity...");
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const proc = spawnSync([
+      cmd,
+      ...orgFlags(),
+      "exec",
+      "-s",
+      _state.name,
+      "--",
+      "echo",
+      "ok",
+    ]);
+    if (proc.exitCode === 0) {
+      logStepDone();
+      logInfo(`Sprite '${_state.name}' is ready`);
+      return;
+    }
+    logStepInline(`Sprite not ready, retrying (${attempt}/${maxAttempts})...`);
+    await sleep(CONNECTIVITY_POLL_DELAY * 1000);
+  }
+
+  logStepDone();
+  logError(`Sprite '${_state.name}' failed to respond after ${maxAttempts} attempts`);
+  logError("Try: sprite list, sprite logs, or recreate the sprite");
+  throw new Error("Sprite connectivity timeout");
+}
+
+// ─── Local Keep-Alive ────────────────────────────────────────────────────────
+
+/**
+ * Background keep-alive that pings the sprite's public URL every 30s from the
+ * local machine. Prevents the sprite from going idle during long operations
+ * like agent installation (where the remote keep-alive script isn't running yet).
+ */
+let _keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+
+export function startLocalKeepAlive(): void {
+  if (_keepAliveTimer) {
+    return;
+  }
+
+  const cmd = getSpriteCmd();
+  if (!cmd || !_state.name) {
+    return;
+  }
+
+  // Get the sprite's public URL
+  const urlResult = spawnSync([
+    cmd,
+    ...orgFlags(),
+    "url",
+    "-s",
+    _state.name,
+  ]);
+  const urlMatch = urlResult.stdout.match(/https:\/\/\S+/);
+  if (!urlMatch) {
+    return;
+  }
+
+  const spriteUrl = urlMatch[0];
+  _keepAliveTimer = setInterval(() => {
+    // Fire-and-forget fetch to keep the sprite alive
+    fetch(spriteUrl).catch(() => {});
+  }, 30_000);
+}
+
+export function stopLocalKeepAlive(): void {
+  if (_keepAliveTimer) {
+    clearInterval(_keepAliveTimer);
+    _keepAliveTimer = null;
+  }
+}
+
+// ─── Shell Environment Setup ─────────────────────────────────────────────────
+
+export async function setupShellEnvironment(): Promise<void> {
+  logStep("Configuring shell environment...");
+
+  // Clean up stale 'exec zsh' from prior runs
+  await runSpriteSilent(`sed -i '/exec \\/usr\\/bin\\/zsh/d' ~/.bashrc ~/.bash_profile 2>/dev/null; true`);
+
+  // Upload and append PATH config to .bashrc and .zshrc
+  const pathConfig = `\n# [spawn:path]\nexport PATH="\${HOME}/.npm-global/bin:\${HOME}/.local/bin:\${HOME}/.bun/bin:/.sprite/languages/bun/bin:\${PATH}"\n`;
+  const pathB64 = Buffer.from(pathConfig).toString("base64");
+  await runSprite(
+    `printf '%s' '${pathB64}' | base64 -d >> ~/.bashrc && printf '%s' '${pathB64}' | base64 -d >> ~/.zshrc`,
+  );
+
+  // Switch interactive login shells to zsh (if available).
+  // Only modify .bash_profile — NOT .bashrc — so non-interactive bash
+  // (e.g., `sprite exec ... bash -c CMD`) still works and sources PATH config.
+  const zshResult = await asyncTryCatch(async () => runSpriteSilent("command -v zsh"));
+  if (zshResult.ok) {
+    const bashProfile = "\n# [spawn:bash]\n[[ $- == *i* ]] && exec /usr/bin/zsh -l\n";
+    const bpB64 = Buffer.from(bashProfile).toString("base64");
+    await runSprite(`printf '%s' '${bpB64}' | base64 -d >> ~/.bash_profile`);
+  } else {
+    logWarn("zsh not available on sprite, keeping bash as default shell");
+  }
+}
+
+// ─── Connection Tracking ─────────────────────────────────────────────────────
+
+export function getVmConnection(): VMConnection {
+  return {
+    ip: "sprite-console",
+    user: process.env.USER || "root",
+    server_name: _state.name,
+    cloud: "sprite",
+  };
+}
+
+// ─── Execution ───────────────────────────────────────────────────────────────
+
+/**
+ * Run a command on the remote sprite. Retries on transient errors.
+ */
+export async function runSprite(cmd: string, timeoutSecs?: number): Promise<void> {
+  if (!cmd || /\0/.test(cmd)) {
+    throw new Error("Invalid command: must be non-empty and must not contain null bytes");
+  }
+  const spriteCmd = getSpriteCmd()!;
+  await spriteRetry("sprite exec", async () => {
+    const proc = Bun.spawn(
+      [
+        spriteCmd,
+        ...orgFlags(),
+        "exec",
+        "-s",
+        _state.name,
+        "--",
+        "bash",
+        "-c",
+        cmd,
+      ],
+      {
+        stdio: [
+          "ignore",
+          "inherit",
+          "inherit",
+        ],
+      },
+    );
+    const timeout = (timeoutSecs || 300) * 1000;
+    const timer = setTimeout(() => killWithTimeout(proc), timeout);
+    const execResult = await asyncTryCatch(() => proc.exited);
+    clearTimeout(timer);
+    if (!execResult.ok) {
+      throw execResult.error;
+    }
+    if (execResult.data !== 0) {
+      throw new Error(`sprite exec failed (exit ${execResult.data}): ${cmd.slice(0, 80)}`);
+    }
+  });
+}
+
+/** Run a command silently (no stdout/stderr). Throws on failure. */
+async function runSpriteSilent(cmd: string): Promise<void> {
+  if (!cmd || /\0/.test(cmd)) {
+    throw new Error("Invalid command: must be non-empty and must not contain null bytes");
+  }
+  const spriteCmd = getSpriteCmd()!;
+  const proc = Bun.spawn(
+    [
+      spriteCmd,
+      ...orgFlags(),
+      "exec",
+      "-s",
+      _state.name,
+      "--",
+      "bash",
+      "-c",
+      cmd,
+    ],
+    {
+      stdio: [
+        "ignore",
+        "ignore",
+        "ignore",
+      ],
+    },
+  );
+  // 60s timeout — silent commands should not hang indefinitely
+  const timer = setTimeout(() => killWithTimeout(proc), 60_000);
+  const silentResult = await asyncTryCatch(() => proc.exited);
+  clearTimeout(timer);
+  if (!silentResult.ok) {
+    throw silentResult.error;
+  }
+  if (silentResult.data !== 0) {
+    throw new Error(`sprite exec (silent) failed (exit ${silentResult.data})`);
+  }
+}
+
+/**
+ * Upload a local file to the remote sprite using sprite exec -file flag.
+ * The -file flag format is "localpath:remotepath".
+ */
+export async function uploadFileSprite(localPath: string, remotePath: string): Promise<void> {
+  const normalizedRemote = validateRemotePath(remotePath, /^[a-zA-Z0-9/_.~-]+$/);
+
+  const spriteCmd = getSpriteCmd()!;
+  // Generate a random temp path on remote to prevent symlink attacks
+  const tempRandom = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  const basename = normalizedRemote.split("/").pop() || "file";
+  const tempRemote = `/tmp/sprite_upload_${basename}_${tempRandom}`;
+
+  // Compute the parent directory in TypeScript to avoid shell interpolation
+  const parentDir = posixDirname(normalizedRemote);
+
+  // 180s timeout — prevents indefinite hangs during tarball uploads in fast mode.
+  // Without this, large file uploads (e.g. 300MB openclaw tarball) or stalled
+  // Sprite connections can block the entire provisioning pipeline past the
+  // E2E provision timeout (720s), causing agent binary not-found failures.
+  const UPLOAD_TIMEOUT_MS = 180_000;
+
+  await spriteRetry("sprite upload", async () => {
+    // Upload the file to the temp path, then mkdir + mv using array args
+    // to avoid shell string interpolation (command injection risk).
+    const proc = Bun.spawn(
+      [
+        spriteCmd,
+        ...orgFlags(),
+        "exec",
+        "-s",
+        _state.name,
+        "-file",
+        `${localPath}:${tempRemote}`,
+        "--",
+        "mkdir",
+        "-p",
+        "--",
+        parentDir,
+      ],
+      {
+        stdio: [
+          "ignore",
+          "inherit",
+          "pipe",
+        ],
+      },
+    );
+    // Drain stderr before awaiting exit to prevent pipe buffer deadlock
+    const stderrText = new Response(proc.stderr).text();
+    const uploadTimer = setTimeout(() => killWithTimeout(proc), UPLOAD_TIMEOUT_MS);
+    const uploadResult = await asyncTryCatch(() => proc.exited);
+    clearTimeout(uploadTimer);
+    if (!uploadResult.ok) {
+      throw new Error(`upload timed out for ${remotePath}`);
+    }
+    if (uploadResult.data !== 0) {
+      throw new Error(`upload mkdir failed for ${remotePath}: ${await stderrText}`);
+    }
+
+    // Move temp file to final destination using array args (no shell interpolation)
+    const mvProc = Bun.spawn(
+      [
+        spriteCmd,
+        ...orgFlags(),
+        "exec",
+        "-s",
+        _state.name,
+        "--",
+        "mv",
+        "--",
+        tempRemote,
+        normalizedRemote,
+      ],
+      {
+        stdio: [
+          "ignore",
+          "inherit",
+          "pipe",
+        ],
+      },
+    );
+    const mvStderrText = new Response(mvProc.stderr).text();
+    const mvTimer = setTimeout(() => killWithTimeout(mvProc), 60_000);
+    const mvResult = await asyncTryCatch(() => mvProc.exited);
+    clearTimeout(mvTimer);
+    if (!mvResult.ok) {
+      throw new Error(`upload mv timed out for ${remotePath}`);
+    }
+    if (mvResult.data !== 0) {
+      throw new Error(`upload mv failed for ${remotePath}: ${await mvStderrText}`);
+    }
+  });
+}
+
+/** Download a file from the remote sprite by catting it to stdout. */
+export async function downloadFileSprite(remotePath: string, localPath: string): Promise<void> {
+  const expandedRemote = remotePath.replace(/^\$HOME\//, "~/");
+  const normalizedRemote = validateRemotePath(expandedRemote, /^[a-zA-Z0-9/_.~-]+$/);
+
+  const spriteCmd = getSpriteCmd()!;
+
+  await spriteRetry("sprite download", async () => {
+    const proc = Bun.spawn(
+      [
+        spriteCmd,
+        ...orgFlags(),
+        "exec",
+        "-s",
+        _state.name,
+        "--",
+        "cat",
+        normalizedRemote,
+      ],
+      {
+        stdio: [
+          "ignore",
+          "pipe",
+          "pipe",
+        ],
+      },
+    );
+    const [stdout, stderrText] = await Promise.all([
+      new Response(proc.stdout).arrayBuffer(),
+      new Response(proc.stderr).text(),
+    ]);
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      throw new Error(`download failed for ${remotePath}: ${stderrText}`);
+    }
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(localPath, Buffer.from(stdout));
+  });
+}
+
+// ─── Keep-Alive ───────────────────────────────────────────────────────────────
+
+/**
+ * Download and install sprite-keep-running on the remote sprite.
+ * This script wraps a command and keeps the sprite alive (via Sprite's /v1/tasks API)
+ * as long as the agent is running — preventing inactivity shutdown.
+ *
+ * Non-fatal: logs a warning if download fails so deployment still proceeds.
+ */
+export async function installSpriteKeepAlive(): Promise<void> {
+  logStep("Installing Sprite keep-alive...");
+  const scriptUrl = "https://spawn.thegrid.ai/shared/sprite-keep-running.sh";
+  const keepAliveResult = await asyncTryCatch(() =>
+    runSprite(
+      "mkdir -p ~/.local/bin && " +
+        `curl -fsSL '${scriptUrl}' -o ~/.local/bin/sprite-keep-running && ` +
+        "chmod +x ~/.local/bin/sprite-keep-running",
+      60,
+    ),
+  );
+  if (keepAliveResult.ok) {
+    logInfo("Sprite keep-alive installed");
+  } else {
+    logWarn("Could not install Sprite keep-alive — sprite may shut down during inactivity");
+  }
+}
+
+/**
+ * Launch an interactive session on the sprite.
+ * Uses -tty for interactive mode, plain exec when SPAWN_PROMPT is set.
+ *
+ * The session command is base64-encoded and written to a temp file to avoid
+ * quoting issues with multi-line restart loop scripts. If sprite-keep-running
+ * is installed, it wraps the command to keep the sprite alive via Sprite's
+ * /v1/tasks API for the duration of the session.
+ */
+export async function interactiveSession(cmd: string, spawnFn?: (args: string[]) => number): Promise<number> {
+  if (!cmd || /\0/.test(cmd)) {
+    throw new Error("Invalid command: must be non-empty and must not contain null bytes");
+  }
+  const spriteCmd = getSpriteCmd()!;
+
+  // Encode the session command to handle multi-line restart loop scripts safely
+  const cmdB64 = Buffer.from(cmd).toString("base64");
+
+  // Write cmd to a temp file and exec with keep-alive wrapper if available
+  const sessionScript = [
+    "_f=$(mktemp /tmp/spawn_XXXXXX.sh)",
+    `printf '%s' '${cmdB64}' | base64 -d > "$_f"`,
+    'chmod +x "$_f"',
+    "trap 'rm -f \"$_f\"' EXIT INT TERM",
+    "if command -v sprite-keep-running >/dev/null 2>&1; then",
+    '  sprite-keep-running bash "$_f"',
+    "else",
+    '  bash "$_f"',
+    "fi",
+  ].join("\n");
+
+  const args = process.env.SPAWN_PROMPT
+    ? [
+        spriteCmd,
+        ...orgFlags(),
+        "exec",
+        "-s",
+        _state.name,
+        "--",
+        "bash",
+        "-c",
+        sessionScript,
+      ]
+    : [
+        spriteCmd,
+        ...orgFlags(),
+        "exec",
+        "-s",
+        _state.name,
+        "-tty",
+        "--",
+        "bash",
+        "-c",
+        sessionScript,
+      ];
+
+  const spawn = spawnFn ?? spawnInteractive;
+  const exitCode = spawn(args);
+
+  // Post-session summary
+  process.stderr.write("\n");
+  logWarn(`Session ended. Your sprite '${_state.name}' is still running.`);
+  logWarn("Remember to destroy it when you're done to avoid ongoing charges.");
+  logWarn("");
+  logInfo("To destroy:");
+  logInfo(`  sprite destroy ${_state.name}`);
+  logInfo("To reconnect:");
+  logInfo("  spawn last");
+  logInfo(`  or: sprite console -s ${_state.name}`);
+
+  return exitCode;
+}
+
+// ─── Lifecycle ───────────────────────────────────────────────────────────────
+
+export async function destroyServer(name?: string): Promise<void> {
+  const target = name || _state.name;
+  if (!target) {
+    logError("destroy_server: no sprite name provided");
+    throw new Error("No sprite name");
+  }
+
+  const cmd = getSpriteCmd()!;
+  logStep(`Destroying sprite '${target}'...`);
+
+  const proc = Bun.spawn(
+    [
+      cmd,
+      ...orgFlags(),
+      "destroy",
+      "--force",
+      target,
+    ],
+    {
+      stdio: [
+        "ignore",
+        "inherit",
+        "pipe",
+      ],
+    },
+  );
+  // Drain stderr before awaiting exit to prevent pipe buffer deadlock
+  const stderrText = new Response(proc.stderr).text();
+  // 60s timeout — sprite destroy should not hang indefinitely
+  const timer = setTimeout(() => killWithTimeout(proc), 60_000);
+  const destroyResult = await asyncTryCatch(() => proc.exited);
+  clearTimeout(timer);
+  if (!destroyResult.ok) {
+    throw destroyResult.error;
+  }
+  const exitCode = destroyResult.data;
+  if (exitCode !== 0) {
+    logError(`Failed to destroy sprite '${target}'`);
+    logError(`Delete it manually: sprite destroy ${target}`);
+    throw new Error(`Sprite destruction failed: ${await stderrText}`);
+  }
+
+  logInfo(`Sprite '${target}' destroyed`);
+}

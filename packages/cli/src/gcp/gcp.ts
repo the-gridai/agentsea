@@ -1,0 +1,1237 @@
+// gcp/gcp.ts — Core GCP Compute Engine provider: gcloud CLI wrapper, auth, provisioning, SSH
+
+import type { CloudInstance, VMConnection } from "../history.js";
+import type { CloudInitTier } from "../shared/agents.js";
+
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { isString, toObjectArray } from "@grid-spawn/sdk";
+import { handleBillingError, isBillingError, showNonBillingError } from "../shared/billing-guidance.js";
+import { getPackagesForTier, NODE_INSTALL_CMD, needsBun, needsNode } from "../shared/cloud-init.js";
+import { getUserHome } from "../shared/paths.js";
+import { asyncTryCatch, tryCatch } from "../shared/result.js";
+import {
+  killWithTimeout,
+  SSH_BASE_OPTS,
+  SSH_INTERACTIVE_OPTS,
+  waitForSsh as sharedWaitForSsh,
+  sleep,
+  spawnInteractive,
+  validateRemotePath,
+} from "../shared/ssh.js";
+import { ensureSshKeys, getSpawnKey, getSshKeyOpts } from "../shared/ssh-keys.js";
+import {
+  getServerNameFromEnv,
+  logError,
+  logInfo,
+  logStep,
+  logStepDone,
+  logStepInline,
+  logWarn,
+  openBrowser,
+  prompt,
+  promptSpawnNameShared,
+  retryOrQuit,
+  sanitizeTermValue,
+  selectFromList,
+  shellQuote,
+} from "../shared/ui.js";
+import { gcpBilling } from "./billing.js";
+
+const DASHBOARD_URL = "https://console.cloud.google.com/compute/instances";
+
+// ─── Machine Type Tiers ─────────────────────────────────────────────────────
+
+interface MachineTypeTier {
+  id: string;
+  label: string;
+}
+
+const MACHINE_TYPES: MachineTypeTier[] = [
+  {
+    id: "e2-micro",
+    label: "Shared CPU \u00b7 2 vCPU \u00b7 1 GB RAM (~$7/mo)",
+  },
+  {
+    id: "e2-small",
+    label: "Shared CPU \u00b7 2 vCPU \u00b7 2 GB RAM (~$14/mo)",
+  },
+  {
+    id: "e2-medium",
+    label: "Shared CPU \u00b7 2 vCPU \u00b7 4 GB RAM (~$28/mo)",
+  },
+  {
+    id: "e2-standard-2",
+    label: "2 vCPU \u00b7 8 GB RAM (~$49/mo)",
+  },
+  {
+    id: "e2-standard-4",
+    label: "4 vCPU \u00b7 16 GB RAM (~$98/mo)",
+  },
+  {
+    id: "n2-standard-2",
+    label: "2 vCPU \u00b7 8 GB RAM, higher perf (~$72/mo)",
+  },
+  {
+    id: "n2-standard-4",
+    label: "4 vCPU \u00b7 16 GB RAM, higher perf (~$144/mo)",
+  },
+  {
+    id: "c4-standard-2",
+    label: "2 vCPU \u00b7 8 GB RAM, latest gen (~$82/mo)",
+  },
+];
+
+export const DEFAULT_MACHINE_TYPE = "e2-medium";
+
+// ─── Zone Options ────────────────────────────────────────────────────────────
+
+interface ZoneOption {
+  id: string;
+  label: string;
+}
+
+const ZONES: ZoneOption[] = [
+  {
+    id: "us-central1-a",
+    label: "Iowa, US",
+  },
+  {
+    id: "us-east1-b",
+    label: "South Carolina, US",
+  },
+  {
+    id: "us-east4-a",
+    label: "N. Virginia, US",
+  },
+  {
+    id: "us-west1-a",
+    label: "Oregon, US",
+  },
+  {
+    id: "us-west2-a",
+    label: "Los Angeles, US",
+  },
+  {
+    id: "northamerica-northeast1-a",
+    label: "Montreal, Canada",
+  },
+  {
+    id: "europe-west1-b",
+    label: "Belgium",
+  },
+  {
+    id: "europe-west4-a",
+    label: "Netherlands",
+  },
+  {
+    id: "europe-west6-a",
+    label: "Zurich, Switzerland",
+  },
+  {
+    id: "asia-east1-a",
+    label: "Taiwan",
+  },
+  {
+    id: "asia-southeast1-a",
+    label: "Singapore",
+  },
+  {
+    id: "australia-southeast1-a",
+    label: "Sydney, Australia",
+  },
+];
+
+export const DEFAULT_ZONE = "us-central1-a";
+
+// ─── Disk Size ───────────────────────────────────────────────────────────────
+
+export const DEFAULT_DISK_SIZE_GB = 40;
+
+// ─── State ──────────────────────────────────────────────────────────────────
+
+interface GcpState {
+  project: string;
+  zone: string;
+  instanceName: string;
+  serverIp: string;
+}
+
+const _state: GcpState = {
+  project: "",
+  zone: "",
+  instanceName: "",
+  serverIp: "",
+};
+
+/** Return SSH connection info for tunnel support. */
+export function getConnectionInfo(): {
+  host: string;
+  user: string;
+} {
+  return {
+    host: _state.serverIp,
+    user: resolveUsername(),
+  };
+}
+
+// ─── gcloud CLI Wrapper ─────────────────────────────────────────────────────
+
+function getGcloudCmd(): string | null {
+  if (
+    Bun.spawnSync(
+      [
+        "which",
+        "gcloud",
+      ],
+      {
+        stdio: [
+          "ignore",
+          "pipe",
+          "ignore",
+        ],
+      },
+    ).exitCode === 0
+  ) {
+    return "gcloud";
+  }
+  // Check common install locations
+  const paths = [
+    join(getUserHome(), "google-cloud-sdk/bin/gcloud"),
+    "/usr/lib/google-cloud-sdk/bin/gcloud",
+    "/snap/bin/gcloud",
+  ];
+  for (const p of paths) {
+    if (existsSync(p)) {
+      return p;
+    }
+  }
+  return null;
+}
+
+/** Get gcloud path or throw a descriptive error. */
+function requireGcloudCmd(): string {
+  const cmd = getGcloudCmd();
+  if (!cmd) {
+    throw new Error(
+      "gcloud CLI not found. Install it first:\n" +
+        "  macOS:  brew install --cask google-cloud-sdk\n" +
+        "  Linux:  curl https://sdk.cloud.google.com | bash\n" +
+        "  Or run: spawn <agent> gcp  (auto-installs gcloud)",
+    );
+  }
+  return cmd;
+}
+
+/** Run a gcloud command and return stdout. */
+function gcloudSync(args: string[]): {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+} {
+  const cmd = requireGcloudCmd();
+  const proc = Bun.spawnSync(
+    [
+      cmd,
+      ...args,
+    ],
+    {
+      stdio: [
+        "ignore",
+        "pipe",
+        "pipe",
+      ],
+      env: process.env,
+    },
+  );
+  return {
+    stdout: new TextDecoder().decode(proc.stdout).trim(),
+    stderr: new TextDecoder().decode(proc.stderr).trim(),
+    exitCode: proc.exitCode,
+  };
+}
+
+/** Run a gcloud command asynchronously and return stdout. */
+async function gcloud(args: string[]): Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}> {
+  const cmd = requireGcloudCmd();
+  const proc = Bun.spawn(
+    [
+      cmd,
+      ...args,
+    ],
+    {
+      stdio: [
+        "ignore",
+        "pipe",
+        "pipe",
+      ],
+      env: process.env,
+    },
+  );
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  const exitCode = await proc.exited;
+  return {
+    stdout: stdout.trim(),
+    stderr: stderr.trim(),
+    exitCode,
+  };
+}
+
+/** Run a gcloud command interactively (inheriting stdio). */
+async function gcloudInteractive(args: string[]): Promise<number> {
+  const cmd = requireGcloudCmd();
+  const proc = Bun.spawn(
+    [
+      cmd,
+      ...args,
+    ],
+    {
+      stdio: [
+        "inherit",
+        "inherit",
+        "inherit",
+      ],
+      env: process.env,
+    },
+  );
+  return proc.exited;
+}
+
+// ─── CLI Installation ───────────────────────────────────────────────────────
+
+export async function ensureGcloudCli(): Promise<void> {
+  if (getGcloudCmd()) {
+    logInfo("gcloud CLI available");
+    return;
+  }
+
+  logStep("Installing Google Cloud SDK...");
+
+  if (process.platform === "darwin") {
+    // Try Homebrew on macOS
+    const brewCheck = Bun.spawnSync(
+      [
+        "which",
+        "brew",
+      ],
+      {
+        stdio: [
+          "ignore",
+          "pipe",
+          "ignore",
+        ],
+      },
+    );
+    if (brewCheck.exitCode === 0) {
+      const proc = Bun.spawn(
+        [
+          "brew",
+          "install",
+          "--cask",
+          "google-cloud-sdk",
+        ],
+        {
+          stdio: [
+            "ignore",
+            "inherit",
+            "inherit",
+          ],
+        },
+      );
+      if ((await proc.exited) === 0) {
+        // Source the path
+        const prefix = new TextDecoder()
+          .decode(
+            Bun.spawnSync(
+              [
+                "brew",
+                "--prefix",
+              ],
+              {
+                stdio: [
+                  "ignore",
+                  "pipe",
+                  "ignore",
+                ],
+              },
+            ).stdout,
+          )
+          .trim();
+        const pathInc = `${prefix}/share/google-cloud-sdk/path.bash.inc`;
+        if (existsSync(pathInc)) {
+          // Add gcloud to PATH
+          const sdkBin = `${prefix}/share/google-cloud-sdk/bin`;
+          if (!process.env.PATH?.includes(sdkBin)) {
+            process.env.PATH = `${sdkBin}:${process.env.PATH}`;
+          }
+        }
+        if (getGcloudCmd()) {
+          logInfo("Google Cloud SDK installed via Homebrew");
+          return;
+        }
+      }
+    }
+  }
+
+  // Linux / macOS without brew: use Google's installer
+  const proc = Bun.spawn(
+    [
+      "bash",
+      "-c",
+      [
+        "_gcp_tmp=$(mktemp -d)",
+        `curl --proto "=https" -fsSL "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz" -o "$_gcp_tmp/gcloud.tar.gz"`,
+        `tar -xzf "$_gcp_tmp/gcloud.tar.gz" -C "$HOME"`,
+        `"$HOME/google-cloud-sdk/install.sh" --quiet --path-update true`,
+        `rm -rf "$_gcp_tmp"`,
+      ].join(" && "),
+    ],
+    {
+      stdio: [
+        "ignore",
+        "inherit",
+        "inherit",
+      ],
+    },
+  );
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    logError("Failed to install Google Cloud SDK");
+    logError("Install manually: https://cloud.google.com/sdk/docs/install");
+    throw new Error("gcloud install failed");
+  }
+
+  // Add to PATH
+  const sdkBin = join(getUserHome(), "google-cloud-sdk/bin");
+  if (!process.env.PATH?.includes(sdkBin)) {
+    process.env.PATH = `${sdkBin}:${process.env.PATH}`;
+  }
+
+  if (!getGcloudCmd()) {
+    logError("gcloud not found after install. You may need to restart your shell.");
+    throw new Error("gcloud not in PATH");
+  }
+  logInfo("Google Cloud SDK installed");
+}
+
+// ─── Authentication ─────────────────────────────────────────────────────────
+
+export async function authenticate(): Promise<void> {
+  // Check for active account
+  const result = gcloudSync([
+    "auth",
+    "list",
+    "--filter=status:ACTIVE",
+    "--format=value(account)",
+  ]);
+  const activeAccount = result.stdout.split("\n")[0]?.trim();
+
+  if (activeAccount?.includes("@")) {
+    logInfo(`Authenticated as: ${activeAccount}`);
+    return;
+  }
+
+  for (;;) {
+    logWarn("No active Google Cloud account -- launching gcloud auth login...");
+    const exitCode = await gcloudInteractive([
+      "auth",
+      "login",
+    ]);
+    if (exitCode === 0) {
+      logInfo("Authenticated with Google Cloud");
+      return;
+    }
+    logError("Authentication failed. You can also set credentials via:");
+    logError("  export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json");
+    await retryOrQuit("Try Google Cloud authentication again?");
+  }
+}
+
+// ─── Project Resolution ─────────────────────────────────────────────────────
+
+export async function resolveProject(): Promise<void> {
+  // 1. Env var
+  if (process.env.GCP_PROJECT) {
+    _state.project = process.env.GCP_PROJECT;
+    logInfo(`Using GCP project from environment: ${_state.project}`);
+    return;
+  }
+
+  // 2. gcloud config
+  const configResult = gcloudSync([
+    "config",
+    "get-value",
+    "project",
+  ]);
+  let project = configResult.stdout;
+  if (project === "(unset)") {
+    project = "";
+  }
+
+  // 3. Confirm or pick
+  if (project && process.env.SPAWN_NON_INTERACTIVE !== "1") {
+    const confirm = await prompt(`Use project '${project}'? [Y/n]: `);
+    if (/^[nN]/.test(confirm)) {
+      project = "";
+    }
+  }
+
+  if (!project) {
+    // In non-interactive mode (e.g. during deletion), fail fast instead of prompting
+    if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+      logError("No GCP project found in metadata or gcloud config");
+      logError("Set one before retrying:");
+      logError("  export GCP_PROJECT=your-project-id");
+      throw new Error("No GCP project");
+    }
+
+    logInfo("Fetching your GCP projects...");
+    const listResult = await gcloud([
+      "projects",
+      "list",
+      "--filter=lifecycleState=ACTIVE",
+      "--format=value(projectId,name)",
+    ]);
+
+    if (listResult.exitCode !== 0 || !listResult.stdout) {
+      logError("Failed to list GCP projects (you may lack resourcemanager.projects.list permission)");
+      logInfo("Enter your GCP project ID manually (or press Enter to abort):");
+      const gcpProjectIdPattern = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
+      let manualProject = "";
+      for (;;) {
+        manualProject = await prompt("GCP project ID: ");
+        if (!manualProject) {
+          logError("No GCP project ID provided");
+          logError("Set one before retrying:");
+          logError("  export GCP_PROJECT=your-project-id");
+          throw new Error("No GCP project");
+        }
+        if (gcpProjectIdPattern.test(manualProject)) {
+          break;
+        }
+        logError(`Invalid project ID: '${manualProject}'`);
+        logInfo("GCP project IDs must be 6-30 characters, lowercase letters/numbers/hyphens,");
+        logInfo("start with a letter, and end with a letter or digit.");
+      }
+      project = manualProject;
+    } else {
+      const items = listResult.stdout
+        .split("\n")
+        .filter((l) => l.trim())
+        .map((line) => {
+          const parts = line.split("\t");
+          return `${parts[0]}|${parts[1] || parts[0]}`;
+        });
+
+      if (items.length === 0) {
+        logError("No active GCP projects found");
+        logError("Create one at: https://console.cloud.google.com/projectcreate");
+        throw new Error("No GCP projects");
+      }
+
+      project = await selectFromList(items, "GCP projects", items[0].split("|")[0]);
+    }
+  }
+
+  if (!project) {
+    logError("No GCP project selected");
+    logError("Set one before retrying:");
+    logError("  export GCP_PROJECT=your-project-id");
+    throw new Error("No GCP project");
+  }
+
+  _state.project = project;
+  logInfo(`Using GCP project: ${_state.project}`);
+}
+
+// ─── Billing Pre-Check ──────────────────────────────────────────────────────
+
+/**
+ * Check if billing is enabled for the current GCP project.
+ * Runs: gcloud billing projects describe PROJECT_ID --format=value(billingEnabled)
+ * Throws if billing is not enabled (so orchestrate.ts can catch and continue).
+ */
+export async function checkBillingEnabled(): Promise<void> {
+  if (!_state.project) {
+    return;
+  }
+  const billingResult = await asyncTryCatch(async () => {
+    const result = gcloudSync([
+      "billing",
+      "projects",
+      "describe",
+      _state.project,
+      "--format=value(billingEnabled)",
+    ]);
+    const output = result.stdout.trim().toLowerCase();
+    if (output === "false") {
+      logWarn(`Billing is not enabled for project '${_state.project}'.`);
+      const shouldRetry = await handleBillingError(gcpBilling);
+      if (!shouldRetry) {
+        throw new Error("GCP billing not enabled");
+      }
+      // Re-check
+      const retry = gcloudSync([
+        "billing",
+        "projects",
+        "describe",
+        _state.project,
+        "--format=value(billingEnabled)",
+      ]);
+      if (retry.stdout.trim().toLowerCase() === "false") {
+        logWarn("Billing is still not enabled. Continuing anyway — instance creation may fail.");
+      }
+    }
+  });
+  if (!billingResult.ok) {
+    // Re-throw our explicit billing error
+    if (billingResult.error instanceof Error && billingResult.error.message === "GCP billing not enabled") {
+      throw billingResult.error;
+    }
+    // Permission errors or missing billing API — non-fatal, continue
+  }
+}
+
+// ─── Interactive Pickers ────────────────────────────────────────────────────
+
+export async function promptMachineType(): Promise<string> {
+  if (process.env.GCP_MACHINE_TYPE) {
+    logInfo(`Using machine type from environment: ${process.env.GCP_MACHINE_TYPE}`);
+    return process.env.GCP_MACHINE_TYPE;
+  }
+
+  if (process.env.SPAWN_CUSTOM !== "1") {
+    return DEFAULT_MACHINE_TYPE;
+  }
+
+  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+    return DEFAULT_MACHINE_TYPE;
+  }
+
+  process.stderr.write("\n");
+  const items = MACHINE_TYPES.map((t) => `${t.id}|${t.label}`);
+  return selectFromList(items, "GCP machine types", DEFAULT_MACHINE_TYPE);
+}
+
+export async function promptZone(): Promise<string> {
+  if (process.env.GCP_ZONE) {
+    logInfo(`Using zone from environment: ${process.env.GCP_ZONE}`);
+    return process.env.GCP_ZONE;
+  }
+
+  if (process.env.SPAWN_CUSTOM !== "1") {
+    return DEFAULT_ZONE;
+  }
+
+  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+    return DEFAULT_ZONE;
+  }
+
+  process.stderr.write("\n");
+  const items = ZONES.map((z) => `${z.id}|${z.label}`);
+  return selectFromList(items, "GCP zones", DEFAULT_ZONE);
+}
+
+// ─── SSH Key ────────────────────────────────────────────────────────────────
+
+async function ensureSshKey(): Promise<string> {
+  // Inject only the spawn-managed key into instance metadata. User's other
+  // local keys stay off the instance (privacy + avoids client-side auth flood).
+  const spawnKey = getSpawnKey();
+  const pubKey = readFileSync(spawnKey.pubPath, "utf-8").trim();
+  logInfo(`SSH key '${spawnKey.name}' ready`);
+  return pubKey;
+}
+
+// ─── Username ───────────────────────────────────────────────────────────────
+
+const GCP_SSH_USER = "root";
+
+/** Defense-in-depth: allowed username pattern (alphanumeric, underscore, hyphen). */
+const SAFE_USERNAME_RE = /^[a-zA-Z0-9_-]+$/;
+
+function resolveUsername(): string {
+  return GCP_SSH_USER;
+}
+
+/** Assert username is safe for shell interpolation (defense-in-depth). */
+function assertSafeUsername(username: string): void {
+  if (!SAFE_USERNAME_RE.test(username)) {
+    throw new Error(
+      `Invalid GCP username '${username}': must match /^[a-zA-Z0-9_-]+$/. ` +
+        "This is a defense-in-depth check — the username should already be validated upstream.",
+    );
+  }
+}
+
+// ─── Server Name ────────────────────────────────────────────────────────────
+
+export async function getServerName(): Promise<string> {
+  return getServerNameFromEnv("GCP_INSTANCE_NAME");
+}
+
+export async function promptSpawnName(): Promise<void> {
+  return promptSpawnNameShared("GCP instance");
+}
+
+// ─── Cloud Init Startup Script ──────────────────────────────────────────────
+
+function getStartupScript(tier: CloudInitTier = "full"): string {
+  // Defense-in-depth: validate username before any shell interpolation.
+  // resolveUsername() currently returns a constant, but if it ever changes
+  // to accept dynamic input, this prevents shell injection in the startup script.
+  assertSafeUsername(resolveUsername());
+
+  const packages = getPackagesForTier(tier);
+  const quotedPackages = packages.map((p) => shellQuote(p)).join(" ");
+  const lines = [
+    "#!/bin/bash",
+    "export HOME=/root",
+    "export DEBIAN_FRONTEND=noninteractive",
+    "apt-get update -y",
+    `apt-get install -y --no-install-recommends ${quotedPackages}`,
+    "# Install GitHub CLI (gh) via official APT repo — baked into cloud-init",
+    "# so it's available before post-provision SSH (avoids race condition #3206)",
+    'curl -fsSL --proto "=https" https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null',
+    "chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg",
+    'printf "deb [arch=%s signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\\n" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/github-cli.list',
+    "apt-get update -qq",
+    "apt-get install -y --no-install-recommends gh",
+  ];
+  if (needsNode(tier)) {
+    lines.push(
+      "# Install Node.js 22 via n (run as root so it installs to /usr/local/bin/)",
+      `${NODE_INSTALL_CMD} || true`,
+      "# Install Claude Code",
+      'curl --proto "=https" -fsSL https://claude.ai/install.sh | bash || true',
+    );
+  }
+  if (needsBun(tier)) {
+    lines.push(
+      "# Install Bun",
+      'curl --proto "=https" -fsSL https://bun.sh/install | bash || true',
+      "ln -sf /root/.bun/bin/bun /usr/local/bin/bun 2>/dev/null || true",
+    );
+  }
+  lines.push(
+    "# Configure PATH for all users",
+    "echo 'export PATH=\"${HOME}/.npm-global/bin:${HOME}/.claude/local/bin:${HOME}/.local/bin:${HOME}/.bun/bin:${PATH}\"' >> /etc/profile.d/spawn.sh",
+    "chmod +x /etc/profile.d/spawn.sh",
+    "touch /tmp/.cloud-init-complete",
+  );
+  return lines.join("\n") + "\n";
+}
+
+// ─── Provisioning ───────────────────────────────────────────────────────────
+
+export async function createInstance(
+  name: string,
+  zone: string,
+  machineType: string,
+  tier?: CloudInitTier,
+  imageFamily?: string,
+  imageProject?: string,
+): Promise<VMConnection> {
+  const username = resolveUsername();
+  assertSafeUsername(username);
+  const pubKeys = await ensureSshKey();
+  // Build ssh-keys metadata: one "user:key" entry per line
+  const sshKeysMetadata = pubKeys
+    .split("\n")
+    .map((k) => `${username}:${k}`)
+    .join("\n");
+
+  const family = imageFamily ?? "ubuntu-2404-lts-amd64";
+  const project = imageProject ?? "ubuntu-os-cloud";
+  logStep(`Creating GCP instance '${name}' (type: ${machineType}, zone: ${zone}, image: ${family})...`);
+
+  // Skip startup script for Container-Optimized OS (read-only filesystem, no apt-get)
+  const skipStartupScript = imageProject === "cos-cloud";
+  const tmpFile = skipStartupScript
+    ? undefined
+    : `/tmp/spawn_startup_${Date.now()}_${Math.random().toString(36).slice(2)}.sh`;
+  if (tmpFile) {
+    writeFileSync(tmpFile, getStartupScript(tier), {
+      mode: 0o600,
+    });
+  }
+
+  const args = [
+    "compute",
+    "instances",
+    "create",
+    name,
+    `--zone=${zone}`,
+    `--machine-type=${machineType}`,
+    `--image-family=${family}`,
+    `--image-project=${project}`,
+    `--boot-disk-size=${process.env.GCP_DISK_SIZE ?? String(DEFAULT_DISK_SIZE_GB)}GB`,
+    `--network=${process.env.GCP_NETWORK ?? "default"}`,
+    `--subnet=${process.env.GCP_SUBNET ?? "default"}`,
+    ...(tmpFile
+      ? [
+          `--metadata-from-file=startup-script=${tmpFile}`,
+        ]
+      : []),
+    `--metadata=ssh-keys=${sshKeysMetadata}`,
+    `--project=${_state.project}`,
+    "--quiet",
+  ];
+
+  // Wrap all gcloud calls so the temp file is cleaned up
+  // even when billing retry re-uses it (the args array references tmpFile).
+  const createResult = await asyncTryCatch(async () => {
+    let result = await gcloud(args);
+
+    // Auto-reauth on expired tokens
+    if (
+      result.exitCode !== 0 &&
+      /reauthentication|refresh.*auth|token.*expired|credentials.*invalid/i.test(result.stderr)
+    ) {
+      logWarn("Auth tokens expired -- running gcloud auth login...");
+      const reauth = await gcloudInteractive([
+        "auth",
+        "login",
+      ]);
+      if (reauth === 0) {
+        await gcloudInteractive([
+          "config",
+          "set",
+          "project",
+          _state.project,
+        ]);
+        logInfo("Re-authenticated, retrying instance creation...");
+        result = await gcloud(args);
+      }
+    }
+
+    if (result.exitCode !== 0) {
+      const errMsg = result.stderr || "Unknown error";
+      logError("Failed to create GCP instance");
+      if (result.stderr) {
+        logError(`gcloud error: ${result.stderr}`);
+      }
+
+      if (isBillingError(gcpBilling, errMsg)) {
+        const shouldRetry = await handleBillingError(gcpBilling);
+        if (shouldRetry) {
+          logStep("Retrying instance creation...");
+          const retryResult = await gcloud(args);
+          if (retryResult.exitCode === 0) {
+            // Fall through to IP extraction below
+          } else {
+            const retryErr = retryResult.stderr || "Unknown error";
+            logError(`Retry failed: ${retryErr}`);
+            throw new Error("Instance creation failed");
+          }
+        } else {
+          throw new Error("Instance creation failed");
+        }
+      } else if (/SERVICE_DISABLED/i.test(errMsg)) {
+        const urlMatch = errMsg.match(/https:\/\/console\.developers\.google\.com\/apis\/api\/[^\s"']+/);
+        const activationUrl =
+          urlMatch?.[0] ??
+          `https://console.developers.google.com/apis/api/compute.googleapis.com/overview?project=${_state.project}`;
+
+        process.stderr.write("\n");
+        logWarn("The Compute Engine API is not enabled on this project.");
+        logStep("  1. Open the API activation page (opening now...)");
+        logStep("  2. Click 'Enable' to activate the Compute Engine API");
+        logStep("  3. Wait ~30 seconds for it to propagate");
+        logStep("  4. Return here and press Enter to retry");
+        process.stderr.write("\n");
+        openBrowser(activationUrl);
+
+        const shouldRetry = await prompt("Press Enter after enabling the API to retry (or Ctrl+C to exit)")
+          .then(() => true)
+          .catch(() => false);
+        if (shouldRetry) {
+          logStep("Retrying instance creation...");
+          const retryResult = await gcloud(args);
+          if (retryResult.exitCode === 0) {
+            result = retryResult;
+          } else {
+            const retryErr = retryResult.stderr || "Unknown error";
+            logError(`Retry failed: ${retryErr}`);
+            throw new Error("Instance creation failed");
+          }
+        } else {
+          throw new Error("Instance creation failed");
+        }
+      } else {
+        showNonBillingError(gcpBilling, [
+          "Instance quota exceeded (try different GCP_ZONE)",
+          "Machine type unavailable (try different GCP_MACHINE_TYPE or GCP_ZONE)",
+        ]);
+        throw new Error("Instance creation failed");
+      }
+    }
+  });
+  // Clean up temp file after all retry paths have completed
+  if (tmpFile) {
+    tryCatch(() =>
+      Bun.spawnSync([
+        "rm",
+        "-f",
+        tmpFile,
+      ]),
+    );
+  }
+  if (!createResult.ok) {
+    throw createResult.error;
+  }
+
+  // Get external IP
+  const ipResult = gcloudSync([
+    "compute",
+    "instances",
+    "describe",
+    name,
+    `--zone=${zone}`,
+    `--project=${_state.project}`,
+    "--format=get(networkInterfaces[0].accessConfigs[0].natIP)",
+  ]);
+
+  _state.instanceName = name;
+  _state.zone = zone;
+  _state.serverIp = ipResult.stdout;
+
+  logInfo(`Instance created: IP=${_state.serverIp}`);
+
+  return {
+    ip: _state.serverIp,
+    user: username,
+    server_name: name,
+    cloud: "gcp",
+    metadata: {
+      zone,
+      project: _state.project,
+    },
+  };
+}
+
+// ─── SSH Operations ─────────────────────────────────────────────────────────
+
+async function waitForSsh(maxAttempts = 36): Promise<void> {
+  const username = resolveUsername();
+  const keyOpts = getSshKeyOpts(await ensureSshKeys());
+  await sharedWaitForSsh({
+    host: _state.serverIp,
+    user: username,
+    maxAttempts,
+    extraSshOpts: keyOpts,
+  });
+}
+
+export async function waitForSshOnly(): Promise<void> {
+  await waitForSsh();
+  logInfo("SSH available (skipping cloud-init)");
+}
+
+export async function waitForCloudInit(maxAttempts = 120): Promise<void> {
+  await waitForSsh();
+
+  logStep("Waiting for startup script completion...");
+  const username = resolveUsername();
+  const keyOpts = getSshKeyOpts(await ensureSshKeys());
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const pollResult = await asyncTryCatch(async () => {
+      const proc = Bun.spawn(
+        [
+          "ssh",
+          ...SSH_BASE_OPTS,
+          ...keyOpts,
+          `${username}@${_state.serverIp}`,
+          "test -f /tmp/.cloud-init-complete",
+        ],
+        {
+          stdio: [
+            "ignore",
+            "pipe",
+            "pipe",
+          ],
+        },
+      );
+      // Per-process timeout: if the network drops during cloud-init polling,
+      // `await proc.exited` blocks forever. Kill after 30s so the retry loop
+      // can continue and the user isn't left with a hung CLI.
+      const timer = setTimeout(() => killWithTimeout(proc), 30_000);
+      // Drain both pipes before awaiting exit to prevent pipe buffer deadlock
+      const pipeResult = await asyncTryCatch(async () => {
+        await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+        ]);
+        return await proc.exited;
+      });
+      clearTimeout(timer);
+      if (!pipeResult.ok) {
+        throw pipeResult.error;
+      }
+      return pipeResult.data;
+    });
+    if (pollResult.ok && pollResult.data === 0) {
+      logStepDone();
+      logInfo("Startup script completed");
+      return;
+    }
+    logStepInline(`Startup script running (${attempt}/${maxAttempts})`);
+    await sleep(5000);
+  }
+  logStepDone();
+  logWarn("Startup script may not have completed, continuing...");
+}
+
+export async function runServer(cmd: string, timeoutSecs?: number): Promise<void> {
+  if (!cmd || /\0/.test(cmd)) {
+    throw new Error("Invalid command: must be non-empty and must not contain null bytes");
+  }
+  const username = resolveUsername();
+  const fullCmd = `export PATH="$HOME/.npm-global/bin:$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH" && bash -c ${shellQuote(cmd)}`;
+  const keyOpts = getSshKeyOpts(await ensureSshKeys());
+
+  const proc = Bun.spawn(
+    [
+      "ssh",
+      ...SSH_BASE_OPTS,
+      ...keyOpts,
+      `${username}@${_state.serverIp}`,
+      fullCmd,
+    ],
+    {
+      stdio: [
+        "ignore",
+        "inherit",
+        "inherit",
+      ],
+      env: process.env,
+    },
+  );
+  const timeout = (timeoutSecs || 300) * 1000;
+  const timer = setTimeout(() => killWithTimeout(proc), timeout);
+  const runResult = await asyncTryCatch(() => proc.exited);
+  clearTimeout(timer);
+  if (!runResult.ok) {
+    throw runResult.error;
+  }
+  if (runResult.data !== 0) {
+    throw new Error(`run_server failed (exit ${runResult.data}): ${cmd}`);
+  }
+}
+
+export async function uploadFile(localPath: string, remotePath: string): Promise<void> {
+  // Validate localPath: reject path traversal, argument injection, and empty paths
+  if (!localPath || localPath.includes("..") || localPath.startsWith("-")) {
+    logError(`Invalid local path: ${localPath}`);
+    throw new Error("Invalid local path");
+  }
+  const expandedRemote = remotePath.replace(/^\$HOME\//, "~/");
+  const normalizedRemote = validateRemotePath(expandedRemote, /^[a-zA-Z0-9/_.~-]+$/);
+  const username = resolveUsername();
+  const keyOpts = getSshKeyOpts(await ensureSshKeys());
+
+  const proc = Bun.spawn(
+    [
+      "scp",
+      ...SSH_BASE_OPTS,
+      ...keyOpts,
+      localPath,
+      `${username}@${_state.serverIp}:${normalizedRemote}`,
+    ],
+    {
+      stdio: [
+        "ignore",
+        "inherit",
+        "inherit",
+      ],
+      env: process.env,
+    },
+  );
+  const timer = setTimeout(() => killWithTimeout(proc), 120_000);
+  const uploadResult = await asyncTryCatch(() => proc.exited);
+  clearTimeout(timer);
+  if (!uploadResult.ok) {
+    throw uploadResult.error;
+  }
+  if (uploadResult.data !== 0) {
+    throw new Error(`upload_file failed for ${remotePath}`);
+  }
+}
+
+export async function downloadFile(remotePath: string, localPath: string): Promise<void> {
+  if (!localPath || localPath.includes("..") || localPath.startsWith("-")) {
+    logError(`Invalid local path: ${localPath}`);
+    throw new Error("Invalid local path");
+  }
+  const expandedRemote = remotePath.replace(/^\$HOME\//, "~/");
+  const normalizedRemote = validateRemotePath(expandedRemote, /^[a-zA-Z0-9/_.~-]+$/);
+  const username = resolveUsername();
+  const keyOpts = getSshKeyOpts(await ensureSshKeys());
+
+  const proc = Bun.spawn(
+    [
+      "scp",
+      ...SSH_BASE_OPTS,
+      ...keyOpts,
+      `${username}@${_state.serverIp}:${normalizedRemote}`,
+      localPath,
+    ],
+    {
+      stdio: [
+        "ignore",
+        "inherit",
+        "inherit",
+      ],
+      env: process.env,
+    },
+  );
+  const timer = setTimeout(() => killWithTimeout(proc), 120_000);
+  const dlResult = await asyncTryCatch(() => proc.exited);
+  clearTimeout(timer);
+  if (!dlResult.ok) {
+    throw dlResult.error;
+  }
+  if (dlResult.data !== 0) {
+    throw new Error(`download_file failed for ${remotePath}`);
+  }
+}
+
+export async function interactiveSession(cmd: string): Promise<number> {
+  if (!cmd || /\0/.test(cmd)) {
+    throw new Error("Invalid command: must be non-empty and must not contain null bytes");
+  }
+  const username = resolveUsername();
+  const term = sanitizeTermValue(process.env.TERM || "xterm-256color");
+  // Use shellQuote for consistent single-quote escaping (prevents shell expansion of $variables in cmd)
+  const fullCmd = `export TERM='${term}' LANG='C.UTF-8' PATH="$HOME/.npm-global/bin:$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH" && exec bash -l -c ${shellQuote(cmd)}`;
+  const keyOpts = getSshKeyOpts(await ensureSshKeys());
+
+  const exitCode = spawnInteractive([
+    "ssh",
+    ...SSH_INTERACTIVE_OPTS,
+    ...keyOpts,
+    `${username}@${_state.serverIp}`,
+    fullCmd,
+  ]);
+
+  // Post-session summary
+  process.stderr.write("\n");
+  logWarn(`Session ended. Your GCP instance '${_state.instanceName}' is still running.`);
+  logWarn("Remember to delete it when you're done to avoid ongoing charges.");
+  logWarn("");
+  logWarn("Manage or delete it in your dashboard:");
+  logWarn(`  ${DASHBOARD_URL}`);
+  logWarn("");
+  logInfo("To delete from CLI:");
+  logInfo("  spawn delete");
+  logInfo("To reconnect:");
+  logInfo("  spawn last");
+  logInfo(`  or: gcloud compute ssh ${_state.instanceName} --zone=${_state.zone} --project=${_state.project}`);
+
+  return exitCode;
+}
+
+// ─── Lifecycle ──────────────────────────────────────────────────────────────
+
+/** Fetch the current public IP of an existing GCP instance. Returns null if it no longer exists. */
+export async function getServerIp(instanceName: string, zone: string, project: string): Promise<string | null> {
+  const result = gcloudSync([
+    "compute",
+    "instances",
+    "describe",
+    instanceName,
+    `--zone=${zone}`,
+    `--project=${project}`,
+    "--format=get(networkInterfaces[0].accessConfigs[0].natIP)",
+  ]);
+  if (result.exitCode !== 0) {
+    if (/not found|404|was not found/i.test(result.stderr)) {
+      return null;
+    }
+    throw new Error(`GCP API error: ${result.stderr}`);
+  }
+  const ip = result.stdout.trim();
+  return ip || null;
+}
+
+/** List all GCP instances in the current project/zone. Returns simplified instance info for the remap picker. */
+export async function listServers(zone: string, project: string): Promise<CloudInstance[]> {
+  const result = await gcloud([
+    "compute",
+    "instances",
+    "list",
+    `--project=${project}`,
+    `--zones=${zone}`,
+    "--format=json(name,networkInterfaces[0].accessConfigs[0].natIP,status)",
+  ]);
+  if (result.exitCode !== 0) {
+    return [];
+  }
+  const parsed = tryCatch((): unknown => JSON.parse(result.stdout));
+  if (!parsed.ok || !Array.isArray(parsed.data)) {
+    return [];
+  }
+  const items = toObjectArray(parsed.data);
+  const results: CloudInstance[] = [];
+  for (const item of items) {
+    const name = isString(item.name) ? item.name : "";
+    const status = isString(item.status) ? item.status : "";
+    // GCP nested: networkInterfaces[0].accessConfigs[0].natIP
+    let ip = "";
+    const ni = toObjectArray(item.networkInterfaces)[0];
+    if (ni) {
+      const ac = toObjectArray(ni.accessConfigs)[0];
+      if (ac) {
+        ip = isString(ac.natIP) ? ac.natIP : "";
+      }
+    }
+    results.push({
+      id: name,
+      name,
+      ip,
+      status,
+    });
+  }
+  return results;
+}
+
+export async function destroyInstance(name?: string): Promise<void> {
+  const instanceName = name || _state.instanceName;
+  const zone = _state.zone || process.env.GCP_ZONE || DEFAULT_ZONE;
+
+  if (!instanceName) {
+    logError("destroy: no instance name provided");
+    throw new Error("No instance name");
+  }
+
+  if (!_state.project) {
+    throw new Error("No GCP project set — cannot determine which project to delete from");
+  }
+
+  logStep(`Destroying GCP instance '${instanceName}'...`);
+  const result = await gcloud([
+    "compute",
+    "instances",
+    "delete",
+    instanceName,
+    `--zone=${zone}`,
+    `--project=${_state.project}`,
+    "--quiet",
+  ]);
+
+  if (result.exitCode !== 0) {
+    logError(`Failed to destroy GCP instance '${instanceName}'`);
+    logWarn("The instance may still be running and incurring charges.");
+    logWarn(`Delete it manually: ${DASHBOARD_URL}`);
+    throw new Error("Instance deletion failed");
+  }
+  logInfo(`Instance '${instanceName}' destroyed`);
+}

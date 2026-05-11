@@ -1,0 +1,121 @@
+$typo---default: (
+  name: (
+    var(--font-dm-sans, "DM Sans"),
+    sans-serif,
+  ),
+  variants: (
+    regular: 400,
+    semi: 500,
+    bold: 700,
+  ),
+) !default;
+
+$typo---display: (
+  name: (
+    var(--font-dm-sans, "DM Sans"),
+    sans-serif,
+  ),
+  variants: (
+    regular: 500,
+    bold: 700,
+  ),
+) !default;
+
+$typo---mono: (
+  name: (
+    var(--font-dm-mono, "DM Mono"),
+    monospace,
+  ),
+  variants: (
+    regular: 400,
+    bold: 500,
+  ),
+) !default;
+
+$typos: (
+  default: $typo---default,
+  text: $typo---default,
+  display: $typo---display,
+  mono: $typo---mono,
+) !default;
+
+$text-styles: (
+  display-l: (
+    (20 / 16) * 1rem,
+    1.3em,
+    display,
+    ("regular", "bold"),
+  ),
+  display: (
+    (16 / 16) * 1rem,
+    1.3em,
+    display,
+    ("regular", "bold"),
+  ),
+  display-s: (
+    (14 / 16) * 1rem,
+    1.3em,
+    display,
+    ("regular", "bold"),
+  ),
+  text-l: (
+    (14 / 16) * 1rem,
+    1.4em,
+    default,
+    ("regular", "semi", "bold"),
+  ),
+  text-m: (
+    (13 / 16) * 1rem,
+    1.4em,
+    default,
+    ("regular", "semi"),
+  ),
+  text-s: (
+    (12 / 16) * 1rem,
+    1.4em,
+    default,
+    ("regular", "semi"),
+  ),
+  text-xs: (
+    (11 / 16) * 1rem,
+    1.4em,
+    default,
+    ("regular", "semi"),
+  ),
+  mono-l: (
+    (13 / 16) * 1rem,
+    1.4em,
+    mono,
+    ("regular"),
+  ),
+  mono-m: (
+    (12 / 16) * 1rem,
+    1.4em,
+    mono,
+    ("regular"),
+  ),
+  mono-s: (
+    (11 / 16) * 1rem,
+    1.4em,
+    mono,
+    ("regular"),
+  ),
+  header-1: (
+    (28 / 16) * 1rem,
+    1.2em,
+    display,
+    ("bold"),
+  ),
+  header-2: (
+    (20 / 16) * 1rem,
+    1.3em,
+    display,
+    ("bold"),
+  ),
+  header-3: (
+    (16 / 16) * 1rem,
+    1.3em,
+    display,
+    ("bold"),
+  ),
+) !default;

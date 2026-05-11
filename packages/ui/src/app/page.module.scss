@@ -1,0 +1,572 @@
+@import "src/styles/index";
+
+.page {
+  min-height: 100vh;
+  @include flex(stretch, flex-start, column);
+  background: c(background);
+}
+
+.main {
+  flex: 1;
+}
+
+.shell {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 0 pad(6) pad(12);
+
+  @media (min-width: 768px) {
+    padding: 0 pad(10) pad(16);
+  }
+}
+
+/* ─── Hero (Spawn-style centered stack) ─── */
+.hero {
+  text-align: center;
+  padding: pad(12) 0 pad(14);
+  max-width: 48rem;
+  margin: 0 auto;
+}
+
+.hero__badge {
+  display: inline-block;
+  @include text(text-xs);
+  @include font(600);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgb(var(--highlight));
+  border: 1px solid c(stroke-2);
+  background: c(base-2);
+  border-radius: 999px;
+  padding: pad(1) pad(3);
+  margin: 0 0 pad(5);
+}
+
+.hero__title {
+  @include font(700);
+  font-size: clamp(2.25rem, 7vw, 3.75rem);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  color: c(text-1);
+  margin: 0 0 pad(4);
+}
+
+.hero__tagline {
+  @include text(text-l);
+  @include font(500);
+  color: c(text-2);
+  margin: 0;
+  line-height: 1.45;
+  max-width: 36rem;
+  margin-inline: auto;
+}
+
+/* ─── Section bands ─── */
+.band {
+  padding: pad(12) 0;
+  border-top: 1px solid c(stroke-2);
+}
+
+.sectionHead {
+  @include flex(flex-start, flex-start);
+  gap: pad(4);
+  margin-bottom: pad(8);
+}
+
+.sectionHead__index {
+  flex-shrink: 0;
+  @include flex-center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: br(m);
+  border: 1px solid c(stroke-2);
+  background: c(base-2);
+  @include font(700);
+  @include text(text-l);
+  color: c(text-1);
+  line-height: 1;
+}
+
+.sectionHead__title {
+  margin: 0;
+  padding-bottom: pad(1);
+  @include font(700);
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  letter-spacing: -0.02em;
+  color: c(text-1);
+  border-bottom: 2px solid c(stroke-2);
+  flex: 1;
+  min-width: 0;
+}
+
+.h2 {
+  margin: 0 0 pad(3);
+  @include font(700);
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  letter-spacing: -0.02em;
+  color: c(text-1);
+}
+
+.lede {
+  @include text(text-m);
+  color: c(text-2);
+  line-height: 1.55;
+  max-width: 40rem;
+  margin: 0 0 pad(8);
+}
+
+.band__foot {
+  @include text(text-s);
+  color: c(text-3);
+  margin: pad(8) 0 0;
+}
+
+.inlineLink {
+  color: rgb(var(--highlight));
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+/* ─── Agent grid (Spawn pick list) ─── */
+.agentGrid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: pad(4);
+  grid-template-columns: 1fr;
+  align-items: stretch;
+
+  @media (min-width: 640px) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  @media (min-width: 1024px) {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.agentCard {
+  box-sizing: border-box;
+  height: 100%;
+  @include flex(stretch, flex-start, column);
+  @include padding(4, 5);
+  border-radius: br(m);
+  border: 1px solid c(stroke-2);
+  background: c(base-1);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+  @include text(text-s);
+  min-height: 17.5rem;
+
+  &:hover {
+    border-color: c(stroke-1);
+    box-shadow: shadow(s);
+  }
+}
+
+.agentCard--hot {
+  border-color: color-mix(in srgb, rgb(var(--highlight)) 45%, c(stroke-2));
+  background: color-mix(in srgb, c(base-2) 88%, c(base-1));
+}
+
+.agentCard--muted:not(.agentCard--hot) {
+  opacity: 0.42;
+  filter: saturate(0.35);
+}
+
+.agentCard--muted:not(.agentCard--hot):hover {
+  border-color: c(stroke-2);
+  box-shadow: none;
+}
+
+.agentCard__top {
+  @include flex(flex-start, flex-start);
+  gap: pad(4);
+  margin-bottom: pad(3);
+  min-height: 2.75rem;
+}
+
+.agentCard__logo {
+  flex-shrink: 0;
+  display: block;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: br(s);
+  overflow: hidden;
+  border: 1px solid c(stroke-2);
+  background: c(base-2);
+}
+
+.agentCard__logo svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.agentCard__logoSvg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.agentCard__logoSvg > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.agentCard__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.agentCard__name {
+  @include font(600);
+  @include text(text-m);
+  color: c(text-1);
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.25;
+  padding-top: 2px;
+  align-self: center;
+}
+
+.agentCard__desc {
+  flex: 1 1 auto;
+  color: c(text-2);
+  margin: 0 0 pad(4);
+  line-height: 1.5;
+  min-height: 4.6em;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.agentCard__footer {
+  margin-top: auto;
+  padding-top: pad(4);
+  border-top: 1px solid c(stroke-2);
+}
+
+.agentCard__publisher {
+  margin: 0 0 pad(2);
+  @include text(text-xs);
+  color: c(text-3);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agentCard__metric {
+  @include flex(flex-start, space-between);
+  gap: pad(3);
+}
+
+.agentCard__metricLabel {
+  @include text(text-xs);
+  @include font(600);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: c(text-3);
+}
+
+.agentCard__metricValue {
+  @include text(text-s);
+  @include font(500);
+  color: c(text-1);
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ─── Under the hood steps ─── */
+.hoodSteps {
+  list-style: none;
+  margin: 0 0 pad(8);
+  padding: 0;
+  display: grid;
+  gap: pad(5);
+
+  @media (min-width: 900px) {
+    grid-template-columns: 1fr 1fr;
+    gap: pad(6) pad(8);
+  }
+}
+
+.hoodStep {
+  @include flex(flex-start, flex-start);
+  gap: pad(4);
+}
+
+.hoodStep__n {
+  flex-shrink: 0;
+  @include flex-center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  background: c(base-3);
+  border: 1px solid c(stroke-2);
+  @include font(700);
+  @include text(text-s);
+  color: c(text-1);
+}
+
+.hoodStep__h {
+  @include font(600);
+  @include text(text-m);
+  color: c(text-1);
+  margin: 0 0 pad(1);
+}
+
+.hoodStep__p {
+  @include text(text-s);
+  color: c(text-2);
+  margin: 0;
+  line-height: 1.55;
+}
+
+.hoodInstallCard {
+  margin: 0 0 pad(8);
+  box-sizing: border-box;
+  @include padding(5, 6);
+  border-radius: br(m);
+  border: 1px solid color-mix(in srgb, rgb(var(--highlight)) 35%, c(stroke-2));
+  background: color-mix(in srgb, c(base-2) 92%, c(base-1));
+  box-shadow: shadow(s);
+}
+
+.hoodInstallCard__kicker {
+  margin: 0 0 pad(2);
+  @include text(text-xs);
+  @include font(600);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgb(var(--highlight));
+}
+
+.hoodInstallCard__title {
+  margin: 0 0 pad(3);
+  @include font(700);
+  @include text(text-l);
+  color: c(text-1);
+  line-height: 1.3;
+}
+
+.hoodInstallCard__hint {
+  margin: 0 0 pad(5);
+  @include text(text-s);
+  color: c(text-2);
+  line-height: 1.55;
+}
+
+.hoodInstallCard__code {
+  @include text(mono-s);
+  padding: 0.12em 0.35em;
+  border-radius: br(s);
+  background: c(base-3);
+  border: 1px solid c(stroke-2);
+  color: c(text-1);
+}
+
+.hoodInstallCard__alt {
+  margin: pad(4) 0 0;
+  @include text(text-xs);
+  color: c(text-3);
+  line-height: 1.5;
+}
+
+.hoodInstallCard__inline {
+  @include text(mono-s);
+  word-break: break-all;
+  color: c(text-2);
+}
+
+.hoodPipelineLead {
+  margin: 0 0 pad(6);
+  @include text(text-m);
+  color: c(text-2);
+  line-height: 1.5;
+}
+
+.hoodCommandsTitle {
+  margin: pad(10) 0 pad(2);
+  @include font(600);
+  @include text(text-m);
+  color: c(text-1);
+}
+
+.hoodCommandsSub {
+  margin: 0 0 pad(4);
+  @include text(text-s);
+  color: c(text-3);
+}
+
+.hoodCommandsBlock {
+  max-width: 48rem;
+}
+
+.codeStack {
+  display: grid;
+  gap: pad(4);
+
+  @media (min-width: 768px) {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+}
+
+/* ─── Why grid (4-up like Spawn) ─── */
+.whyGrid {
+  display: grid;
+  gap: pad(4);
+  grid-template-columns: 1fr;
+
+  @media (min-width: 768px) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  @media (min-width: 1100px) {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.whyCard {
+  @include padding(4, 4);
+  border-radius: br(m);
+  border: 1px solid c(stroke-2);
+  background: c(base-1);
+}
+
+.whyCard__h {
+  @include font(600);
+  @include text(text-m);
+  color: c(text-1);
+  margin: 0 0 pad(2);
+}
+
+.whyCard__p {
+  @include text(text-s);
+  color: c(text-2);
+  margin: 0;
+  line-height: 1.55;
+}
+
+.footer {
+  border-top: 1px solid c(stroke-2);
+  padding: pad(8) pad(6);
+  margin-top: auto;
+  text-align: center;
+  @include text(text-s);
+  color: c(text-3);
+
+  p {
+    margin: 0;
+  }
+
+  @media (min-width: 768px) {
+    padding: pad(8) pad(10);
+  }
+}
+
+.footer__link {
+  color: c(text-2);
+  text-decoration: none;
+
+  &:hover {
+    color: rgb(var(--highlight));
+  }
+}
+
+.footer__sep {
+  margin: 0 pad(2);
+  opacity: 0.5;
+}
+
+/* ─── Agent search ─── */
+.searchRow {
+  margin-bottom: pad(6);
+}
+
+.searchLabel {
+  display: block;
+  margin-bottom: pad(2);
+  @include text(text-xs);
+  @include font(600);
+  color: c(text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.searchInput {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 22rem;
+  padding: pad(2) pad(4);
+  border-radius: br(m);
+  border: 1px solid c(stroke-2);
+  background: c(base-1);
+  color: c(text-1);
+  @include text(text-m);
+
+  &::placeholder {
+    color: c(text-3);
+  }
+
+  &:focus {
+    outline: 2px solid color-mix(in srgb, rgb(var(--highlight)) 55%, transparent);
+    outline-offset: 1px;
+  }
+}
+
+.searchMeta {
+  @include text(text-xs);
+  color: c(text-3);
+  margin: pad(2) 0 0;
+}
+
+.searchEmpty {
+  @include text(text-s);
+  color: c(text-2);
+  margin: pad(4) 0 0;
+}
+
+/* ─── Without the CLI ─── */
+.withoutCliCard {
+  margin: pad(6) 0 0;
+  @include padding(5, 6);
+  border-radius: br(m);
+  border: 1px solid c(stroke-2);
+  background: c(base-2);
+}
+
+.withoutCliTitle {
+  margin: 0 0 pad(2);
+  @include font(600);
+  @include text(text-m);
+  color: c(text-1);
+}
+
+.withoutCliText {
+  margin: 0 0 pad(4);
+  @include text(text-s);
+  color: c(text-2);
+  line-height: 1.55;
+}
+
+.withoutCliHint {
+  margin: pad(3) 0 0;
+  @include text(text-xs);
+  color: c(text-3);
+  line-height: 1.5;
+}

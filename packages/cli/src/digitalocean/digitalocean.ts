@@ -1,0 +1,1768 @@
+// digitalocean/digitalocean.ts — Core DigitalOcean provider: API, auth, SSH, provisioning
+
+import type { CloudInstance, VMConnection } from "../history.js";
+import type { CloudInitTier } from "../shared/agents.js";
+
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import * as p from "@clack/prompts";
+import { getErrorMessage, isNumber, isString, toObjectArray, toRecord } from "@grid-spawn/sdk";
+import { isInteractiveTTY } from "../commands/shared.js";
+import { handleBillingError, isBillingError, showNonBillingError } from "../shared/billing-guidance.js";
+import { getPackagesForTier, NODE_INSTALL_CMD, needsBun, needsNode } from "../shared/cloud-init.js";
+import { generateCsrfState, OAUTH_CSS } from "../shared/oauth.js";
+import { parseJsonObj } from "../shared/parse.js";
+import { getSpawnCloudConfigPath } from "../shared/paths.js";
+import {
+  asyncTryCatch,
+  asyncTryCatchIf,
+  isFileError,
+  isNetworkError,
+  tryCatch,
+  tryCatchIf,
+  unwrapOr,
+} from "../shared/result.js";
+import {
+  killWithTimeout,
+  SSH_BASE_OPTS,
+  SSH_INTERACTIVE_OPTS,
+  waitForSsh as sharedWaitForSsh,
+  sleep,
+  spawnInteractive,
+  validateRemotePath,
+  waitForSshSnapshotBoot,
+} from "../shared/ssh.js";
+import { ensureSshKeys, getSpawnKey, getSshFingerprint, getSshKeyOpts, SPAWN_KEY_NAME } from "../shared/ssh-keys.js";
+import {
+  defaultSpawnName,
+  getServerNameFromEnv,
+  loadApiToken,
+  logError,
+  logInfo,
+  logStep,
+  logStepDone,
+  logStepInline,
+  logWarn,
+  openBrowser,
+  prompt,
+  retryOrQuit,
+  sanitizeTermValue,
+  selectFromList,
+  shellQuote,
+  toKebabCase,
+  validateRegionName,
+  validateServerName,
+} from "../shared/ui.js";
+import { digitaloceanBilling } from "./billing.js";
+
+const DO_API_BASE = "https://api.digitalocean.com/v2";
+const DO_DASHBOARD_URL = "https://cloud.digitalocean.com/droplets";
+
+// ─── DO OAuth Constants ─────────────────────────────────────────────────────
+
+const DO_OAUTH_AUTHORIZE = "https://cloud.digitalocean.com/v1/oauth/authorize";
+const DO_OAUTH_TOKEN = "https://cloud.digitalocean.com/v1/oauth/token";
+
+// OAuth application credentials — embedded in the binary, same pattern as gh CLI and doctl.
+//
+// Why the client_secret is here and why that's acceptable:
+//   1. DigitalOcean's token exchange endpoint REQUIRES client_secret — their OAuth
+//      implementation does not support PKCE-only public client flows (as of 2026-03).
+//   2. Open-source CLI tools are "public clients" (RFC 6749 §2.1) — any secret
+//      shipped in source code or a binary is extractable and provides zero
+//      confidentiality. This is a well-understood OAuth limitation.
+//   3. Security relies on the authorization code flow itself: user consent in the
+//      browser, localhost-only redirect URI, and CSRF state parameter validation.
+//   4. The secret alone cannot access user resources — it only allows exchanging a
+//      one-time authorization code (which requires user approval) for a token.
+//   5. This is the same pattern used by: gh CLI (GitHub), doctl (DigitalOcean),
+//      gcloud (Google), and az (Azure).
+//
+// Override: Set DO_CLIENT_SECRET env var to use your own OAuth app secret instead
+// of the bundled default (useful for organizations with custom DO OAuth apps).
+//
+// TODO: PKCE migration — monitor and migrate when DigitalOcean adds support.
+//   Last checked: 2026-03 — PKCE without client_secret returns 401 invalid_request.
+//   Check status: POST to /v1/oauth/token with code_verifier but WITHOUT client_secret.
+//   If it succeeds, migrate using this checklist:
+//     1. Add code_verifier/code_challenge (S256) generation to tryDoOAuth()
+//     2. Include code_challenge + code_challenge_method in the authorize URL params
+//     3. Include code_verifier in the token exchange POST body
+//     4. Remove DO_CLIENT_SECRET constant and all client_secret params from token requests
+//     5. Remove client_secret from tryRefreshDoToken() refresh request body
+//     6. Update this comment to reflect the new PKCE-only flow
+//   Re-check every 6 months or when DigitalOcean announces OAuth/API updates.
+const DO_CLIENT_ID = "c82b64ac5f9cd4d03b686bebf17546c603b9c368a296a8c4c0718b1f405e4bdc";
+const DO_CLIENT_SECRET =
+  process.env["DO_CLIENT_SECRET"] ?? "8083ef0317481d802d15b68f1c0b545b726720dbf52d00d17f649cc794efdfd9";
+
+// Fine-grained scopes for spawn (minimum required)
+const DO_SCOPES = [
+  "account:read",
+  "droplet:create",
+  "droplet:delete",
+  "droplet:read",
+  "ssh_key:create",
+  "ssh_key:read",
+  "regions:read",
+  "sizes:read",
+  "image:read",
+  "actions:read",
+  "tag:create",
+].join(" ");
+
+/** Droplet tag for Spawn-sourced attribution (API name: letters, numbers, colons, dashes, underscores). */
+export const SPAWN_DIGITALOCEAN_ATTRIBUTION_TAG = "spawn";
+
+const DO_OAUTH_CALLBACK_PORT = 5190;
+
+// ─── State ───────────────────────────────────────────────────────────────────
+
+interface DigitalOceanState {
+  token: string;
+  dropletId: string;
+  serverIp: string;
+}
+
+const _state: DigitalOceanState = {
+  token: "",
+  dropletId: "",
+  serverIp: "",
+};
+
+/** Return SSH connection info for tunnel support. */
+export function getConnectionInfo(): {
+  host: string;
+  user: string;
+} {
+  return {
+    host: _state.serverIp,
+    user: "root",
+  };
+}
+
+// ─── API Client ──────────────────────────────────────────────────────────────
+
+/** Guard to prevent re-entrant OAuth recovery (doApi → tryDoOAuth → doApi → …). */
+let _recovering401 = false;
+
+async function doApi(method: string, endpoint: string, body?: string, maxRetries = 3): Promise<string> {
+  const url = `${DO_API_BASE}${endpoint}`;
+
+  let interval = 2;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const r = await asyncTryCatchIf(isNetworkError, async () => {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${_state.token}`,
+      };
+      const opts: RequestInit = {
+        method,
+        headers,
+      };
+      if (body && (method === "POST" || method === "PUT" || method === "PATCH")) {
+        opts.body = body;
+      }
+      const resp = await fetch(url, {
+        ...opts,
+        signal: AbortSignal.timeout(30_000),
+      });
+      const text = await resp.text();
+
+      // 401: token expired/revoked — try OAuth recovery once before giving up
+      if (resp.status === 401 && !_recovering401) {
+        logWarn("DigitalOcean token expired or revoked, attempting OAuth recovery...");
+        _recovering401 = true;
+        const recoveryResult = await asyncTryCatch(async () => {
+          const newToken = await tryDoOAuth();
+          if (newToken) {
+            _state.token = newToken;
+            await saveTokenToConfig(newToken);
+            logInfo("OAuth recovery succeeded, retrying request...");
+            // Retry the same request with the new token
+            const retryResp = await fetch(url, {
+              ...opts,
+              headers: {
+                ...headers,
+                Authorization: `Bearer ${newToken}`,
+              },
+              signal: AbortSignal.timeout(30_000),
+            });
+            const retryText = await retryResp.text();
+            if (!retryResp.ok) {
+              throw new Error(
+                `DigitalOcean API error ${retryResp.status} for ${method} ${endpoint}: ${retryText.slice(0, 200)}`,
+              );
+            }
+            return retryText;
+          }
+          return null;
+        });
+        _recovering401 = false;
+        if (recoveryResult.ok && recoveryResult.data !== null) {
+          return recoveryResult.data;
+        }
+        throw new Error(`DigitalOcean API error 401 for ${method} ${endpoint}: ${text.slice(0, 200)}`);
+      }
+
+      if ((resp.status === 429 || resp.status >= 500) && attempt < maxRetries) {
+        logWarn(`API ${resp.status} (attempt ${attempt}/${maxRetries}), retrying in ${interval}s...`);
+        await sleep(interval * 1000);
+        interval = Math.min(interval * 2, 30);
+        return undefined;
+      }
+      if (!resp.ok) {
+        throw new Error(`DigitalOcean API error ${resp.status} for ${method} ${endpoint}: ${text.slice(0, 200)}`);
+      }
+      return text;
+    });
+    if (r.ok) {
+      if (r.data !== undefined) {
+        return r.data;
+      }
+      continue;
+    }
+    if (attempt >= maxRetries) {
+      throw r.error;
+    }
+    logWarn(`API request failed (attempt ${attempt}/${maxRetries}), retrying...`);
+    await sleep(interval * 1000);
+    interval = Math.min(interval * 2, 30);
+  }
+  throw new Error("doApi: unreachable");
+}
+
+/**
+ * Paginate a DigitalOcean GET collection endpoint.
+ * Returns all items from the given `key` across all pages.
+ */
+async function doGetAll(endpoint: string, key: string): Promise<Record<string, unknown>[]> {
+  const perPage = 50;
+  const sep = endpoint.includes("?") ? "&" : "?";
+  let page = 1;
+  const all: Record<string, unknown>[] = [];
+  for (;;) {
+    const resp = await doApi("GET", `${endpoint}${sep}per_page=${perPage}&page=${page}`);
+    const data = parseJsonObj(resp);
+    const items = toObjectArray(data?.[key]);
+    for (const item of items) {
+      all.push(toRecord(item) ?? {});
+    }
+    if (items.length < perPage) {
+      break;
+    }
+    page = page + 1;
+  }
+  return all;
+}
+
+// ─── Token Persistence ───────────────────────────────────────────────────────
+
+function loadConfig(): Record<string, unknown> | null {
+  return unwrapOr(
+    tryCatchIf(isFileError, () => parseJsonObj(readFileSync(getSpawnCloudConfigPath("digitalocean"), "utf-8"))),
+    null,
+  );
+}
+
+async function saveConfig(values: Record<string, unknown>): Promise<void> {
+  const configPath = getSpawnCloudConfigPath("digitalocean");
+  const dir = dirname(configPath);
+  mkdirSync(dir, {
+    recursive: true,
+    mode: 0o700,
+  });
+  writeFileSync(configPath, JSON.stringify(values, null, 2) + "\n", {
+    mode: 0o600,
+  });
+}
+
+async function saveTokenToConfig(token: string, refreshToken?: string, expiresIn?: number): Promise<void> {
+  const config: Record<string, unknown> = {
+    api_key: token,
+    token,
+  };
+  if (refreshToken) {
+    config.refresh_token = refreshToken;
+    config.auth_method = "oauth";
+  }
+  if (expiresIn) {
+    config.expires_at = Math.floor(Date.now() / 1000) + expiresIn;
+  }
+  await saveConfig(config);
+}
+
+function loadRefreshToken(): string | null {
+  const data = loadConfig();
+  if (!data) {
+    return null;
+  }
+  const refreshToken = isString(data.refresh_token) ? data.refresh_token : "";
+  if (!refreshToken) {
+    return null;
+  }
+  if (!/^[a-zA-Z0-9._/@:+=-]+$/.test(refreshToken)) {
+    return null;
+  }
+  return refreshToken;
+}
+
+function isTokenExpired(): boolean {
+  const data = loadConfig();
+  if (!data) {
+    return false;
+  }
+  const expiresAt = isNumber(data.expires_at) ? data.expires_at : 0;
+  if (!expiresAt) {
+    return false;
+  }
+  // Consider expired 5 minutes before actual expiry
+  return Math.floor(Date.now() / 1000) >= expiresAt - 300;
+}
+
+// ─── Token Validation ────────────────────────────────────────────────────────
+
+async function testDoToken(): Promise<boolean> {
+  if (!_state.token) {
+    return false;
+  }
+  return unwrapOr(
+    await asyncTryCatch(async () => {
+      const text = await doApi("GET", "/account", undefined, 1);
+      return text.includes('"uuid"');
+    }),
+    false,
+  );
+}
+
+/** Parsed /v2/account fields for readiness checks (single source for snapshot). */
+export interface DoAccountSnapshot {
+  status: string;
+  email_verified: boolean | undefined;
+  droplet_limit: number;
+}
+
+/** Fetch account record for readiness (requires valid `_state.token`). */
+export async function fetchDoAccountSnapshot(): Promise<DoAccountSnapshot | null> {
+  if (!_state.token) {
+    return null;
+  }
+  const r = await asyncTryCatch(async () => {
+    const text = await doApi("GET", "/account", undefined, 1);
+    const data = parseJsonObj(text);
+    const rec = toRecord(data?.account);
+    if (!rec) {
+      return null;
+    }
+    const ev = rec.email_verified;
+    return {
+      status: isString(rec.status) ? rec.status : "",
+      email_verified: ev === false ? false : ev === true ? true : undefined,
+      droplet_limit: isNumber(rec.droplet_limit) ? rec.droplet_limit : 0,
+    };
+  });
+  return r.ok ? r.data : null;
+}
+
+/**
+ * True if the spawn-managed key is registered on the DO account.
+ */
+export async function areSshKeysRegisteredOnDigitalOcean(): Promise<boolean> {
+  if (!_state.token) {
+    return false;
+  }
+  const fingerprint = getSshFingerprint(getSpawnKey().pubPath);
+  if (!fingerprint) {
+    return false;
+  }
+  const keys = await doGetAll("/account/keys", "ssh_keys");
+  return keys.some((k) => k.fingerprint === fingerprint);
+}
+
+/** Ensure attribution tag exists (ignore if already present or insufficient scope). */
+async function ensureSpawnAttributionTag(): Promise<void> {
+  await asyncTryCatch(() =>
+    doApi(
+      "POST",
+      "/tags",
+      JSON.stringify({
+        name: SPAWN_DIGITALOCEAN_ATTRIBUTION_TAG,
+      }),
+    ),
+  );
+}
+
+/** Current droplet count for quota checks (null on API failure). */
+export async function getDropletCount(): Promise<number | null> {
+  if (!_state.token) {
+    return null;
+  }
+  const r = await asyncTryCatch(() => doGetAll("/droplets", "droplets"));
+  return r.ok ? r.data.length : null;
+}
+
+// ─── Account Info & Switch ──────────────────────────────────────────────────
+
+async function getAccountInfo(): Promise<{
+  email: string;
+  team: string;
+  status: string;
+} | null> {
+  if (!_state.token) {
+    return null;
+  }
+  const r = await asyncTryCatch(async () => {
+    const text = await doApi("GET", "/account", undefined, 1);
+    const data = parseJsonObj(text);
+    const rec = toRecord(data?.account);
+    if (!rec) {
+      return null;
+    }
+    const teamRec = toRecord(rec.team);
+    const teamName = teamRec && isString(teamRec.name) ? teamRec.name : "";
+    return {
+      email: isString(rec.email) ? rec.email : "unknown",
+      team: teamName,
+      status: isString(rec.status) ? rec.status : "unknown",
+    };
+  });
+  return r.ok ? r.data : null;
+}
+
+/**
+ * Show current account info and offer to switch to a different DigitalOcean account.
+ * Returns true if the user switched accounts (caller should retry the operation).
+ */
+export async function promptSwitchAccount(): Promise<boolean> {
+  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+    return false;
+  }
+
+  const info = await getAccountInfo();
+  if (info) {
+    const teamSuffix = info.team ? ` (team: ${info.team})` : "";
+    logInfo(`Logged in as: ${info.email}${teamSuffix} — status: ${info.status}`);
+  }
+
+  const shouldSwitch = await p.confirm({
+    message: "Wrong account? Switch to a different DigitalOcean account?",
+    initialValue: false,
+  });
+  if (p.isCancel(shouldSwitch) || !shouldSwitch) {
+    return false;
+  }
+
+  // Clear current auth state and saved config
+  _state.token = "";
+  await saveConfig({});
+  logStep("Cleared saved DigitalOcean credentials. Re-authenticating...");
+  await ensureDoToken();
+  return true;
+}
+
+/**
+ * Check DigitalOcean account status for billing issues and droplet limits.
+ * Uses the /v2/account endpoint which is already called during token validation.
+ * Throws if the account is locked (billing issue) or at the droplet limit (in headless mode).
+ * Warns on other statuses.
+ */
+export async function checkAccountStatus(): Promise<void> {
+  if (!_state.token) {
+    return;
+  }
+  const r = await asyncTryCatch(async () => {
+    const snapshot = await fetchDoAccountSnapshot();
+    if (!snapshot) {
+      return;
+    }
+    const status = snapshot.status;
+    const emailVerified = snapshot.email_verified;
+    const dropletLimit = snapshot.droplet_limit;
+
+    if (status === "locked") {
+      logWarn("Your DigitalOcean account is locked (usually a billing issue).");
+      // Offer to switch account before billing error flow
+      const switched = await promptSwitchAccount();
+      if (switched) {
+        // Re-check with new account
+        return;
+      }
+      const shouldRetry = await handleBillingError(digitaloceanBilling);
+      if (!shouldRetry) {
+        throw new Error("DigitalOcean account is locked");
+      }
+      // Re-check after user says they fixed it
+      const retryText = await doApi("GET", "/account", undefined, 1);
+      const retryData = parseJsonObj(retryText);
+      const retryRec = toRecord(retryData?.account);
+      if (retryRec) {
+        if (isString(retryRec.status) && retryRec.status === "locked") {
+          logWarn("Account is still locked. Continuing anyway — server creation may fail.");
+        }
+      }
+    } else if (status === "warning") {
+      logWarn("Your DigitalOcean account has a warning status. You may experience limitations.");
+      const switched = await promptSwitchAccount();
+      if (switched) {
+        return;
+      }
+    }
+
+    if (emailVerified === false) {
+      logWarn("Your DigitalOcean email is not verified. Verify it to avoid account restrictions.");
+    }
+
+    // Check droplet limit — fail fast before attempting creation
+    if (dropletLimit > 0) {
+      const existingDroplets = await asyncTryCatch(() => doGetAll("/droplets", "droplets"));
+      if (existingDroplets.ok) {
+        const currentCount = existingDroplets.data.length;
+        if (currentCount >= dropletLimit) {
+          // List existing droplet names to help operators identify which to delete
+          const dropletNames = existingDroplets.data.map((d) => (isString(d.name) ? d.name : "unknown")).join(", ");
+          const msg = `DigitalOcean droplet limit reached: ${currentCount}/${dropletLimit} droplets in use. Existing: [${dropletNames}]. Delete existing droplets at ${DO_DASHBOARD_URL} or request a limit increase at https://cloud.digitalocean.com/account/team/droplet_limit_increase`;
+          logWarn(msg);
+          if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+            throw new Error(msg);
+          }
+        } else if (dropletLimit - currentCount <= 2) {
+          logWarn(`DigitalOcean droplet quota almost full: ${currentCount}/${dropletLimit} droplets in use.`);
+        }
+      }
+    }
+  });
+  if (!r.ok) {
+    // Re-throw explicit errors (account locked, droplet limit in headless mode)
+    if (
+      r.error instanceof Error &&
+      (r.error.message === "DigitalOcean account is locked" ||
+        r.error.message.startsWith("DigitalOcean droplet limit reached"))
+    ) {
+      throw r.error;
+    }
+    // Otherwise non-fatal — let createServer be the final check
+  }
+}
+
+// ─── DO OAuth Flow ──────────────────────────────────────────────────────────
+
+const OAUTH_SUCCESS_HTML = `<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>${OAUTH_CSS}</style></head><body><div class="card"><div class="icon">&#10003;</div><h1>DigitalOcean Authorization Successful</h1><p>You can close this tab and return to your terminal.</p></div><script>setTimeout(function(){try{window.close()}catch(e){}},3000)</script></body></html>`;
+
+const OAUTH_ERROR_HTML = `<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>${OAUTH_CSS}h1{color:#dc2626}@media(prefers-color-scheme:dark){h1{color:#ef4444}}</style></head><body><div class="card"><div class="icon">&#10007;</div><h1>Authorization Failed</h1><p>Invalid or missing state parameter (CSRF protection). Please try again.</p></div></body></html>`;
+
+async function tryRefreshDoToken(): Promise<string | null> {
+  const refreshToken = loadRefreshToken();
+  if (!refreshToken) {
+    return null;
+  }
+
+  logStep("Attempting to refresh DigitalOcean token...");
+
+  const r = await asyncTryCatch(async () => {
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: DO_CLIENT_ID,
+      client_secret: DO_CLIENT_SECRET,
+    });
+
+    const resp = await fetch(DO_OAUTH_TOKEN, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!resp.ok) {
+      logWarn("Token refresh failed — refresh token may be expired");
+      return null;
+    }
+
+    const data = parseJsonObj(await resp.text());
+    if (!data?.access_token) {
+      logWarn("Token refresh returned no access token");
+      return null;
+    }
+
+    const accessToken = isString(data.access_token) ? data.access_token : "";
+    const newRefreshToken = isString(data.refresh_token) ? data.refresh_token : undefined;
+    const expiresIn = isNumber(data.expires_in) ? data.expires_in : undefined;
+    await saveTokenToConfig(accessToken, newRefreshToken || refreshToken, expiresIn);
+    logInfo("DigitalOcean token refreshed successfully");
+    return accessToken;
+  });
+  if (!r.ok) {
+    logWarn("Token refresh request failed");
+    return null;
+  }
+  return r.data;
+}
+
+async function tryDoOAuth(): Promise<string | null> {
+  logStep("Attempting DigitalOcean OAuth authentication...");
+
+  // Check connectivity to DigitalOcean
+  const connCheck = await asyncTryCatch(() =>
+    fetch("https://cloud.digitalocean.com", {
+      method: "HEAD",
+      signal: AbortSignal.timeout(5_000),
+    }),
+  );
+  if (!connCheck.ok) {
+    logWarn("Cannot reach cloud.digitalocean.com — network may be unavailable");
+    return null;
+  }
+
+  const csrfState = generateCsrfState();
+  let oauthCode: string | null = null;
+  let oauthDenied = false;
+  let server: ReturnType<typeof Bun.serve> | null = null;
+
+  // Try ports in range
+  let actualPort = DO_OAUTH_CALLBACK_PORT;
+  for (let p = DO_OAUTH_CALLBACK_PORT; p < DO_OAUTH_CALLBACK_PORT + 10; p++) {
+    const serveResult = tryCatch(() =>
+      Bun.serve({
+        port: p,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === "/callback") {
+            // Check for error response from DO
+            const error = url.searchParams.get("error");
+            if (error) {
+              const desc = url.searchParams.get("error_description") || error;
+              logError(`DigitalOcean authorization denied: ${desc}`);
+              oauthDenied = true;
+              return new Response(OAUTH_ERROR_HTML, {
+                status: 403,
+                headers: {
+                  "Content-Type": "text/html",
+                  Connection: "close",
+                },
+              });
+            }
+
+            const code = url.searchParams.get("code");
+            if (!code) {
+              return new Response(OAUTH_ERROR_HTML, {
+                status: 400,
+                headers: {
+                  "Content-Type": "text/html",
+                  Connection: "close",
+                },
+              });
+            }
+
+            // CSRF state validation
+            if (url.searchParams.get("state") !== csrfState) {
+              return new Response(OAUTH_ERROR_HTML, {
+                status: 403,
+                headers: {
+                  "Content-Type": "text/html",
+                  Connection: "close",
+                },
+              });
+            }
+
+            // Validate code format (alphanumeric + common delimiters)
+            if (!/^[a-zA-Z0-9_-]{8,256}$/.test(code)) {
+              return new Response("<html><body><h1>Invalid Authorization Code</h1></body></html>", {
+                status: 400,
+                headers: {
+                  "Content-Type": "text/html",
+                },
+              });
+            }
+
+            oauthCode = code;
+            return new Response(OAUTH_SUCCESS_HTML, {
+              headers: {
+                "Content-Type": "text/html",
+                Connection: "close",
+              },
+            });
+          }
+          return new Response("Waiting for DigitalOcean OAuth callback...", {
+            headers: {
+              "Content-Type": "text/html",
+            },
+          });
+        },
+      }),
+    );
+    if (!serveResult.ok) {
+      continue;
+    }
+    server = serveResult.data;
+    actualPort = p;
+    break;
+  }
+
+  if (!server) {
+    logWarn(
+      `Failed to start OAuth server — ports ${DO_OAUTH_CALLBACK_PORT}-${DO_OAUTH_CALLBACK_PORT + 9} may be in use`,
+    );
+    return null;
+  }
+
+  logInfo(`OAuth server listening on port ${actualPort}`);
+
+  const redirectUri = `http://localhost:${actualPort}/callback`;
+  const authParams = new URLSearchParams({
+    client_id: DO_CLIENT_ID,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: DO_SCOPES,
+    state: csrfState,
+  });
+  const authUrl = `${DO_OAUTH_AUTHORIZE}?${authParams.toString()}`;
+
+  logStep("Opening browser to authorize with DigitalOcean...");
+  openBrowser(authUrl);
+
+  // Initial wait window (after this, interactive TTY keeps the OAuth server up until callback or Escape)
+  logStep("Waiting for authorization in browser (extended-wait hint after 120s)...");
+  const initialDeadline = Date.now() + 120_000;
+  while (!oauthCode && !oauthDenied && Date.now() < initialDeadline) {
+    await sleep(500);
+  }
+
+  if (!oauthCode && !oauthDenied && process.env.SPAWN_NON_INTERACTIVE === "1") {
+    server.stop(true);
+    logError("OAuth authentication timed out after 120 seconds");
+    logError("Alternative: Use a manual API token instead");
+    logError("  export DIGITALOCEAN_ACCESS_TOKEN=dop_v1_...");
+    return null;
+  }
+
+  // Past the initial window without callback: keep OAuth server up and keep waiting
+  let manualTokenRequested = false;
+  if (!oauthCode && !oauthDenied) {
+    logWarn("Still waiting for you to complete authorization in your browser.");
+    if (isInteractiveTTY()) {
+      logInfo("Press Escape to enter a DigitalOcean API token instead.");
+
+      let pendingEscTimer: ReturnType<typeof setTimeout> | null = null;
+      const onData = (data: Buffer | string) => {
+        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data, "utf8");
+        if (buf.length === 0) {
+          return;
+        }
+        if (pendingEscTimer) {
+          clearTimeout(pendingEscTimer);
+          pendingEscTimer = null;
+          return;
+        }
+        if (buf[0] === 0x1b && buf.length === 1) {
+          pendingEscTimer = setTimeout(() => {
+            pendingEscTimer = null;
+            manualTokenRequested = true;
+          }, 75);
+          return;
+        }
+        if (buf[0] === 0x1b && buf.length > 1 && (buf[1] === 0x5b || buf[1] === 0x4f)) {
+          return;
+        }
+      };
+
+      process.stdin.resume();
+      process.stdin.setRawMode?.(true);
+      process.stdin.on("data", onData);
+      const waitResult = await asyncTryCatch(async () => {
+        while (!oauthCode && !oauthDenied && !manualTokenRequested) {
+          await sleep(500);
+        }
+      });
+      if (pendingEscTimer) {
+        clearTimeout(pendingEscTimer);
+      }
+      process.stdin.off("data", onData);
+      process.stdin.setRawMode?.(false);
+      process.stdin.pause();
+      if (!waitResult.ok) {
+        throw waitResult.error;
+      }
+    } else {
+      while (!oauthCode && !oauthDenied) {
+        await sleep(500);
+      }
+    }
+  }
+
+  server.stop(true);
+
+  if (oauthDenied) {
+    logError("OAuth authorization was denied by the user");
+    logError("Alternative: Use a manual API token instead");
+    logError("  export DIGITALOCEAN_ACCESS_TOKEN=dop_v1_...");
+    return null;
+  }
+
+  if (manualTokenRequested) {
+    logInfo("Switching to manual API token entry.");
+    return null;
+  }
+
+  if (!oauthCode) {
+    logError("OAuth authentication did not complete");
+    logError("Alternative: Use a manual API token instead");
+    logError("  export DIGITALOCEAN_ACCESS_TOKEN=dop_v1_...");
+    return null;
+  }
+
+  // Exchange code for token
+  logStep("Exchanging authorization code for access token...");
+  const code = oauthCode; // capture for closure (TS can't narrow `let` across async boundaries)
+  const exchangeResult = await asyncTryCatch(async () => {
+    const body = new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      client_id: DO_CLIENT_ID,
+      client_secret: DO_CLIENT_SECRET,
+      redirect_uri: redirectUri,
+    });
+
+    const resp = await fetch(DO_OAUTH_TOKEN, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      logError(`Token exchange failed (HTTP ${resp.status})`);
+      logWarn(`Response: ${errText.slice(0, 200)}`);
+      return null;
+    }
+
+    const data = parseJsonObj(await resp.text());
+    if (!data?.access_token) {
+      logError("Token exchange returned no access token");
+      return null;
+    }
+
+    const accessToken = isString(data.access_token) ? data.access_token : "";
+    const oauthRefreshToken = isString(data.refresh_token) ? data.refresh_token : undefined;
+    const expiresIn = isNumber(data.expires_in) ? data.expires_in : undefined;
+    await saveTokenToConfig(accessToken, oauthRefreshToken, expiresIn);
+    logInfo("Successfully obtained DigitalOcean access token via OAuth!");
+    return accessToken;
+  });
+  if (!exchangeResult.ok) {
+    logError("Failed to exchange authorization code");
+    return null;
+  }
+  return exchangeResult.data;
+}
+
+// ─── Authentication ──────────────────────────────────────────────────────────
+
+/** Returns true if browser OAuth was triggered (so caller can delay before next OAuth). */
+export async function ensureDoToken(): Promise<boolean> {
+  // 1. Env var (DIGITALOCEAN_ACCESS_TOKEN > DIGITALOCEAN_API_TOKEN > DO_API_TOKEN)
+  const envToken =
+    process.env.DIGITALOCEAN_ACCESS_TOKEN ?? process.env.DIGITALOCEAN_API_TOKEN ?? process.env.DO_API_TOKEN;
+  if (envToken) {
+    const envVarName = process.env.DIGITALOCEAN_ACCESS_TOKEN
+      ? "DIGITALOCEAN_ACCESS_TOKEN"
+      : process.env.DIGITALOCEAN_API_TOKEN
+        ? "DIGITALOCEAN_API_TOKEN"
+        : "DO_API_TOKEN";
+    _state.token = envToken.trim();
+    if (await testDoToken()) {
+      logInfo("Using DigitalOcean API token from environment");
+      await saveTokenToConfig(_state.token);
+      return false;
+    }
+    logWarn(`${envVarName} from environment is invalid`);
+    _state.token = "";
+  }
+
+  // 2. Saved config (check expiry first, try refresh if needed)
+  const saved = loadApiToken("digitalocean");
+  if (saved) {
+    if (isTokenExpired()) {
+      logWarn("Saved DigitalOcean token has expired, trying refresh...");
+      const refreshed = await tryRefreshDoToken();
+      if (refreshed) {
+        _state.token = refreshed;
+        if (await testDoToken()) {
+          logInfo("Using refreshed DigitalOcean token");
+          return false;
+        }
+      }
+    } else {
+      _state.token = saved;
+      if (await testDoToken()) {
+        logInfo("Using saved DigitalOcean API token");
+        return false;
+      }
+      logWarn("Saved DigitalOcean token is invalid or expired");
+      // Try refresh as fallback
+      const refreshed = await tryRefreshDoToken();
+      if (refreshed) {
+        _state.token = refreshed;
+        if (await testDoToken()) {
+          logInfo("Using refreshed DigitalOcean token");
+          return false;
+        }
+      }
+    }
+    _state.token = "";
+  }
+
+  // 3. Try OAuth browser flow
+  const oauthToken = await tryDoOAuth();
+  if (oauthToken) {
+    _state.token = oauthToken;
+    if (await testDoToken()) {
+      logInfo("Using DigitalOcean token from OAuth");
+      return true;
+    }
+    logWarn("OAuth token failed validation");
+    _state.token = "";
+  }
+
+  // 4. Manual entry (retry loop — never exits unless user says no)
+  for (;;) {
+    logStep("DigitalOcean API Token Required");
+    logWarn("Get a token from: https://cloud.digitalocean.com/account/api/tokens");
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const token = await prompt("Enter your DigitalOcean API token: ");
+      if (!token) {
+        logError("Token cannot be empty");
+        continue;
+      }
+      _state.token = token.trim();
+      if (await testDoToken()) {
+        await saveTokenToConfig(_state.token);
+        logInfo("DigitalOcean API token validated and saved");
+        return false;
+      }
+      logError("Token is invalid");
+      _state.token = "";
+    }
+
+    logError("No valid token after 3 attempts");
+    await retryOrQuit("Try DigitalOcean authentication again?");
+  }
+}
+
+// ─── SSH Key Management ──────────────────────────────────────────────────────
+
+/** Register the spawn-managed key with DigitalOcean if not already present.
+ * Only the spawn key is uploaded — the user's personal keys stay private. */
+export async function ensureSshKey(): Promise<void> {
+  const spawnKey = getSpawnKey();
+  const fingerprint = getSshFingerprint(spawnKey.pubPath);
+  if (!fingerprint) {
+    logWarn(`Could not determine fingerprint for SSH key '${spawnKey.name}'`);
+    return;
+  }
+
+  const keys = await doGetAll("/account/keys", "ssh_keys");
+  const found = keys.some((k) => k.fingerprint === fingerprint);
+  if (found) {
+    logInfo(`SSH key '${spawnKey.name}' already registered with DigitalOcean`);
+    return;
+  }
+
+  logStep(`Registering SSH key '${spawnKey.name}' with DigitalOcean...`);
+  const pubKey = readFileSync(spawnKey.pubPath, "utf-8").trim();
+  const body = JSON.stringify({
+    name: `spawn-${spawnKey.name}`,
+    public_key: pubKey,
+  });
+  const regResult = await asyncTryCatch(() => doApi("POST", "/account/keys", body));
+  if (!regResult.ok) {
+    const msg = getErrorMessage(regResult.error);
+    if (msg.includes("already been taken") || msg.includes("already in use")) {
+      logInfo(`SSH key '${spawnKey.name}' already registered (under a different name)`);
+      return;
+    }
+    logWarn(`SSH key '${spawnKey.name}' registration may have failed, continuing...`);
+    return;
+  }
+  const regData = parseJsonObj(regResult.data);
+  if (regData?.ssh_key) {
+    logInfo(`SSH key '${spawnKey.name}' registered with DigitalOcean`);
+    return;
+  }
+  logWarn(`SSH key '${spawnKey.name}' registration may have failed, continuing...`);
+}
+
+// ─── Droplet Size Options ────────────────────────────────────────────────────
+
+interface DropletSize {
+  id: string;
+  label: string;
+}
+
+const DROPLET_SIZES: DropletSize[] = [
+  {
+    id: "s-1vcpu-1gb",
+    label: "1 vCPU \u00b7 1 GB RAM \u00b7 $6/mo",
+  },
+  {
+    id: "s-1vcpu-2gb",
+    label: "1 vCPU \u00b7 2 GB RAM \u00b7 $12/mo",
+  },
+  {
+    id: "s-2vcpu-2gb",
+    label: "2 vCPU \u00b7 2 GB RAM \u00b7 $18/mo",
+  },
+  {
+    id: "s-2vcpu-4gb-intel",
+    label: "2 vCPU \u00b7 4 GB RAM \u00b7 $28/mo (Intel)",
+  },
+  {
+    id: "s-4vcpu-8gb",
+    label: "4 vCPU \u00b7 8 GB RAM \u00b7 $48/mo",
+  },
+  {
+    id: "s-8vcpu-16gb",
+    label: "8 vCPU \u00b7 16 GB RAM \u00b7 $96/mo",
+  },
+];
+
+export const DEFAULT_DROPLET_SIZE = "s-2vcpu-2gb";
+
+/** Extract RAM in GB from a DO slug like "s-2vcpu-4gb" or "s-2vcpu-4gb-intel". Returns 0 if unparseable. */
+export function slugRamGb(slug: string): number {
+  const match = slug.match(/-(\d+)gb/);
+  return match ? Number(match[1]) : 0;
+}
+
+/** Agents that need more than the default 2GB RAM (e.g. openclaw-plugins OOMs on 2GB) */
+export const AGENT_MIN_SIZE: Record<string, string> = {
+  // s-2vcpu-4gb is used (not s-2vcpu-4gb-intel) because the intel variant
+  // is no longer available in nyc3 (the default E2E region). Both offer 2 vCPUs and 4GB RAM.
+  openclaw: "s-2vcpu-4gb",
+};
+
+// ─── Region Options ──────────────────────────────────────────────────────────
+
+interface DoRegion {
+  id: string;
+  label: string;
+}
+
+const DO_REGIONS: DoRegion[] = [
+  {
+    id: "nyc1",
+    label: "New York 1",
+  },
+  {
+    id: "nyc3",
+    label: "New York 3",
+  },
+  {
+    id: "sfo3",
+    label: "San Francisco 3",
+  },
+  {
+    id: "ams3",
+    label: "Amsterdam 3",
+  },
+  {
+    id: "sgp1",
+    label: "Singapore 1",
+  },
+  {
+    id: "lon1",
+    label: "London 1",
+  },
+  {
+    id: "fra1",
+    label: "Frankfurt 1",
+  },
+  {
+    id: "tor1",
+    label: "Toronto 1",
+  },
+  {
+    id: "blr1",
+    label: "Bangalore 1",
+  },
+  {
+    id: "syd1",
+    label: "Sydney 1",
+  },
+];
+
+export const DEFAULT_DO_REGION = "nyc3";
+
+// ─── Interactive Pickers ─────────────────────────────────────────────────────
+
+export async function promptDropletSize(): Promise<string> {
+  if (process.env.DO_DROPLET_SIZE) {
+    logInfo(`Using droplet size from environment: ${process.env.DO_DROPLET_SIZE}`);
+    return process.env.DO_DROPLET_SIZE;
+  }
+
+  if (process.env.SPAWN_CUSTOM !== "1") {
+    return DEFAULT_DROPLET_SIZE;
+  }
+
+  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+    return DEFAULT_DROPLET_SIZE;
+  }
+
+  process.stderr.write("\n");
+  const items = DROPLET_SIZES.map((s) => `${s.id}|${s.label}`);
+  return selectFromList(items, "DigitalOcean droplet size", DEFAULT_DROPLET_SIZE);
+}
+
+export async function promptDoRegion(): Promise<string> {
+  if (process.env.DO_REGION) {
+    logInfo(`Using region from environment: ${process.env.DO_REGION}`);
+    return process.env.DO_REGION;
+  }
+
+  if (process.env.SPAWN_CUSTOM !== "1") {
+    return DEFAULT_DO_REGION;
+  }
+
+  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+    return DEFAULT_DO_REGION;
+  }
+
+  process.stderr.write("\n");
+  const items = DO_REGIONS.map((r) => `${r.id}|${r.label}`);
+  return selectFromList(items, "DigitalOcean region", DEFAULT_DO_REGION);
+}
+
+// ─── Provisioning ────────────────────────────────────────────────────────────
+
+function getCloudInitUserdata(tier: CloudInitTier = "full"): string {
+  const packages = getPackagesForTier(tier);
+  const quotedPackages = packages.map((p) => shellQuote(p)).join(" ");
+  const lines = [
+    "#!/bin/bash",
+    "set -e",
+    "export HOME=/root",
+    "export DEBIAN_FRONTEND=noninteractive",
+    "apt-get update -y",
+    `apt-get install -y --no-install-recommends ${quotedPackages}`,
+  ];
+  if (needsNode(tier)) {
+    lines.push(`${NODE_INSTALL_CMD} || true`);
+  }
+  if (needsBun(tier)) {
+    lines.push(
+      "if ! command -v bun >/dev/null 2>&1; then curl --proto '=https' -fsSL https://bun.sh/install | bash; fi",
+      "ln -sf $HOME/.bun/bin/bun /usr/local/bin/bun 2>/dev/null || true",
+    );
+  }
+  lines.push(
+    'for rc in ~/.bashrc ~/.zshrc; do grep -q ".bun/bin" "$rc" 2>/dev/null || echo \'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"\' >> "$rc"; done',
+    "touch /root/.cloud-init-complete",
+  );
+  return lines.join("\n");
+}
+
+export async function createServer(
+  name: string,
+  tier?: CloudInitTier,
+  dropletSize?: string,
+  region?: string,
+  imageOverride?: string,
+): Promise<VMConnection> {
+  const size = dropletSize || process.env.DO_DROPLET_SIZE || "s-2vcpu-2gb";
+  const effectiveRegion = region || process.env.DO_REGION || "nyc3";
+
+  if (!validateRegionName(effectiveRegion)) {
+    logError("Invalid DO_REGION");
+    throw new Error("Invalid region");
+  }
+
+  // imageOverride can be a numeric snapshot ID or a DigitalOcean marketplace slug (see MARKETPLACE_IMAGES in digitalocean/main.ts and todo.md).
+  const image: string | number = imageOverride
+    ? /^\d+$/.test(imageOverride)
+      ? Number(imageOverride)
+      : imageOverride
+    : "ubuntu-24-04-x64";
+  const imageLabel = imageOverride ?? "ubuntu-24-04-x64";
+
+  logStep(
+    `Creating DigitalOcean droplet '${name}' (size: ${size}, region: ${effectiveRegion}, image: ${imageLabel})...`,
+  );
+
+  // Attach only the spawn-managed key — user's other registered keys stay off
+  // the droplet (privacy + avoids sshd MaxAuthTries flood on the client side).
+  const spawnFingerprint = getSshFingerprint(getSpawnKey().pubPath);
+  const sshKeys: string[] = spawnFingerprint
+    ? [
+        spawnFingerprint,
+      ]
+    : [];
+
+  const dropletConfig: Record<string, unknown> = {
+    name,
+    region: effectiveRegion,
+    size,
+    image,
+    ssh_keys: sshKeys,
+    backups: false,
+    monitoring: false,
+  };
+
+  // Only include cloud-init userdata when NOT booting from a pre-built image
+  if (!imageOverride) {
+    dropletConfig.user_data = getCloudInitUserdata(tier);
+  }
+
+  await ensureSpawnAttributionTag();
+  dropletConfig.tags = [
+    SPAWN_DIGITALOCEAN_ATTRIBUTION_TAG,
+  ];
+
+  let body = JSON.stringify(dropletConfig);
+
+  // Wrap in asyncTryCatch so billing-related 403 errors thrown by doApi()
+  // can be caught and handled before propagating as a generic "API error".
+  let createApiResult = await asyncTryCatch(() => doApi("POST", "/droplets", body));
+  if (!createApiResult.ok && dropletConfig.tags) {
+    const tagErr = createApiResult.error.message;
+    if (/tag|scope|forbidden|403|unauthor/i.test(tagErr)) {
+      logWarn("Droplet tags unavailable for this token — creating without attribution tag.");
+      delete dropletConfig.tags;
+      body = JSON.stringify(dropletConfig);
+      createApiResult = await asyncTryCatch(() => doApi("POST", "/droplets", body));
+    }
+  }
+  if (!createApiResult.ok) {
+    const errMsg = createApiResult.error.message;
+    logError(`Failed to create DigitalOcean droplet: ${errMsg}`);
+
+    if (isBillingError(digitaloceanBilling, errMsg)) {
+      // Offer account switch before billing guidance
+      const switched = await promptSwitchAccount();
+      if (switched) {
+        logStep("Retrying droplet creation with new account...");
+        return createServer(name, tier, dropletSize, region, imageOverride);
+      }
+      const shouldRetry = await handleBillingError(digitaloceanBilling);
+      if (shouldRetry) {
+        logStep("Retrying droplet creation...");
+        const retryText = await doApi("POST", "/droplets", body);
+        const retryData = parseJsonObj(retryText);
+        const retryDroplet = toRecord(retryData?.droplet);
+        if (retryDroplet?.id) {
+          _state.dropletId = String(retryDroplet.id);
+          logInfo(`Droplet created: ID=${_state.dropletId}`);
+          await waitForDropletActive(_state.dropletId);
+          return {
+            ip: _state.serverIp,
+            user: "root",
+            server_id: _state.dropletId,
+            server_name: name,
+            cloud: "digitalocean",
+          };
+        }
+        logError(`Retry failed: ${String(retryData?.message || "Unknown error")}`);
+      }
+    } else if (/droplet.limit|limit.exceeded|error 422.*unprocessable/i.test(errMsg)) {
+      logError(
+        "Droplet limit exceeded. Delete existing droplets or request a limit increase at https://cloud.digitalocean.com/account/team/droplet_limit_increase",
+      );
+      // Offer account switch — user might have another account with capacity
+      const switched = await promptSwitchAccount();
+      if (switched) {
+        logStep("Retrying droplet creation with new account...");
+        return createServer(name, tier, dropletSize, region, imageOverride);
+      }
+    } else {
+      showNonBillingError(digitaloceanBilling, [
+        "Region/size unavailable (try different DO_REGION or DO_DROPLET_SIZE)",
+        "Droplet limit reached (check account limits at https://cloud.digitalocean.com/account/team/droplet_limit_increase)",
+      ]);
+      // Offer account switch for non-billing errors too (e.g. quota on wrong account)
+      const switched = await promptSwitchAccount();
+      if (switched) {
+        logStep("Retrying droplet creation with new account...");
+        return createServer(name, tier, dropletSize, region, imageOverride);
+      }
+    }
+    throw new Error("Droplet creation failed");
+  }
+
+  const createData = parseJsonObj(createApiResult.data);
+  const createdDroplet = toRecord(createData?.droplet);
+
+  if (!createdDroplet?.id) {
+    logError("Failed to create DigitalOcean droplet: unexpected API response");
+    showNonBillingError(digitaloceanBilling, [
+      "Region/size unavailable (try different DO_REGION or DO_DROPLET_SIZE)",
+      "Droplet limit reached (check account limits)",
+    ]);
+    throw new Error("Droplet creation failed");
+  }
+
+  _state.dropletId = String(createdDroplet.id);
+  logInfo(`Droplet created: ID=${_state.dropletId}`);
+
+  // Wait for droplet to become active and get IP
+  await waitForDropletActive(_state.dropletId);
+
+  return {
+    ip: _state.serverIp,
+    user: "root",
+    server_id: _state.dropletId,
+    server_name: name,
+    cloud: "digitalocean",
+  };
+}
+
+async function waitForDropletActive(dropletId: string, maxAttempts = 60): Promise<void> {
+  logStep("Waiting for droplet to become active...");
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // Use asyncTryCatch to handle transient 404s: DO sometimes returns 404
+    // immediately after droplet creation before the resource propagates.
+    const r = await asyncTryCatch(() => doApi("GET", `/droplets/${dropletId}`));
+    if (!r.ok) {
+      const msg = r.error instanceof Error ? r.error.message : String(r.error);
+      if (msg.includes("404")) {
+        // Transient — droplet not yet visible in the API, retry
+        logStepInline(`Droplet not yet visible (${attempt}/${maxAttempts})`);
+        await sleep(5000);
+        continue;
+      }
+      throw r.error;
+    }
+    const data = parseJsonObj(r.data);
+    const droplet = toRecord(data?.droplet);
+    const status = droplet?.status;
+
+    if (status === "active") {
+      const networks = toRecord(droplet?.networks);
+      const v4Networks = toObjectArray(networks?.v4);
+      const publicNet = v4Networks.find((n) => n.type === "public");
+      if (publicNet?.ip_address) {
+        _state.serverIp = isString(publicNet.ip_address) ? publicNet.ip_address : "";
+        logStepDone();
+        logInfo(`Droplet active, IP: ${_state.serverIp}`);
+        return;
+      }
+    }
+
+    if (attempt >= maxAttempts) {
+      logError("Droplet did not become active in time");
+      throw new Error("Droplet activation timeout");
+    }
+
+    logStepInline(`Droplet status: ${status || "unknown"} (${attempt}/${maxAttempts})`);
+    await sleep(5000);
+  }
+  logStepDone();
+}
+
+// ─── Snapshot Lookup ─────────────────────────────────────────────────────────
+
+export async function findSpawnSnapshot(agentName: string): Promise<string | null> {
+  const r = await asyncTryCatch(async () => {
+    // DO snapshots don't support tags — filter by name prefix instead
+    const prefix = `spawn-${agentName}-`;
+    const text = await doApi("GET", "/images?private=true&per_page=100", undefined, 1);
+    const data = parseJsonObj(text);
+    const allImages = toObjectArray(data?.images);
+    const images = allImages.filter((img) => isString(img.name) && img.name.startsWith(prefix));
+    if (images.length === 0) {
+      return null;
+    }
+
+    // Sort by created_at descending to get the latest snapshot
+    images.sort((a, b) => {
+      const aDate = isString(a.created_at) ? a.created_at : "";
+      const bDate = isString(b.created_at) ? b.created_at : "";
+      return bDate.localeCompare(aDate);
+    });
+
+    const latestId = images[0].id;
+    if (!isNumber(latestId) || latestId <= 0) {
+      return null;
+    }
+
+    logInfo(`Found pre-built snapshot for ${agentName} (ID: ${latestId})`);
+    return String(latestId);
+  });
+  return r.ok ? r.data : null;
+}
+
+// ─── SSH-Only Wait (for snapshot boots) ──────────────────────────────────────
+
+export async function waitForSshOnly(ip?: string): Promise<void> {
+  const keyOpts = getSshKeyOpts(await ensureSshKeys());
+  await waitForSshSnapshotBoot(ip ?? _state.serverIp, keyOpts);
+}
+
+// ─── SSH Execution ───────────────────────────────────────────────────────────
+
+export async function waitForCloudInit(ip?: string, maxAttempts = 60): Promise<void> {
+  const serverIp = ip || _state.serverIp;
+  const selectedKeys = await ensureSshKeys();
+  const keyOpts = getSshKeyOpts(selectedKeys);
+  await sharedWaitForSsh({
+    host: serverIp,
+    user: "root",
+    maxAttempts: 36,
+    extraSshOpts: keyOpts,
+  });
+
+  // Stream cloud-init output so the user sees progress in real time
+  logStep("Streaming cloud-init output (timeout: 5min)...");
+  const remoteScript =
+    "tail -f /var/log/cloud-init-output.log 2>/dev/null & TAIL_PID=$!\n" +
+    "for i in $(seq 1 150); do\n" +
+    "  if [ -f /root/.cloud-init-complete ]; then\n" +
+    "    kill $TAIL_PID 2>/dev/null; wait $TAIL_PID 2>/dev/null\n" +
+    '    echo ""; echo "--- cloud-init complete ---"; exit 0\n' +
+    "  fi\n" +
+    "  sleep 2\n" +
+    "done\n" +
+    "kill $TAIL_PID 2>/dev/null; wait $TAIL_PID 2>/dev/null\n" +
+    'echo ""; echo "--- cloud-init timed out ---"; exit 1';
+
+  const streamResult = await asyncTryCatch(async () => {
+    const proc = Bun.spawn(
+      [
+        "ssh",
+        ...SSH_BASE_OPTS,
+        ...keyOpts,
+        `root@${serverIp}`,
+        remoteScript,
+      ],
+      {
+        stdio: [
+          "ignore",
+          "inherit",
+          "inherit",
+        ],
+      },
+    );
+    // The remote script has its own 5-min timeout (150 × 2s), but if the
+    // network drops mid-stream `await proc.exited` blocks forever. Kill
+    // after 330s (5min + 30s grace) to match the remote timeout.
+    const streamTimer = setTimeout(() => killWithTimeout(proc), 330_000);
+    const exitResult = await asyncTryCatch(() => proc.exited);
+    clearTimeout(streamTimer);
+    if (!exitResult.ok) {
+      throw exitResult.error;
+    }
+    return exitResult.data;
+  });
+  if (streamResult.ok) {
+    if (streamResult.data === 0) {
+      logInfo("Cloud-init complete");
+      return;
+    }
+    logWarn("Cloud-init did not complete within 5 minutes");
+  } else {
+    logWarn("Could not stream cloud-init log, falling back to polling...");
+  }
+
+  // Fallback poll if streaming failed (e.g. log file not yet created)
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const pollResult = await asyncTryCatch(async () => {
+      const proc = Bun.spawn(
+        [
+          "ssh",
+          ...SSH_BASE_OPTS,
+          ...keyOpts,
+          `root@${serverIp}`,
+          "test -f /root/.cloud-init-complete && echo done",
+        ],
+        {
+          stdio: [
+            "ignore",
+            "pipe",
+            "pipe",
+          ],
+        },
+      );
+      // Per-process timeout: if the network drops during cloud-init polling,
+      // `await proc.exited` blocks forever. Kill after 30s so the retry loop
+      // can continue and the user isn't left with a hung CLI.
+      const timer = setTimeout(() => killWithTimeout(proc), 30_000);
+      // Drain both pipes before awaiting exit to prevent pipe buffer deadlock
+      const pipeResult = await asyncTryCatch(async () => {
+        const [stdout] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+        ]);
+        const pollExitCode = await proc.exited;
+        return {
+          stdout,
+          pollExitCode,
+        };
+      });
+      clearTimeout(timer);
+      if (!pipeResult.ok) {
+        throw pipeResult.error;
+      }
+      return pipeResult.data;
+    });
+    if (pollResult.ok && pollResult.data.pollExitCode === 0 && pollResult.data.stdout.includes("done")) {
+      logStepDone();
+      logInfo("Cloud-init complete");
+      return;
+    }
+    logStepInline(`Cloud-init in progress (${attempt}/${maxAttempts})`);
+    await sleep(5000);
+  }
+  logStepDone();
+  logWarn("Cloud-init marker not found, continuing anyway...");
+}
+
+export async function runServer(cmd: string, timeoutSecs?: number, ip?: string): Promise<void> {
+  if (!cmd || /\0/.test(cmd)) {
+    throw new Error("Invalid command: must be non-empty and must not contain null bytes");
+  }
+  const serverIp = ip || _state.serverIp;
+  const fullCmd = `export PATH="$HOME/.npm-global/bin:$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH" && bash -c ${shellQuote(cmd)}`;
+  const keyOpts = getSshKeyOpts(await ensureSshKeys());
+
+  const proc = Bun.spawn(
+    [
+      "ssh",
+      ...SSH_BASE_OPTS,
+      ...keyOpts,
+      `root@${serverIp}`,
+      fullCmd,
+    ],
+    {
+      stdio: [
+        "ignore",
+        "inherit",
+        "inherit",
+      ],
+    },
+  );
+
+  const timeout = (timeoutSecs || 300) * 1000;
+  const timer = setTimeout(() => killWithTimeout(proc), timeout);
+  const runResult = await asyncTryCatch(() => proc.exited);
+  clearTimeout(timer);
+  if (!runResult.ok) {
+    throw runResult.error;
+  }
+  if (runResult.data !== 0) {
+    throw new Error(`run_server failed (exit ${runResult.data}): ${cmd}`);
+  }
+}
+
+export async function uploadFile(localPath: string, remotePath: string, ip?: string): Promise<void> {
+  const serverIp = ip || _state.serverIp;
+  const normalizedRemote = validateRemotePath(remotePath, /^[a-zA-Z0-9/_.~-]+$/);
+
+  const keyOpts = getSshKeyOpts(await ensureSshKeys());
+  const proc = Bun.spawn(
+    [
+      "scp",
+      ...SSH_BASE_OPTS,
+      ...keyOpts,
+      localPath,
+      `root@${serverIp}:${normalizedRemote}`,
+    ],
+    {
+      stdio: [
+        "ignore",
+        "inherit",
+        "inherit",
+      ],
+    },
+  );
+  const timer = setTimeout(() => killWithTimeout(proc), 120_000);
+  const uploadResult = await asyncTryCatch(() => proc.exited);
+  clearTimeout(timer);
+  if (!uploadResult.ok) {
+    throw uploadResult.error;
+  }
+  if (uploadResult.data !== 0) {
+    throw new Error(`upload_file failed for ${remotePath}`);
+  }
+}
+
+export async function downloadFile(remotePath: string, localPath: string, ip?: string): Promise<void> {
+  const serverIp = ip || _state.serverIp;
+  const expandedRemote = remotePath.replace(/^\$HOME\//, "~/");
+  const normalizedRemote = validateRemotePath(expandedRemote, /^[a-zA-Z0-9/_.~-]+$/);
+
+  const keyOpts = getSshKeyOpts(await ensureSshKeys());
+
+  const proc = Bun.spawn(
+    [
+      "scp",
+      ...SSH_BASE_OPTS,
+      ...keyOpts,
+      `root@${serverIp}:${normalizedRemote}`,
+      localPath,
+    ],
+    {
+      stdio: [
+        "ignore",
+        "inherit",
+        "inherit",
+      ],
+    },
+  );
+  const timer = setTimeout(() => killWithTimeout(proc), 120_000);
+  const dlResult = await asyncTryCatch(() => proc.exited);
+  clearTimeout(timer);
+  if (!dlResult.ok) {
+    throw dlResult.error;
+  }
+  if (dlResult.data !== 0) {
+    throw new Error(`download_file failed for ${remotePath}`);
+  }
+}
+
+export async function interactiveSession(cmd: string, ip?: string): Promise<number> {
+  if (!cmd || /\0/.test(cmd)) {
+    throw new Error("Invalid command: must be non-empty and must not contain null bytes");
+  }
+  const serverIp = ip || _state.serverIp;
+  const term = sanitizeTermValue(process.env.TERM || "xterm-256color");
+  const fullCmd = `export TERM='${term}' LANG='C.UTF-8' PATH="$HOME/.npm-global/bin:$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH" && exec bash -l -c ${shellQuote(cmd)}`;
+  const keyOpts = getSshKeyOpts(await ensureSshKeys());
+
+  const exitCode = spawnInteractive([
+    "ssh",
+    ...SSH_INTERACTIVE_OPTS,
+    ...keyOpts,
+    `root@${serverIp}`,
+    fullCmd,
+  ]);
+
+  // Post-session summary
+  process.stderr.write("\n");
+  logWarn(`Session ended. Your DigitalOcean droplet (ID: ${_state.dropletId}) is still running.`);
+  logWarn("Remember to delete it when you're done to avoid ongoing charges.");
+  logWarn("");
+  logWarn("Manage or delete it in your dashboard:");
+  logWarn(`  ${DO_DASHBOARD_URL}`);
+  logWarn("");
+  logInfo("To delete from CLI:");
+  logInfo("  spawn delete");
+  logInfo("To reconnect:");
+  logInfo("  spawn last");
+  logInfo(`  or: ssh -i ~/.ssh/${SPAWN_KEY_NAME} root@${serverIp}`);
+
+  return exitCode;
+}
+
+// ─── Server Name ─────────────────────────────────────────────────────────────
+
+export async function getServerName(): Promise<string> {
+  return getServerNameFromEnv("DO_DROPLET_NAME");
+}
+
+export async function promptSpawnName(): Promise<void> {
+  if (process.env.SPAWN_NAME_KEBAB) {
+    return;
+  }
+
+  // Honour DO_DROPLET_NAME so headless/e2e callers can control the droplet name
+  if (process.env.DO_DROPLET_NAME) {
+    const name = process.env.DO_DROPLET_NAME;
+    if (validateServerName(name)) {
+      process.env.SPAWN_NAME_DISPLAY = name;
+      process.env.SPAWN_NAME_KEBAB = name;
+      logInfo(`Using resource name: ${name}`);
+      return;
+    }
+    logWarn(`Invalid DO_DROPLET_NAME '${name}', falling back to prompt`);
+  }
+
+  let kebab: string;
+  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+    kebab = (process.env.SPAWN_NAME ? toKebabCase(process.env.SPAWN_NAME) : "") || defaultSpawnName();
+  } else {
+    const derived = process.env.SPAWN_NAME ? toKebabCase(process.env.SPAWN_NAME) : "";
+    const fallback = derived || defaultSpawnName();
+    process.stderr.write("\n");
+    const answer = await prompt(`DigitalOcean droplet name [${fallback}]: `);
+    kebab = toKebabCase(answer || fallback) || defaultSpawnName();
+  }
+
+  process.env.SPAWN_NAME_DISPLAY = kebab;
+  process.env.SPAWN_NAME_KEBAB = kebab;
+  logInfo(`Using resource name: ${kebab}`);
+}
+
+// ─── Lifecycle ───────────────────────────────────────────────────────────────
+
+/** Fetch the current public IP of an existing droplet. Returns null if the droplet no longer exists. */
+export async function getServerIp(dropletId: string): Promise<string | null> {
+  const r = await asyncTryCatch(() => doApi("GET", `/droplets/${dropletId}`, undefined, 1));
+  if (!r.ok) {
+    const msg = getErrorMessage(r.error);
+    if (msg.includes("404") || msg.includes("not found") || msg.includes("Not Found")) {
+      return null;
+    }
+    throw r.error;
+  }
+  const data = parseJsonObj(r.data);
+  const droplet = toRecord(data?.droplet);
+  const networks = toRecord(droplet?.networks);
+  const v4Networks = toObjectArray(networks?.v4);
+  const publicNet = v4Networks.find((n) => n.type === "public");
+  return publicNet?.ip_address && isString(publicNet.ip_address) ? publicNet.ip_address : null;
+}
+
+/** List all DigitalOcean droplets. Returns simplified instance info for the remap picker. */
+export async function listServers(): Promise<CloudInstance[]> {
+  const droplets = await doGetAll("/droplets", "droplets");
+  const results: CloudInstance[] = [];
+  for (const d of droplets) {
+    const networks = toRecord(d.networks);
+    const v4Networks = toObjectArray(networks?.v4);
+    const publicNet = v4Networks.find((n) => n.type === "public");
+    const ip = publicNet?.ip_address && isString(publicNet.ip_address) ? publicNet.ip_address : "";
+    results.push({
+      id: String(d.id ?? ""),
+      name: isString(d.name) ? d.name : "",
+      ip,
+      status: isString(d.status) ? d.status : "",
+    });
+  }
+  return results;
+}
+
+export async function destroyServer(dropletId?: string): Promise<void> {
+  const id = dropletId || _state.dropletId;
+  if (!id) {
+    logError("destroy_server: no droplet ID provided");
+    throw new Error("No droplet ID");
+  }
+
+  logStep(`Destroying DigitalOcean droplet ${id}...`);
+  // doApi throws on non-2xx; DELETE returns 204 No Content on success
+  await doApi("DELETE", `/droplets/${id}`);
+  logInfo(`Droplet ${id} destroyed`);
+}
+
+// ─── Test Helpers ─────────────────────────────────────────────────────────────
+
+/** @internal Exposed for testing only. */
+export const _testHelpers = {
+  testDoToken,
+  doApi,
+  get state() {
+    return _state;
+  },
+  get recovering401() {
+    return _recovering401;
+  },
+  set recovering401(v: boolean) {
+    _recovering401 = v;
+  },
+};

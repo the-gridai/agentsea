@@ -1,0 +1,44 @@
+@import "src/styles/index";
+
+.logo {
+  color: c(text-1);
+  @include flex(center);
+  @include gap(1.5);
+
+  &__mark {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+  }
+
+  &--s &__mark {
+    width: 22px;
+    height: 22px;
+  }
+  &--l &__mark {
+    width: 36px;
+    height: 36px;
+  }
+
+  &__word {
+    @include text(text-l, bold);
+    letter-spacing: -0.01em;
+    color: c(text);
+    @include flex(baseline);
+    @include gap(0.25);
+  }
+  &--s &__word {
+    @include text(text-m, bold);
+  }
+  &--l &__word {
+    @include text(display, bold);
+    font-size: 1.25rem;
+  }
+
+  &__word-grid {
+    color: c(text);
+  }
+  &__word-spawn {
+    color: c(text-highlight);
+  }
+}

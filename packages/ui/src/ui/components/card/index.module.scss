@@ -1,0 +1,39 @@
+@import "src/styles/index";
+
+.card {
+  @include br(m);
+
+  background: c(base-1);
+  overflow: hidden;
+  position: relative;
+
+  &--bordered {
+    border: 1px solid c(stroke-1);
+  }
+  &--variant-raised {
+    @include shadow(regular);
+  }
+  &--variant-ghost {
+    background: transparent;
+  }
+  &--padded {
+    @include padding(4, 4);
+  }
+  &--padded-tight {
+    @include padding(3, 3);
+  }
+
+  &__header {
+    @include flex-sides;
+    @include padding(3, 4);
+    border-bottom: 1px solid c(stroke-1);
+  }
+  &__body {
+    @include padding(4, 4);
+  }
+  &__footer {
+    @include flex-sides;
+    @include padding(3, 4);
+    border-top: 1px solid c(stroke-1);
+  }
+}

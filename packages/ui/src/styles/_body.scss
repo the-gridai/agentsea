@@ -1,0 +1,75 @@
+@import "./index";
+@import "./body.theme";
+
+@include reset();
+
+:root {
+  --global-padding: #{$size---padding};
+  --global-unit: calc(var(--global-padding) / #{$size---padding-fractions});
+  --scroll-bar-width: 6px;
+  --scroll-bar-margin: 1rem;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html[data-dark="true"],
+html.dark {
+  color-scheme: dark;
+}
+
+html.no-transition,
+html.no-transition * {
+  transition: none !important;
+}
+
+html {
+  font-size: 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+body {
+  @include font($font-weight: regular);
+
+  font-size: 1rem;
+  line-height: 1.34em;
+  background: c(background);
+  color: c(text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+
+  &[data-decoration] {
+    text-decoration: underline;
+  }
+}
+
+*::-webkit-scrollbar {
+  width: var(--scroll-bar-width);
+  height: var(--scroll-bar-width);
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: c(stroke-1);
+  border-radius: 0.5rem;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}

@@ -1,0 +1,120 @@
+@import "src/styles/index";
+
+.button {
+  @include flex-center;
+  @include gap(2);
+  @include text(text-m, semi);
+  @include transition(fast);
+
+  cursor: pointer;
+  border: 0;
+  outline: 0;
+  color: c(text);
+  white-space: nowrap;
+  position: relative;
+  user-select: none;
+
+  &:disabled {
+    opacity: 0.55;
+    pointer-events: none;
+  }
+
+  &__icon {
+    @include flex-center;
+  }
+
+  &__label {
+    @include ellipsis;
+  }
+
+  // Sizes
+  &--xs {
+    @include padding(0, 2);
+    height: size(24 / 4);
+    @include text(text-xs, semi);
+  }
+  &--s {
+    @include padding(0, 2);
+    height: size(28 / 4);
+    @include text(text-s, semi);
+  }
+  &--m {
+    @include padding(0, 3);
+    height: size(34 / 4);
+  }
+  &--l {
+    @include padding(0, 4);
+    height: size(42 / 4);
+    @include text(text-l, semi);
+  }
+
+  &--full {
+    width: 100%;
+  }
+  &--grow {
+    flex-grow: 1;
+  }
+
+  &--icon-only {
+    aspect-ratio: 1;
+    padding: 0;
+  }
+
+  // Variants
+  &--highlight {
+    @include hbackground(highlight);
+    color: c(text-inverse);
+    @include br(m);
+    clip-path: none;
+  }
+  &--accent {
+    @include hbackground(accent);
+    color: c(text);
+    @include br(m);
+    clip-path: none;
+  }
+  &--secondary {
+    background: c(base-2);
+    color: c(text);
+    border: 1px solid c(stroke-1);
+
+    @include hover {
+      background: c(base-2-h);
+    }
+  }
+  &--ghost {
+    background: transparent;
+    color: c(text-2);
+
+    @include hover {
+      background: c(base-2);
+      color: c(text);
+    }
+  }
+  &--positive {
+    @include hbackground(positive);
+  }
+  &--negative {
+    @include hbackground(negative);
+  }
+  &--alt {
+    background: transparent;
+    color: c(text-highlight);
+    border: 1px solid c(stroke-2);
+
+    @include hover {
+      background: c(base-2);
+    }
+  }
+
+  &--active {
+    background: c(highlight, 0.18);
+    color: c(text);
+    border: 1px solid c(highlight, 0.5);
+  }
+
+  &--loading {
+    pointer-events: none;
+    opacity: 0.7;
+  }
+}

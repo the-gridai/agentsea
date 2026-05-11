@@ -1,0 +1,14 @@
+@import "src/styles/index";
+
+.divider {
+  background: c(stroke-1);
+
+  &--horizontal {
+    height: 1px;
+    width: 100%;
+  }
+  &--vertical {
+    width: 1px;
+    align-self: stretch;
+  }
+}

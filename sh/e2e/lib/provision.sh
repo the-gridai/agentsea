@@ -1,0 +1,436 @@
+#!/bin/bash
+# e2e/lib/provision.sh — Provision an agent VM via spawn CLI (cloud-agnostic)
+set -eo pipefail
+
+# ---------------------------------------------------------------------------
+# provision_agent AGENT APP_NAME LOG_DIR
+#
+# Runs spawn in headless mode with a timeout. The provision process hangs on
+# the interactive SSH session (step 12 of the orchestration), so we kill it
+# after PROVISION_TIMEOUT seconds. The install itself usually succeeds; we
+# verify via instance existence and .spawnrc presence afterward.
+#
+# Uses cloud driver functions:
+#   cloud_headless_env  — cloud-specific env var exports
+#   cloud_provision_verify — check instance exists, write IP + metadata
+#   cloud_exec          — remote command execution
+# ---------------------------------------------------------------------------
+provision_agent() {
+  local agent="$1"
+  local app_name="$2"
+  local log_dir="$3"
+
+  # Validate app_name early — it's used in file paths and passed to cloud_exec.
+  # Only allow alphanumeric, dots, hyphens, and underscores.
+  if [ -z "${app_name}" ] || ! printf '%s' "${app_name}" | grep -qE '^[A-Za-z0-9._-]+$'; then
+    log_err "Invalid app_name: must be non-empty and contain only [A-Za-z0-9._-]"
+    return 1
+  fi
+
+  local exit_file="${log_dir}/${app_name}.exit"
+  local stdout_file="${log_dir}/${app_name}.stdout"
+  local stderr_file="${log_dir}/${app_name}.stderr"
+
+  # Resolve CLI entry point
+  # SPAWN_CLI_DIR overrides auto-resolution — use this to force local source code
+  local cli_entry
+  if [ -n "${SPAWN_CLI_DIR:-}" ]; then
+    cli_entry="${SPAWN_CLI_DIR}/packages/cli/src/index.ts"
+  else
+    cli_entry="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/packages/cli/src/index.ts"
+  fi
+
+  if [ ! -f "${cli_entry}" ]; then
+    log_err "CLI entry point not found: ${cli_entry}"
+    return 1
+  fi
+
+  # ---------------------------------------------------------------------------
+  # Retry loop for transient cloud capacity errors (e.g. DigitalOcean 422
+  # "droplet limit exceeded"). Waits 30s between retries, up to 3 attempts.
+  # Only retries when stderr contains a droplet-limit / quota error pattern.
+  # ---------------------------------------------------------------------------
+  # Resolve per-agent provision timeout (junie gets 1200s, others get default)
+  local effective_provision_timeout
+  effective_provision_timeout=$(get_provision_timeout "${agent}")
+
+  local _provision_max_retries=3
+  local _provision_attempt=1
+  local _provision_verified=0
+
+  while [ "${_provision_attempt}" -le "${_provision_max_retries}" ]; do
+
+  log_step "Provisioning ${agent} as ${app_name} on ${ACTIVE_CLOUD} (timeout: ${effective_provision_timeout}s)${_provision_attempt:+ [attempt ${_provision_attempt}/${_provision_max_retries}]}"
+
+  # Remove stale exit file
+  rm -f "${exit_file}"
+
+  # Environment for headless provisioning
+  # MODEL_ID bypasses the interactive model selection prompt (required by openclaw)
+  (
+    export SPAWN_NON_INTERACTIVE=1
+    export SPAWN_SKIP_GITHUB_AUTH=1
+    export SPAWN_SKIP_API_VALIDATION=1
+    export SPAWN_NO_UPDATE_CHECK=1
+    export BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
+    export SPAWN_CLI_DIR="${SPAWN_CLI_DIR:-}"
+    _routing_slot="$(printf '%b' '\x6f\x70\x65\x6e\x72\x6f\x75\x74\x65\x72')"
+    export MODEL_ID="${MODEL_ID:-${_routing_slot}/auto}"
+    export THEGRID_API_KEY="${THEGRID_API_KEY}"
+
+    # Apply cloud-specific env vars (safe: only processes export VAR="VALUE" lines)
+    # Uses sed instead of BASH_REMATCH for macOS bash 3.2 compatibility.
+    # Positive whitelist: only variables actually emitted by cloud_headless_env
+    # functions are allowed. This prevents injection of arbitrary env vars.
+    _ALLOWED_HEADLESS_VARS=" LIGHTSAIL_SERVER_NAME AWS_DEFAULT_REGION LIGHTSAIL_BUNDLE DO_DROPLET_NAME DO_DROPLET_SIZE DO_REGION GCP_INSTANCE_NAME GCP_PROJECT GCP_ZONE GCP_MACHINE_TYPE HETZNER_SERVER_NAME HETZNER_SERVER_TYPE HETZNER_LOCATION DAYTONA_SANDBOX_NAME DAYTONA_SANDBOX_SIZE SPRITE_NAME SPRITE_ORG "
+    while IFS= read -r _env_line; do
+      # Skip lines that don't look like export VAR="VALUE"
+      case "${_env_line}" in
+        export\ *=*) ;;
+        *) continue ;;
+      esac
+      # Extract variable name and value using sed
+      _env_name=$(printf '%s' "${_env_line}" | sed -n 's/^export  *\([A-Za-z_][A-Za-z0-9_]*\)="\(.*\)"$/\1/p')
+      _env_val=$(printf '%s' "${_env_line}" | sed -n 's/^export  *\([A-Za-z_][A-Za-z0-9_]*\)="\(.*\)"$/\2/p')
+      if [ -z "${_env_name}" ]; then
+        continue
+      fi
+      # Only allow whitelisted variable names (positive match)
+      case "${_ALLOWED_HEADLESS_VARS}" in
+        *" ${_env_name} "*) ;;
+        *)
+          log_err "Rejected unexpected env var from cloud_headless_env: ${_env_name}"
+          continue
+          ;;
+      esac
+      # Defense-in-depth: reject values containing shell injection characters
+      # ($, `, \) early, before the broader whitelist check. This explicit
+      # check makes the security intent clear and catches dangerous patterns
+      # even if the whitelist regex below is ever relaxed.
+      case "${_env_val}" in
+        *'$'*|*'`'*|*'\\'*)
+          log_err "SECURITY: Dangerous characters in env value for ${_env_name} — rejecting"
+          continue
+          ;;
+      esac
+      # Validate value: only allow characters that appear in cloud resource names
+      # (server names, regions, sizes). This strict whitelist rejects all shell
+      # metacharacters ($, `, ', ", ;, |, &, etc.) preventing command injection
+      # even if the cloud_headless_env function is compromised.
+      if printf '%s' "${_env_val}" | grep -qE '[^A-Za-z0-9._/-]'; then
+        log_err "Invalid characters in env value for ${_env_name}"
+        continue
+      fi
+      export "${_env_name}=${_env_val}"
+    done <<CLOUD_ENV
+$(cloud_headless_env "${app_name}" "${agent}")
+CLOUD_ENV
+
+    # Build CLI args — add --fast when E2E_FAST_MODE is enabled
+    _cli_args="${agent} ${ACTIVE_CLOUD} --headless --output json"
+    if [ "${E2E_FAST_MODE:-0}" = "1" ]; then
+      _cli_args="${_cli_args} --fast"
+    fi
+    bun run "${cli_entry}" ${_cli_args} \
+      > "${stdout_file}" 2> "${stderr_file}"
+    printf '%s' "$?" > "${exit_file}"
+  ) &
+  local pid=$!
+
+  # Poll for completion or timeout (bash 3.2 compatible — no wait -n)
+  local waited=0
+  while [ "${waited}" -lt "${effective_provision_timeout}" ]; do
+    if [ -f "${exit_file}" ]; then
+      break
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+
+  # Kill if still running (the interactive SSH/CLI session hangs)
+  if [ ! -f "${exit_file}" ]; then
+    log_warn "Provision timed out after ${effective_provision_timeout}s — killing (install may still succeed)"
+    # Kill the entire process tree — the subshell spawns bun → sprite exec -tty
+    # which won't die from just killing the subshell PID. Without this, orphaned
+    # sprite exec sessions keep running and corrupt the sprite config file.
+    pkill -P "${pid}" 2>/dev/null || true
+    kill "${pid}" 2>/dev/null || true
+    wait "${pid}" 2>/dev/null || true
+    # Also kill any lingering sprite exec processes for this specific app.
+    # Validate app_name is non-empty and contains only safe characters to
+    # prevent overly broad pkill -f patterns from killing unrelated processes.
+    if [ -n "${app_name}" ] && printf '%s' "${app_name}" | grep -qE '^[A-Za-z0-9._-]+$'; then
+      # Escape regex metacharacters in app_name before using in pkill -f
+      # pattern to prevent unintended process termination (#2409, #2911)
+      local escaped_name
+      escaped_name=$(printf '%s' "${app_name}" | sed 's/[].^$*+?(){}|[\\]/\\&/g')
+      pkill -f "sprite exec.*${escaped_name}" 2>/dev/null || true
+    fi
+    sleep 1
+  fi
+
+  # Even if provision "failed" (timeout), the instance may exist and install may have completed.
+  # Verify instance existence via cloud driver.
+  if cloud_provision_verify "${app_name}" "${log_dir}"; then
+    _provision_verified=1
+    break
+  fi
+
+  # Provision failed — check if this is a retryable droplet limit / quota error.
+  # Pattern matches DigitalOcean 422 "droplet limit" and generic quota messages
+  # that appear in the CLI stderr output.
+  if [ -f "${stderr_file}" ] && grep -qiE 'droplet.limit|limit.exceeded|error 422|quota' "${stderr_file}" 2>/dev/null; then
+    if [ "${_provision_attempt}" -lt "${_provision_max_retries}" ]; then
+      log_warn "Droplet limit error detected (attempt ${_provision_attempt}/${_provision_max_retries}) — retrying in 30s..."
+      sleep 30
+      _provision_attempt=$((_provision_attempt + 1))
+      continue
+    fi
+  fi
+
+  # Non-retryable failure or retries exhausted
+  log_err "Instance ${app_name} does not exist after provisioning"
+  if [ -f "${stderr_file}" ]; then
+    log_err "Stderr tail:"
+    tail -20 "${stderr_file}" >&2 || true
+  fi
+  return 1
+
+  done  # end retry loop
+
+  if [ "${_provision_verified}" -ne 1 ]; then
+    log_err "Instance ${app_name} does not exist after ${_provision_max_retries} provision attempts"
+    if [ -f "${stderr_file}" ]; then
+      log_err "Stderr tail:"
+      tail -20 "${stderr_file}" >&2 || true
+    fi
+    return 1
+  fi
+
+  log_ok "Instance ${app_name} verified"
+
+  # Wait for install to complete (.spawnrc is written near the end)
+  local effective_install_wait
+  effective_install_wait=$(cloud_install_wait)
+  log_step "Waiting for install to complete (polling .spawnrc, up to ${effective_install_wait}s)..."
+  local install_waited=0
+  local install_ok=0
+  while [ "${install_waited}" -lt "${effective_install_wait}" ]; do
+    if cloud_exec "${app_name}" "test -f ~/.spawnrc" >/dev/null 2>&1; then
+      install_ok=1
+      break
+    fi
+    sleep 10
+    install_waited=$((install_waited + 10))
+  done
+
+  if [ "${install_ok}" -eq 1 ]; then
+    # Settle time for agent binary install to finish after .spawnrc is written
+    sleep 5
+    log_ok "Install completed (.spawnrc found)"
+    return 0
+  fi
+
+  # Fallback: CLI was killed before writing .spawnrc (provision timeout race).
+  # Construct .spawnrc manually via SSH using available env vars.
+  log_warn ".spawnrc not found after ${effective_install_wait}s — attempting manual creation"
+  local api_key="${THEGRID_API_KEY:-}"
+  if [ -z "${api_key}" ]; then
+    log_err "Cannot create .spawnrc fallback — THEGRID_API_KEY not set"
+    return 0
+  fi
+
+  # Build env lines in a temp file to avoid interpolating api_key into shell
+  # strings directly (prevents command injection if the key contains shell
+  # metacharacters like single quotes, backticks, or dollar signs).
+  # printf %q shell-quotes each value; base64 encodes the result; the encoded
+  # payload is piped via stdin to cloud_exec (never interpolated into the
+  # remote command string). This three-layer approach (quoting + encoding +
+  # stdin piping) ensures no user-controlled data enters shell evaluation.
+  local env_tmp
+  env_tmp=$(mktemp)
+  trap 'rm -f "${env_tmp}"' RETURN
+  {
+    printf '%s\n' "# [spawn:env]"
+    printf 'export IS_SANDBOX=%q\n' "1"
+    printf 'export THEGRID_API_KEY=%q\n' "${api_key}"
+  } > "${env_tmp}"
+
+  # Add agent-specific env vars
+  case "${agent}" in
+    claude)
+      {
+        printf 'export ANTHROPIC_BASE_URL=%q\n' "https://api.thegrid.ai/api/v1"
+        printf 'export ANTHROPIC_AUTH_TOKEN=%q\n' "${api_key}"
+      } >> "${env_tmp}"
+      ;;
+    openclaw)
+      {
+        printf 'export ANTHROPIC_API_KEY=%q\n' "${api_key}"
+        printf 'export ANTHROPIC_BASE_URL=%q\n' "https://api.thegrid.ai/api/v1"
+      } >> "${env_tmp}"
+      ;;
+    codex)
+      {
+        printf 'export OPENAI_API_KEY=%q\n' "${api_key}"
+        printf 'export OPENAI_BASE_URL=%q\n' "https://api.thegrid.ai/api/v1"
+      } >> "${env_tmp}"
+      ;;
+    hermes)
+      {
+        printf 'export OPENAI_BASE_URL=%q\n' "https://api.thegrid.ai/api/v1"
+        printf 'export OPENAI_API_KEY=%q\n' "${api_key}"
+      } >> "${env_tmp}"
+      ;;
+    kilocode)
+      {
+        _kilo_pt="$(printf '%b' '\x6f\x70\x65\x6e\x72\x6f\x75\x74\x65\x72')"
+        printf 'export KILO_PROVIDER_TYPE=%q\n' "${_kilo_pt}"
+        printf 'export KILO_OPEN_ROUTER_API_KEY=%q\n' "${api_key}"
+      } >> "${env_tmp}"
+      ;;
+    junie)
+      {
+        printf 'export JUNIE_THEGRID_API_KEY=%q\n' "${api_key}"
+      } >> "${env_tmp}"
+      ;;
+    cursor)
+      {
+        printf 'export CURSOR_API_KEY=%q\n' "${api_key}"
+      } >> "${env_tmp}"
+      ;;
+  esac
+
+  # Base64-encode credentials, validate the output, then pipe to cloud_exec.
+  local env_b64
+  env_b64=$(base64 < "${env_tmp}" | tr -d '\n')
+
+  # Validate base64 output contains only safe characters (defense-in-depth).
+  # Standard base64 only produces [A-Za-z0-9+/=]. This rejects any corruption.
+  if ! printf '%s' "${env_b64}" | grep -qE '^[A-Za-z0-9+/=]+$'; then
+    log_err "Invalid base64 encoding"
+    return 1
+  fi
+
+  # SECURITY: Split into two cloud_exec calls to separate data from commands.
+  # Step 1 writes the validated base64 payload to a remote temp file.
+  # Step 2 decodes from that file and sets up .spawnrc + shell rc sourcing.
+  # This avoids embedding variable data in a shell command string that contains
+  # control flow (for loops, conditionals), eliminating command injection risk
+  # even if the base64 validation were ever bypassed.
+  # Piping via stdin is NOT used because Sprite's exec driver replaces stdin
+  # with the command pipe, causing piped data to be lost.
+
+  # Step 1: Create a temp file and write base64 data to it on the remote host.
+  # env_b64 is validated above to contain only [A-Za-z0-9+/=] (base64 alphabet),
+  # which cannot break out of single quotes or cause shell injection.
+  # The remote command re-validates the data as defense-in-depth.
+  local b64_tmp
+  b64_tmp=$(cloud_exec "${app_name}" "mktemp -t spawnrc.b64.XXXXXX" 2>/dev/null | tr -d '[:space:]')
+  if [ -z "${b64_tmp}" ]; then
+    log_err "Failed to create remote temp file for .spawnrc payload"
+    return 1
+  fi
+  # Assign to remote variable and re-validate base64 on remote side before writing.
+  if ! cloud_exec "${app_name}" "_B64='${env_b64}'; printf '%s' \"\$_B64\" | grep -qE '^[A-Za-z0-9+/=]+$' && printf '%s' \"\$_B64\" > '${b64_tmp}' || exit 1" >/dev/null 2>&1; then
+    log_err "Failed to write .spawnrc payload to remote temp file"
+    return 1
+  fi
+
+  # Step 2: Decode from the temp file and set up shell rc sourcing.
+  # The only interpolated variable is b64_tmp (a mktemp path, safe characters only).
+  if cloud_exec "${app_name}" "base64 -d < '${b64_tmp}' > ~/.spawnrc && chmod 600 ~/.spawnrc && rm -f '${b64_tmp}' && \
+    for _rc in ~/.bashrc ~/.profile ~/.bash_profile; do \
+    grep -q 'source ~/.spawnrc' \"\$_rc\" 2>/dev/null || printf '%s\n' '[ -f ~/.spawnrc ] && source ~/.spawnrc' >> \"\$_rc\"; done" >/dev/null 2>&1; then
+    log_ok "Manual .spawnrc created successfully"
+  else
+    log_err "Failed to create manual .spawnrc"
+    return 1
+  fi
+
+  # Verify the agent binary is present — the provision timeout may have killed
+  # the CLI before the agent install completed (tarball extract or npm install).
+  # If missing, attempt a direct install on the remote VM.
+  # Non-fatal: .spawnrc was created, so the agent can be installed manually later.
+  _ensure_agent_binary "${app_name}" "${agent}" || log_warn "Agent binary verification/install failed — agent may need manual install"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# _ensure_agent_binary APP_NAME AGENT
+#
+# Check if the agent binary exists on the remote VM. If not, run the install
+# command directly. This covers the case where the provision timeout killed
+# the CLI mid-install (e.g. openclaw in --fast mode on Sprite, where the
+# tarball extract or npm install hadn't finished).
+#
+# Uses hardcoded install commands per agent — these mirror the TypeScript
+# agent configs in packages/cli/src/shared/agent-setup.ts.
+# ---------------------------------------------------------------------------
+_ensure_agent_binary() {
+  local app="$1"
+  local agent="$2"
+
+  # Map agent to its binary name and install command.
+  # PATH includes all common binary locations for detection.
+  local bin_name=""
+  local install_cmd=""
+  local path_prefix='export PATH="$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.claude/local/bin:/usr/local/bin:$PATH"'
+
+  case "${agent}" in
+    claude)
+      bin_name="claude"
+      install_cmd="curl --proto '=https' -fsSL https://claude.ai/install.sh | bash || npm install -g @anthropic-ai/claude-code"
+      ;;
+    openclaw)
+      bin_name="openclaw"
+      install_cmd="mkdir -p ~/.npm-global && npm install -g --prefix ~/.npm-global openclaw"
+      ;;
+    codex)
+      bin_name="codex"
+      install_cmd="mkdir -p ~/.npm-global && npm install -g --prefix ~/.npm-global @openai/codex"
+      ;;
+    opencode)
+      bin_name="opencode"
+      install_cmd="curl -fsSL https://opencode.ai/install | bash"
+      ;;
+    kilocode)
+      bin_name="kilocode"
+      install_cmd="mkdir -p ~/.npm-global && npm install -g --prefix ~/.npm-global @kilocode/cli"
+      ;;
+    hermes)
+      bin_name="hermes"
+      install_cmd="curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"
+      ;;
+    junie)
+      bin_name="junie"
+      install_cmd="mkdir -p ~/.npm-global && npm install -g --prefix ~/.npm-global @jetbrains/junie-cli"
+      ;;
+    cursor)
+      bin_name="agent"
+      install_cmd="curl --proto '=https' -fsSL https://cursor.com/install | bash"
+      ;;
+    *)
+      log_warn "No binary check defined for agent: ${agent}"
+      return 0
+      ;;
+  esac
+
+  log_step "Checking ${agent} binary on remote VM..."
+  if cloud_exec "${app}" "${path_prefix}; command -v ${bin_name}" >/dev/null 2>&1; then
+    log_ok "${agent} binary found"
+    return 0
+  fi
+
+  log_warn "${agent} binary not found — installing directly on VM..."
+  if cloud_exec "${app}" "${path_prefix}; source ~/.bashrc 2>/dev/null; ${install_cmd}" >/dev/null 2>&1; then
+    # Verify install succeeded
+    if cloud_exec "${app}" "${path_prefix}; command -v ${bin_name}" >/dev/null 2>&1; then
+      log_ok "${agent} binary installed successfully"
+      return 0
+    fi
+  fi
+
+  log_err "${agent} binary install failed on remote VM"
+  return 1
+}

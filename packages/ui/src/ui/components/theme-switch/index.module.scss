@@ -1,0 +1,19 @@
+@import "src/styles/index";
+
+.switch {
+  @include flex-center;
+  @include br(s);
+  @include transition(fast);
+
+  width: size(32 / 4);
+  height: size(32 / 4);
+  background: transparent;
+  border: 1px solid c(stroke-1);
+  color: c(text-2);
+  cursor: pointer;
+
+  &:hover {
+    background: c(base-2);
+    color: c(text);
+  }
+}

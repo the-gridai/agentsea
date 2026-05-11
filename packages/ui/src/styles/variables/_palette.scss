@@ -1,0 +1,57 @@
+$palette: (
+  white: --text,
+  black: --background,
+
+  background: --background,
+  base-1: --base-1,
+  base-1-h: --base-1-h,
+  base-2: --base-2,
+  base-2-h: --base-2-h,
+  base-3: --base-3,
+  base-3-h: --base-3-h,
+  base-4: --base-4,
+  base-4-h: --base-4-h,
+  base-5: --base-5,
+  base-5-h: --base-5-h,
+  base-6: --base-6,
+  base-6-h: --base-6-h,
+
+  stroke-1: --stroke-1,
+  stroke-2: --stroke-2,
+  stroke-3: --stroke-3,
+
+  loader: --loader,
+
+  text: --text,
+  text-1: --text,
+  text-2: --text-neutral,
+  text-3: --text-heavy,
+  text-inverse: --text-inverse,
+
+  text-highlight: --text-highlight,
+  text-highlight-2: --text-highlight-2,
+  text-accent: --text-accent,
+
+  text-positive: --text-positive,
+  text-positive-h: --text-positive-h,
+  text-negative: --text-negative,
+  text-negative-h: --text-negative-h,
+
+  positive: --positive,
+  positive-h: --positive-h,
+
+  negative: --negative,
+  negative-h: --negative-h,
+
+  warning: --warning,
+
+  accent: --accent,
+  accent-h: --accent-h,
+
+  highlight: --highlight,
+  highlight-h: --highlight-h,
+
+  row-filled: --row-filled,
+) !default;
+
+$colors: map-keys($palette);

@@ -1,0 +1,11 @@
+@function unit($n: 1) {
+  @return calc(var(--global-unit) * #{$n});
+}
+
+@function size($n: 1) {
+  @return calc(var(--global-unit) * #{$n});
+}
+
+@function pad($n: 1) {
+  @return calc(var(--global-unit) * #{$n});
+}

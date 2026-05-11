@@ -1,0 +1,56 @@
+@import "src/styles/index";
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  border-bottom: 1px solid c(stroke-2);
+  background: color-mix(in srgb, c(background) 92%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.inner {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: pad(3) pad(6);
+  @include flex(space-between, center);
+  gap: pad(6);
+
+  @media (min-width: 768px) {
+    padding: pad(4) pad(10);
+  }
+}
+
+.brand {
+  flex-shrink: 0;
+  text-decoration: none;
+  color: inherit;
+  @include flex(flex-start, center);
+  gap: pad(3);
+}
+
+.nav {
+  flex-shrink: 0;
+  @include flex(flex-end, center);
+  gap: pad(2);
+}
+
+.nav__link {
+  @include text(text-s);
+  @include font(500);
+  color: c(text-2);
+  text-decoration: none;
+  padding: pad(2) pad(3);
+  border-radius: br(s);
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+  white-space: nowrap;
+
+  &:hover {
+    color: c(text-1);
+    background: c(base-2);
+  }
+}

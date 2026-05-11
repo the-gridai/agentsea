@@ -1,0 +1,23 @@
+@mixin padding($vertical: 0, $horizontal: 0) {
+  padding-top: pad($vertical);
+  padding-bottom: pad($vertical);
+  padding-left: pad($horizontal);
+  padding-right: pad($horizontal);
+}
+
+@mixin padding-y($n: 0) {
+  padding-top: pad($n);
+  padding-bottom: pad($n);
+}
+
+@mixin padding-x($n: 0) {
+  padding-left: pad($n);
+  padding-right: pad($n);
+}
+
+@mixin margin($vertical: 0, $horizontal: 0) {
+  margin-top: pad($vertical);
+  margin-bottom: pad($vertical);
+  margin-left: pad($horizontal);
+  margin-right: pad($horizontal);
+}

@@ -1,0 +1,42 @@
+@import "src/styles/index";
+
+.tabs {
+  @include flex(center);
+  @include gap(0);
+  border-bottom: 1px solid c(stroke-1);
+
+  &__tab {
+    @include flex(center);
+    @include gap(1.5);
+    @include padding(2, 3);
+    @include text(text-m, semi);
+    @include transition(fast);
+    background: transparent;
+    color: c(text-2);
+    border: none;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+
+    &:hover {
+      color: c(text);
+    }
+
+    &--active {
+      color: c(text);
+      border-bottom-color: c(highlight);
+    }
+  }
+
+  &__badge {
+    @include text(text-xs, semi);
+    @include padding(0, 1.5);
+    @include br(full);
+    background: c(base-2);
+    color: c(text-2);
+    height: 1.4em;
+    line-height: 1.4em;
+    min-width: 1.4em;
+    text-align: center;
+  }
+}

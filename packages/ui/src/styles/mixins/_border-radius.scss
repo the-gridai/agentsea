@@ -1,0 +1,7 @@
+@mixin br($size: m) {
+  @if map-has-key($radius, $size) {
+    border-radius: map-get($radius, $size);
+  } @else {
+    border-radius: $size;
+  }
+}

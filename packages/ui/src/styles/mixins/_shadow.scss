@@ -1,0 +1,3 @@
+@mixin shadow($size: regular) {
+  box-shadow: map-get($shadows, $size);
+}

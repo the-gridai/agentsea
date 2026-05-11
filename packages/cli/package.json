@@ -1,0 +1,36 @@
+{
+  "name": "@grid-spawn/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "grid-spawn CLI — cloud agent provisioning for The Grid (static manifest + your cloud accounts).",
+  "type": "module",
+  "bin": {
+    "grid-spawn": "./grid-spawn.cjs"
+  },
+  "files": [
+    "cli.js",
+    "grid-spawn.cjs",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "npx --yes bun@1.3.9 build src/index.ts --outfile cli.js --target bun --minify --packages bundle",
+    "dev": "npx --yes bun@1.3.9 run src/index.ts",
+    "start": "npx --yes bun@1.3.9 run src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "compile": "npx --yes bun@1.3.9 build src/index.ts --compile --outfile grid-spawn"
+  },
+  "dependencies": {
+    "@clack/prompts": "1.0.0",
+    "@daytonaio/sdk": "0.160.0",
+    "@grid-spawn/sdk": "*",
+    "picocolors": "1.1.1",
+    "valibot": "1.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.8",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "bun": ">=1.2.0"
+  }
+}

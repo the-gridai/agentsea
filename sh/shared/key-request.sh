@@ -1,0 +1,327 @@
+#!/bin/bash
+# Shell helpers for API key provisioning
+# Sourced by QA/CI harnesses for key loading and stale key handling
+#
+# Requires: jq or bun, curl, REPO_ROOT set, log() function defined by caller
+#
+# Functions:
+#   load_cloud_keys_from_config  — Load keys from ~/.config/spawn/{cloud}.json into env
+#     _parse_cloud_auths         — Extract cloud auth specs from manifest.json
+#     _try_load_env_var          — Load a single env var from config file
+#     _load_cloud_credentials    — Load all env vars for one cloud provider
+#   request_missing_cloud_keys   — POST to key server for missing providers (fire-and-forget)
+
+# Fallback log function if caller hasn't defined one
+if ! type log &>/dev/null 2>&1; then
+    log() { printf '[%s] [keys] %s\n' "$(date +'%Y-%m-%d %H:%M:%S')" "$*"; }
+fi
+
+# Check CLI-authenticated clouds (e.g. gcp via gcloud) and load any supplemental
+# env vars from their config file. Updates total/loaded/missing_providers in caller scope.
+# Currently supports: gcp (gcloud auth login)
+_check_cli_auth_clouds() {
+    local manifest_path="${1}"
+    local _total_var="${2}"
+    local _loaded_var="${3}"
+    local _missing_var="${4}"
+
+    local cli_clouds
+    if command -v jq &>/dev/null; then
+        cli_clouds=$(jq -r '.clouds | to_entries[] | select(.value.auth != null) | select(.value.auth | test("\\b(login|configure|setup)\\b"; "i")) | "\(.key)|\(.value.auth)"' "${manifest_path}" 2>/dev/null)
+    else
+        cli_clouds=$(_MANIFEST="${manifest_path}" bun -e "
+import fs from 'fs';
+const m = JSON.parse(fs.readFileSync(process.env._MANIFEST, 'utf8'));
+for (const [key, cloud] of Object.entries(m.clouds || {})) {
+  const auth = cloud.auth || '';
+  if (/\b(login|configure|setup)\b/i.test(auth))
+    process.stdout.write(key + '|' + auth + '\n');
+}
+" 2>/dev/null)
+    fi
+
+    while IFS='|' read -r cloud_key auth_string; do
+        [[ -z "${cloud_key}" ]] && continue
+        eval "${_total_var}=\$(( ${_total_var} + 1 ))"
+
+        case "${cloud_key}" in
+            gcp)
+                # Check if gcloud is installed and has an active account
+                local active_account
+                active_account=$(gcloud auth list --filter="status:ACTIVE" --format="value(account)" 2>/dev/null | head -1)
+                if [[ -n "${active_account}" ]]; then
+                    eval "${_loaded_var}=\$(( ${_loaded_var} + 1 ))"
+                    # Load GCP_PROJECT from config file if not already set
+                    local gcp_config="${HOME}/.config/spawn/gcp.json"
+                    if [[ -z "${GCP_PROJECT:-}" ]] && [[ -f "${gcp_config}" ]]; then
+                        local project
+                        if command -v jq &>/dev/null; then
+                            project=$(jq -r '.GCP_PROJECT // .project // "" | select(. != null)' "${gcp_config}" 2>/dev/null)
+                        else
+                            project=$(_FILE="${gcp_config}" bun -e "
+import fs from 'fs';
+const d = JSON.parse(fs.readFileSync(process.env._FILE, 'utf8'));
+process.stdout.write(d.GCP_PROJECT || d.project || '');
+" 2>/dev/null)
+                        fi
+                        if [[ -n "${project}" ]]; then
+                            # Validate GCP project ID format before export
+                            if [[ ! "${project}" =~ ^[a-z][a-z0-9-]*$ ]]; then
+                                log "SECURITY: Invalid GCP project ID format: ${project}"
+                                return 1
+                            fi
+                            export GCP_PROJECT="${project}"
+                        fi
+                    fi
+                    log "Key preflight: gcp — authenticated as ${active_account}"
+                else
+                    eval "${_missing_var}=\"\${${_missing_var}} gcp\""
+                    log "Key preflight: gcp — gcloud not installed or no active account"
+                fi
+                ;;
+            *)
+                # Other CLI-auth clouds (sprite, etc.) — not auto-checkable, skip silently
+                eval "${_total_var}=\$(( ${_total_var} - 1 ))"
+                ;;
+        esac
+    done <<< "${cli_clouds}"
+}
+
+# Parse manifest.json to extract cloud_key|auth_string lines for API-token clouds.
+# Skips CLI-based auth (sprite login, aws configure, etc.) and empty auth fields.
+# Outputs one "cloud_key|auth_string" per line to stdout.
+_parse_cloud_auths() {
+    local manifest_path="${1}"
+    if command -v jq &>/dev/null; then
+        jq -r '.clouds | to_entries[] | select(.value.auth != null and .value.auth != "") | select(.value.key_request != false) | select(.value.auth | test("\\b(login|configure|setup)\\b"; "i") | not) | "\(.key)|\(.value.auth)"' "${manifest_path}" 2>/dev/null
+    else
+        _MANIFEST="${manifest_path}" bun -e "
+import fs from 'fs';
+const m = JSON.parse(fs.readFileSync(process.env._MANIFEST, 'utf8'));
+for (const [key, cloud] of Object.entries(m.clouds || {})) {
+  const auth = cloud.auth || '';
+  if (cloud.key_request === false) continue;
+  if (/\b(login|configure|setup)\b/i.test(auth)) continue;
+  if (!auth.trim()) continue;
+  process.stdout.write(key + '|' + auth + '\n');
+}
+" 2>/dev/null
+    fi
+}
+
+# Try to load a single env var from config file if not already set in environment.
+# Returns 0 if the var is available (already set or loaded from config), 1 if missing.
+_try_load_env_var() {
+    local var_name="${1}"
+    local config_file="${2}"
+
+    # SECURITY: Validate var_name to prevent command injection via export
+    # Only allow uppercase letters, numbers, and underscores (standard env var naming)
+    if [[ ! "${var_name}" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+        log "SECURITY: Invalid env var name rejected: ${var_name}"
+        return 1
+    fi
+
+    # Already set in environment?
+    local current_val="${!var_name:-}"
+    if [[ -n "${current_val}" ]]; then
+        return 0
+    fi
+
+    # Try loading from config file
+    if [[ -f "${config_file}" ]]; then
+        local val
+        if command -v jq &>/dev/null; then
+            val=$(jq -r --arg v "${var_name}" '(.[$v] // .api_key // .token) // "" | select(. != null)' "${config_file}" 2>/dev/null)
+        else
+            val=$(_FILE="${config_file}" _VAR="${var_name}" bun -e "
+import fs from 'fs';
+const d = JSON.parse(fs.readFileSync(process.env._FILE, 'utf8'));
+process.stdout.write(d[process.env._VAR] || d.api_key || d.token || '');
+" 2>/dev/null)
+        fi
+        if [[ -n "${val}" ]]; then
+            # SECURITY: Strip leading/trailing whitespace before validation
+            val="$(printf '%s' "${val}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+
+            # SECURITY: Reject tokens containing newlines, tabs, or carriage returns
+            # These could bypass downstream validation or cause header injection
+            if [[ "${val}" =~ $'\n' ]] || [[ "${val}" =~ $'\t' ]] || [[ "${val}" =~ $'\r' ]]; then
+                log "SECURITY: Token contains newlines/tabs for ${var_name}"
+                return 1
+            fi
+
+            # Re-check non-empty after whitespace stripping
+            if [[ -z "${val}" ]]; then
+                return 1
+            fi
+
+            # SECURITY: Defense-in-depth — prevent malicious values from being misused
+            # downstream in unquoted expansions, eval contexts, or logging
+            # Allow alphanumeric plus safe chars needed by real tokens:
+            #   - _ . / @  (standard API key chars)
+            #   : + =      (base64 segments, URL-safe and base64 formats)
+            # Standalone validation — no corresponding regex in TypeScript cloud modules
+            if [[ ! "${val}" =~ ^[a-zA-Z0-9._/@:+=-]+$ ]]; then
+                log "SECURITY: Invalid characters in config value for ${var_name}"
+                return 1
+            fi
+            # SECURITY: val is already validated against ^[a-zA-Z0-9._/@:+=-]+$ above,
+            # and var_name is validated against ^[A-Z_][A-Z0-9_]*$ by the caller.
+            # Use export NAME=VALUE (bash 3.2 compatible; printf -v requires bash 4.0+).
+            export "${var_name}=${val}"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# Load all env vars for a single cloud provider.
+# Returns 0 if all vars are available, 1 if any are missing.
+_load_cloud_credentials() {
+    local cloud_key="${1}"
+    local auth_string="${2}"
+
+    local env_vars
+    env_vars=$(printf '%s' "${auth_string}" | tr '+,' '\n' | sed 's/^ *//;s/ *$//')
+
+    local config_file="${HOME}/.config/spawn/${cloud_key}.json"
+    local all_loaded=true
+
+    while IFS= read -r var_name; do
+        [[ -z "${var_name}" ]] && continue
+        if ! _try_load_env_var "${var_name}" "${config_file}"; then
+            all_loaded=false
+        fi
+    done <<< "${env_vars}"
+
+    [[ "${all_loaded}" == "true" ]]
+}
+
+# Load cloud API keys from ~/.config/spawn/{cloud}.json into environment
+# Reads manifest.json to determine which clouds need API-token auth
+# Skips CLI-based auth (sprite login, aws configure, etc.)
+# Sets MISSING_KEY_PROVIDERS with space-separated list of clouds that have no keys
+load_cloud_keys_from_config() {
+    local manifest_path="${REPO_ROOT}/manifest.json"
+    if [[ ! -f "${manifest_path}" ]]; then
+        log "Key preflight: manifest.json not found at ${manifest_path}"
+        return 1
+    fi
+
+    if ! command -v jq &>/dev/null && ! command -v bun &>/dev/null; then
+        log "Key preflight: neither jq nor bun found, skipping"
+        return 1
+    fi
+
+    local cloud_auths
+    cloud_auths=$(_parse_cloud_auths "${manifest_path}") || return 1
+
+    local total=0
+    local loaded=0
+    local missing_providers=""
+
+    while IFS='|' read -r cloud_key auth_string; do
+        [[ -z "${cloud_key}" ]] && continue
+        total=$((total + 1))
+
+        if _load_cloud_credentials "${cloud_key}" "${auth_string}"; then
+            loaded=$((loaded + 1))
+        else
+            missing_providers="${missing_providers} ${cloud_key}"
+        fi
+    done <<< "${cloud_auths}"
+
+    # Check CLI-authenticated clouds (e.g. gcp via gcloud auth login)
+    _check_cli_auth_clouds "${manifest_path}" total loaded missing_providers
+
+    MISSING_KEY_PROVIDERS=$(printf '%s' "${missing_providers}" | sed 's/^ //')
+    log "Key preflight: ${loaded}/${total} cloud keys available"
+    if [[ -n "${MISSING_KEY_PROVIDERS}" ]]; then
+        log "Key preflight: Missing keys for: ${MISSING_KEY_PROVIDERS}"
+    fi
+}
+
+# Request missing cloud keys from key server (fire-and-forget)
+# Uses MISSING_KEY_PROVIDERS (set by load_cloud_keys_from_config or caller)
+# Requires KEY_SERVER_URL and KEY_SERVER_SECRET env vars
+request_missing_cloud_keys() {
+    local key_server_url="${KEY_SERVER_URL:-}"
+    local key_server_secret="${KEY_SERVER_SECRET:-}"
+
+    if [[ -z "${key_server_url}" ]]; then
+        return 0  # Key server not configured, skip
+    fi
+
+    if [[ -z "${key_server_secret}" ]]; then
+        log "Key preflight: WARNING — KEY_SERVER_SECRET is empty, email request will fail (401)"
+        return 0
+    fi
+
+    if [[ -z "${MISSING_KEY_PROVIDERS:-}" ]]; then
+        return 0  # Nothing to request
+    fi
+
+    # Build JSON array of provider names
+    local providers_json
+    if command -v jq &>/dev/null; then
+        providers_json=$(printf '%s\n' ${MISSING_KEY_PROVIDERS} | jq -Rn '[inputs | select(. != "")]' 2>/dev/null) || return 0
+    elif command -v bun &>/dev/null; then
+        providers_json=$(_PROVIDERS="${MISSING_KEY_PROVIDERS}" bun -e "
+const providers = process.env._PROVIDERS.trim().split(/\s+/).filter(Boolean);
+process.stdout.write(JSON.stringify(providers));
+" 2>/dev/null) || return 0
+    else
+        return 0
+    fi
+
+    log "Key preflight: Requesting keys for: ${MISSING_KEY_PROVIDERS}"
+
+    # Fire-and-forget — don't block the QA cycle, but log failures
+    # Use positional parameters to safely pass variables to subshell (prevents command injection)
+    # Pre-construct the full JSON body to avoid shell expansion risks in subshell
+    local request_body
+    request_body="{\"providers\": ${providers_json}}"
+
+    if command -v timeout &>/dev/null; then
+        # Linux/GNU timeout available - wrap the subshell with timeout
+        # Use --data-binary @- with heredoc to pass body via stdin (no shell expansion)
+        timeout 15s bash -c '
+            http_code=$(curl -s -o /dev/stderr -w "%{http_code}" --max-time 10 \
+                -X POST "$1/request-batch" \
+                -H "Authorization: Bearer $2" \
+                -H "Content-Type: application/json" \
+                --data-binary @- 2>/dev/null <<CURL_BODY
+$3
+CURL_BODY
+            ) || http_code="000"
+            case "${http_code}" in
+                2*) ;; # success
+                000) printf "[%s] [keys] Key preflight: WARNING — key-server unreachable at %s\n" "$(date +"%Y-%m-%d %H:%M:%S")" "$1" ;;
+                401) printf "[%s] [keys] Key preflight: WARNING — 401 Unauthorized (check KEY_SERVER_SECRET)\n" "$(date +"%Y-%m-%d %H:%M:%S")" ;;
+                *)   printf "[%s] [keys] Key preflight: WARNING — key-server returned HTTP %s\n" "$(date +"%Y-%m-%d %H:%M:%S")" "${http_code}" ;;
+            esac
+        ' -- "${key_server_url}" "${key_server_secret}" "${request_body}" &
+    else
+        # macOS fallback - no timeout command, rely on curl --max-time only
+        # Use --data-binary @- with heredoc to pass body via stdin (no shell expansion)
+        bash -c '
+            http_code=$(curl -s -o /dev/stderr -w "%{http_code}" --max-time 10 \
+                -X POST "$1/request-batch" \
+                -H "Authorization: Bearer $2" \
+                -H "Content-Type: application/json" \
+                --data-binary @- 2>/dev/null <<CURL_BODY
+$3
+CURL_BODY
+            ) || http_code="000"
+            case "${http_code}" in
+                2*) ;; # success
+                000) printf "[%s] [keys] Key preflight: WARNING — key-server unreachable at %s\n" "$(date +"%Y-%m-%d %H:%M:%S")" "$1" ;;
+                401) printf "[%s] [keys] Key preflight: WARNING — 401 Unauthorized (check KEY_SERVER_SECRET)\n" "$(date +"%Y-%m-%d %H:%M:%S")" ;;
+                *)   printf "[%s] [keys] Key preflight: WARNING — key-server returned HTTP %s\n" "$(date +"%Y-%m-%d %H:%M:%S")" "${http_code}" ;;
+            esac
+        ' -- "${key_server_url}" "${key_server_secret}" "${request_body}" &
+    fi
+}
+

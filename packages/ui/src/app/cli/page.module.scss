@@ -1,0 +1,175 @@
+@import "src/styles/index";
+
+.page {
+  min-height: 100vh;
+  @include flex(stretch, flex-start, column);
+  background: c(background);
+}
+
+.main {
+  flex: 1;
+}
+
+.wrap {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: pad(8) pad(6) pad(12);
+
+  @media (min-width: 768px) {
+    padding: pad(10) pad(10) pad(14);
+  }
+}
+
+.title {
+  @include font(700);
+  font-size: clamp(1.75rem, 4vw, 2.25rem);
+  color: c(text-1);
+  margin: 0 0 pad(2);
+  letter-spacing: -0.02em;
+}
+
+.intro {
+  @include text(text-m);
+  color: c(text-2);
+  line-height: 1.6;
+  margin: 0 0 pad(6);
+}
+
+.section {
+  margin-bottom: pad(8);
+
+  &:last-of-type {
+    margin-bottom: 0;
+  }
+}
+
+.section h2 {
+  @include font(600);
+  @include text(header-3);
+  color: c(text-1);
+  margin: 0 0 pad(3);
+  padding-top: pad(4);
+  border-top: 1px solid c(stroke-2);
+}
+
+.section p,
+.section li {
+  @include text(text-s);
+  color: c(text-2);
+  line-height: 1.6;
+  margin: 0 0 pad(3);
+}
+
+.section ul {
+  margin: 0 0 pad(3);
+  padding-left: 1.25rem;
+}
+
+.note {
+  @include padding(3, 4);
+  border-radius: br(m);
+  border: 1px solid c(stroke-2);
+  background: c(base-2);
+  @include text(text-s);
+  color: c(text-2);
+  margin: 0 0 pad(5);
+  line-height: 1.55;
+}
+
+.pre {
+  margin: 0 0 pad(5);
+  @include padding(3, 4);
+  border-radius: br(m);
+  border: 1px solid c(stroke-2);
+  background: c(base-2);
+  overflow-x: auto;
+  @include text(mono-s);
+  color: c(text-1);
+  line-height: 1.5;
+}
+
+.cmd {
+  display: block;
+  white-space: pre;
+}
+
+.compactP {
+  margin: pad(4) 0 pad(2);
+}
+
+.tableWrap {
+  overflow-x: auto;
+  margin: 0 0 pad(4);
+  border-radius: br(m);
+  border: 1px solid c(stroke-2);
+}
+
+.table {
+  width: 100%;
+  min-width: 28rem;
+  border-collapse: collapse;
+  @include text(text-s);
+}
+
+.table th,
+.table td {
+  padding: pad(3) pad(4);
+  text-align: left;
+  border-bottom: 1px solid c(stroke-2);
+  vertical-align: top;
+}
+
+.table th {
+  @include font(600);
+  color: c(text-1);
+  background: c(base-2);
+}
+
+.table td {
+  color: c(text-2);
+}
+
+.table code {
+  @include text(mono-s);
+  color: c(text-1);
+  word-break: break-word;
+}
+
+.troubleList {
+  margin: 0;
+  padding-left: 1.25rem;
+  @include text(text-s);
+  color: c(text-2);
+  line-height: 1.6;
+
+  li {
+    margin-bottom: pad(3);
+  }
+
+  code {
+    @include text(mono-s);
+    color: c(text-1);
+  }
+}
+
+.section:first-of-type h2 {
+  border-top: none;
+  padding-top: 0;
+}
+
+.footer {
+  @include text(text-s);
+  color: c(text-3);
+  margin-top: pad(8);
+
+  a {
+    color: rgb(var(--highlight));
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}

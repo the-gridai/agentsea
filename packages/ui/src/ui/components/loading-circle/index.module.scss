@@ -1,0 +1,29 @@
+@import "src/styles/index";
+
+.loader {
+  display: inline-block;
+  border: 2px solid c(loader, 0.25);
+  border-top-color: c(loader);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+
+  &--xs {
+    width: 10px;
+    height: 10px;
+    border-width: 1.5px;
+  }
+  &--s {
+    width: 14px;
+    height: 14px;
+  }
+  &--m {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

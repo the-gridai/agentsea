@@ -1,0 +1,20 @@
+{
+  "name": "@grid-spawn/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Spawn manifest schema, shared runtime helpers (Result/guards/safe JSON parse), and Node manifest loader.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.2.0",
+    "typescript": "^5.6.3"
+  }
+}

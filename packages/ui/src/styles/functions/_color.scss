@@ -1,0 +1,21 @@
+@function get-color($name, $opacity: 1) {
+  @if $name == transparent {
+    @return transparent;
+  }
+  @if not map-has-key($palette, $name) {
+    @warn '[get-color] Color "' + $name + '" not found';
+    @return red;
+  }
+  @if $opacity == 1 {
+    @return rgb(var(#{map-get($palette, $name)}));
+  }
+  @return rgb(var(#{map-get($palette, $name)}) / $opacity);
+}
+
+@function color($name, $opacity: 1) {
+  @return get-color($name, $opacity);
+}
+
+@function c($name, $opacity: 1) {
+  @return get-color($name, $opacity);
+}

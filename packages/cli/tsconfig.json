@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "./src",
+    "types": ["bun"],
+    "lib": ["ES2022", "DOM"],
+    "moduleResolution": "bundler",
+    "strictNullChecks": true,
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["src/**/*"]
+}

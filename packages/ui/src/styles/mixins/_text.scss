@@ -1,0 +1,24 @@
+@mixin text($style: text-m, $weight: false) {
+  @if map-has-key($text-styles, $style) {
+    $values: map-get($text-styles, $style);
+    $font-size: nth($values, 1);
+    $line-height: nth($values, 2);
+    $font: default;
+    @if length($values) >= 3 {
+      $font: nth($values, 3);
+    }
+
+    @include get-font($font, $weight);
+
+    font-size: $font-size;
+    line-height: $line-height;
+  } @else {
+    @warn "[text] Text style `#{$style}` not found.";
+  }
+}
+
+@mixin ellipsis {
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}

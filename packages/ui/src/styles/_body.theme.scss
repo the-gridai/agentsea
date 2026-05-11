@@ -1,0 +1,108 @@
+// Light mode palette (RGB triplets — used via rgb(var(--token) / opacity))
+:root {
+  --background: 247 248 250;
+
+  --base-1: 255 255 255;
+  --base-1-h: 245 247 250;
+  --base-2: 240 243 247;
+  --base-2-h: 232 237 243;
+  --base-3: 244 247 251;
+  --base-3-h: 234 240 246;
+  --base-4: 220 228 236;
+  --base-4-h: 200 212 222;
+  --base-5: 200 212 222;
+  --base-5-h: 180 196 209;
+  --base-6: 160 180 196;
+  --base-6-h: 130 156 177;
+
+  --stroke-1: 220 228 236;
+  --stroke-2: 180 196 209;
+  --stroke-3: 130 156 177;
+
+  --text: 18 24 28;
+  --text-neutral: 70 90 105;
+  --text-heavy: 110 132 150;
+  --text-inverse: 247 248 250;
+
+  --text-highlight: 64 90 230;
+  --text-highlight-2: 50 73 200;
+  --text-accent: 200 152 0;
+
+  --text-positive: 34 130 50;
+  --text-positive-h: 50 160 70;
+
+  --text-negative: 200 50 60;
+  --text-negative-h: 220 80 90;
+
+  --highlight: 255 205 26;
+  --highlight-h: 255 216 77;
+
+  --accent: 0 73 230;
+  --accent-h: 30 100 250;
+
+  --positive: 64 120 8;
+  --positive-h: 89 168 11;
+
+  --negative: 168 11 14;
+  --negative-h: 210 50 55;
+
+  --warning: 255 152 0;
+
+  --row-filled: 220 240 200;
+  --loader: 100 130 160;
+}
+
+// Dark mode (default — matches grid-ui's default dark)
+html.dark,
+html[data-dark="true"] {
+  --background: 10 13 15;
+
+  --base-1: 15 20 23;
+  --base-1-h: 21 27 30;
+  --base-2: 26 33 38;
+  --base-2-h: 31 40 45;
+  --base-3: 21 27 30;
+  --base-3-h: 31 40 45;
+  --base-4: 31 40 45;
+  --base-4-h: 0 0 0;
+  --base-5: 31 40 46;
+  --base-5-h: 42 53 61;
+  --base-6: 52 66 76;
+  --base-6-h: 57 72 83;
+
+  --stroke-1: 31 40 45;
+  --stroke-2: 52 66 76;
+  --stroke-3: 72 92 106;
+
+  --text: 240 243 245;
+  --text-neutral: 179 193 203;
+  --text-heavy: 119 144 162;
+  --text-inverse: 15 20 23;
+
+  --text-highlight: 128 168 255;
+  --text-highlight-2: 77 133 255;
+  --text-accent: 255 205 26;
+
+  --text-positive: 166 244 87;
+  --text-positive-h: 191 247 135;
+
+  --text-negative: 247 135 137;
+  --text-negative-h: 250 183 184;
+
+  --highlight: 255 205 26;
+  --highlight-h: 255 216 77;
+
+  --accent: 0 57 179;
+  --accent-h: 0 73 230;
+
+  --positive: 64 120 8;
+  --positive-h: 89 168 11;
+
+  --negative: 120 8 10;
+  --negative-h: 168 11 14;
+
+  --warning: 255 152 0;
+
+  --row-filled: 24 43 10;
+  --loader: 193 193 214;
+}

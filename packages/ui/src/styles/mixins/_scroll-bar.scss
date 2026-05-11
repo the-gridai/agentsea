@@ -1,0 +1,11 @@
+@mixin scroll-bar($color: stroke-1) {
+  &::-webkit-scrollbar {
+    width: var(--scroll-bar-width);
+    height: var(--scroll-bar-width);
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background-color: c($color);
+    border-radius: 0.5rem;
+  }
+}

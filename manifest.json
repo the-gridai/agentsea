@@ -1,0 +1,567 @@
+{
+  "agents": {
+    "claude": {
+      "name": "Claude Code",
+      "description": "Anthropic's AI coding agent — reads your codebase, writes code, runs commands, and ships features",
+      "url": "https://claude.ai",
+      "install": "curl -fsSL https://claude.ai/install.sh | bash",
+      "launch": "claude",
+      "env": {
+        "THEGRID_API_KEY": "${THEGRID_API_KEY}",
+        "ANTHROPIC_BASE_URL": "https://api.thegrid.ai/api/v1",
+        "ANTHROPIC_AUTH_TOKEN": "${THEGRID_API_KEY}",
+        "ANTHROPIC_API_KEY": "",
+        "CLAUDE_CODE_SKIP_ONBOARDING": "1",
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "0"
+      },
+      "config_files": {
+        "~/.claude/settings.json": {
+          "theme": "dark",
+          "permissions": {
+            "defaultMode": "bypassPermissions",
+            "dangerouslySkipPermissions": true
+          }
+        },
+        "~/.claude.json": {
+          "hasCompletedOnboarding": true,
+          "bypassPermissionsModeAccepted": true
+        }
+      },
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/agents/claude.png",
+      "featured_cloud": [
+        "digitalocean",
+        "sprite"
+      ],
+      "creator": "Anthropic",
+      "repo": "anthropics/claude-code",
+      "license": "Proprietary",
+      "created": "2025-02",
+      "added": "2025-06",
+      "github_stars": 84019,
+      "stars_updated": "2026-03-29",
+      "language": "Shell",
+      "runtime": "node",
+      "category": "cli",
+      "tagline": "Anthropic's AI coding agent — plan, build, and ship code across your entire codebase",
+      "tags": [
+        "coding",
+        "terminal",
+        "agentic"
+      ]
+    },
+    "openclaw": {
+      "name": "OpenClaw",
+      "description": "Personal AI assistant with multi-channel gateway + TUI",
+      "url": "https://github.com/openclaw/openclaw",
+      "install": "npm install -g openclaw",
+      "launch": "openclaw tui",
+      "pre_launch": "nohup openclaw gateway > /tmp/openclaw-gateway.log 2>&1 &",
+      "env": {
+        "THEGRID_API_KEY": "${THEGRID_API_KEY}",
+        "ANTHROPIC_API_KEY": "${THEGRID_API_KEY}",
+        "ANTHROPIC_BASE_URL": "https://api.thegrid.ai/api/v1"
+      },
+      "interactive_prompts": {
+        "model_id": {
+          "prompt": "Enter model ID",
+          "default": "\u006f\u0070\u0065\u006e\u0072\u006f\u0075\u0074\u0065\u0072/auto"
+        }
+      },
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/agents/openclaw.png",
+      "featured_cloud": [
+        "digitalocean",
+        "sprite"
+      ],
+      "creator": "OpenClaw",
+      "repo": "openclaw/openclaw",
+      "license": "MIT",
+      "created": "2025-11",
+      "added": "2025-11",
+      "github_stars": 339820,
+      "stars_updated": "2026-03-29",
+      "language": "TypeScript",
+      "runtime": "bun",
+      "category": "tui",
+      "tagline": "Your personal AI — any channel, any model, from the terminal",
+      "tags": [
+        "coding",
+        "tui",
+        "gateway"
+      ]
+    },
+    "codex": {
+      "name": "Codex CLI",
+      "description": "OpenAI's open-source coding agent",
+      "url": "https://github.com/openai/codex",
+      "install": "npm install -g @openai/codex",
+      "launch": "codex",
+      "env": {
+        "OPENAI_API_KEY": "${THEGRID_API_KEY}",
+        "OPENAI_BASE_URL": "https://api.thegrid.ai/api/v1",
+        "THEGRID_API_KEY": "${THEGRID_API_KEY}"
+      },
+      "notes": "Works with THEGRID_API_KEY and OPENAI_BASE_URL pointing at api.thegrid.ai/api/v1",
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/agents/codex.png",
+      "featured_cloud": [
+        "digitalocean",
+        "sprite"
+      ],
+      "creator": "OpenAI",
+      "repo": "openai/codex",
+      "license": "Apache-2.0",
+      "created": "2025-04",
+      "added": "2025-07",
+      "github_stars": 68201,
+      "stars_updated": "2026-03-29",
+      "language": "Rust",
+      "runtime": "binary",
+      "category": "cli",
+      "tagline": "OpenAI's lightweight coding agent for the terminal",
+      "tags": [
+        "coding",
+        "terminal",
+        "openai"
+      ]
+    },
+    "opencode": {
+      "name": "OpenCode",
+      "description": "AI coding agent built for the terminal with TUI",
+      "url": "https://github.com/sst/opencode",
+      "install": "curl -fsSL https://opencode.ai/install | bash",
+      "launch": "opencode",
+      "env": {
+        "THEGRID_API_KEY": "${THEGRID_API_KEY}"
+      },
+      "notes": "Uses THEGRID_API_KEY. Go-based TUI using Bubble Tea.",
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/agents/opencode.png",
+      "featured_cloud": [
+        "digitalocean",
+        "sprite"
+      ],
+      "creator": "SST",
+      "repo": "sst/opencode",
+      "license": "MIT",
+      "created": "2025-04",
+      "added": "2025-08",
+      "github_stars": 132079,
+      "stars_updated": "2026-03-29",
+      "language": "TypeScript",
+      "runtime": "go",
+      "category": "tui",
+      "tagline": "The open-source AI coding agent",
+      "tags": [
+        "coding",
+        "tui",
+        "go"
+      ]
+    },
+    "kilocode": {
+      "name": "Kilo Code",
+      "description": "All-in-one agentic engineering platform with CLI",
+      "url": "https://github.com/Kilo-Org/kilocode",
+      "install": "npm install -g @kilocode/cli",
+      "launch": "kilocode",
+      "env": {
+        "KILO_PROVIDER_TYPE": "\u006f\u0070\u0065\u006e\u0072\u006f\u0075\u0074\u0065\u0072",
+        "KILO_OPEN_ROUTER_API_KEY": "${THEGRID_API_KEY}",
+        "THEGRID_API_KEY": "${THEGRID_API_KEY}"
+      },
+      "notes": "Kilo multi-provider CLI: KILO_PROVIDER_TYPE must match the routing slot used by other agents in this repo (see packages/cli/src/shared/vendor-routing.ts). KILO_OPEN_ROUTER_API_KEY is upstream env naming for the platform key.",
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/agents/kilocode.png",
+      "featured_cloud": [
+        "digitalocean",
+        "sprite"
+      ],
+      "creator": "Kilo-Org",
+      "repo": "Kilo-Org/kilocode",
+      "license": "MIT",
+      "created": "2025-03",
+      "added": "2025-09",
+      "github_stars": 17310,
+      "stars_updated": "2026-03-29",
+      "language": "TypeScript",
+      "runtime": "node",
+      "category": "cli",
+      "tagline": "All-in-one AI coding platform — 100+ providers, one CLI",
+      "tags": [
+        "coding",
+        "terminal",
+        "agentic",
+        "engineering"
+      ]
+    },
+    "hermes": {
+      "name": "Hermes Agent",
+      "description": "Persistent AI agent with multi-platform messaging, memory across sessions, and tool use",
+      "url": "https://github.com/NousResearch/hermes-agent",
+      "install": "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
+      "launch": "hermes",
+      "env": {
+        "THEGRID_API_KEY": "${THEGRID_API_KEY}",
+        "OPENAI_BASE_URL": "https://api.thegrid.ai/api/v1",
+        "OPENAI_API_KEY": "${THEGRID_API_KEY}"
+      },
+      "notes": "Uses THEGRID_API_KEY. Also OpenAI-compatible via OPENAI_BASE_URL + OPENAI_API_KEY. Installs Python 3.11 via uv. Ships a local web dashboard (port 9119) for configuration, session monitoring, skill browsing, and gateway management — auto-exposed via SSH tunnel when run through Grid Spawn.",
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/agents/hermes.png",
+      "featured_cloud": [
+        "digitalocean",
+        "sprite"
+      ],
+      "creator": "Nous Research",
+      "repo": "NousResearch/hermes-agent",
+      "license": "MIT",
+      "created": "2025-06",
+      "added": "2026-02",
+      "github_stars": 15626,
+      "stars_updated": "2026-03-29",
+      "language": "Python",
+      "runtime": "python",
+      "category": "cli",
+      "tagline": "Persistent AI agent with memory, tools, and multi-platform messaging",
+      "tags": [
+        "agent",
+        "messaging",
+        "memory",
+        "tools"
+      ]
+    },
+    "junie": {
+      "name": "Junie",
+      "description": "JetBrains' AI coding agent with native The Grid BYOK support",
+      "url": "https://www.jetbrains.com/junie/",
+      "install": "npm install -g @jetbrains/junie-cli",
+      "launch": "junie",
+      "env": {
+        "JUNIE_THEGRID_API_KEY": "${THEGRID_API_KEY}",
+        "THEGRID_API_KEY": "${THEGRID_API_KEY}"
+      },
+      "notes": "Uses JUNIE_THEGRID_API_KEY. Subagent tasks may require GPT-4.1 Mini, GPT-4.1, or GPT-5 models enabled on your The Grid account.",
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/agents/junie.png",
+      "featured_cloud": [
+        "digitalocean",
+        "sprite"
+      ],
+      "creator": "JetBrains",
+      "repo": "JetBrains/junie",
+      "license": "Proprietary",
+      "created": "2026-03",
+      "added": "2026-03",
+      "github_stars": 123,
+      "stars_updated": "2026-03-29",
+      "language": "TypeScript",
+      "runtime": "node",
+      "category": "cli",
+      "tagline": "JetBrains' AI coding agent — BYOK with The Grid, IDE-quality intelligence in the terminal",
+      "tags": [
+        "coding",
+        "terminal",
+        "jetbrains",
+        "byok"
+      ]
+    },
+    "pi": {
+      "name": "Pi",
+      "description": "Minimal terminal coding agent — multi-provider, tree-structured sessions, and TypeScript extensions",
+      "url": "https://pi.dev",
+      "install": "npm install -g @mariozechner/pi-coding-agent",
+      "launch": "pi",
+      "env": {
+        "THEGRID_API_KEY": "${THEGRID_API_KEY}"
+      },
+      "notes": "Uses THEGRID_API_KEY as the platform key. The CLI command is 'pi'. Config lives in ~/.pi/agent/. Also known as shittycodingagent.ai.",
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/agents/pi.png",
+      "featured_cloud": [
+        "digitalocean",
+        "sprite"
+      ],
+      "creator": "Mario Zechner",
+      "repo": "badlogic/pi-mono",
+      "license": "MIT",
+      "created": "2025-06",
+      "added": "2026-04",
+      "github_stars": 29800,
+      "stars_updated": "2026-04-01",
+      "language": "TypeScript",
+      "runtime": "node",
+      "category": "cli",
+      "tagline": "Minimal terminal coding harness — multi-provider, extensible, tree sessions",
+      "tags": [
+        "coding",
+        "terminal",
+        "agent",
+        "extensible"
+      ]
+    },
+    "cursor": {
+      "name": "Cursor CLI",
+      "description": "Cursor's terminal-based AI coding agent — autonomous coding with plan, agent, and ask modes",
+      "url": "https://cursor.com/cli",
+      "install": "curl https://cursor.com/install -fsS | bash",
+      "launch": "agent",
+      "env": {
+        "THEGRID_API_KEY": "${THEGRID_API_KEY}",
+        "CURSOR_API_KEY": "${THEGRID_API_KEY}"
+      },
+      "config_files": {
+        "~/.cursor/cli-config.json": {
+          "version": 1,
+          "permissions": {
+            "allow": [
+              "Shell(*)",
+              "Read(*)",
+              "Write(*)",
+              "WebFetch(*)",
+              "Mcp(*)"
+            ],
+            "deny": []
+          }
+        }
+      },
+      "notes": "Routes Cursor traffic through The Grid via a local ConnectRPC-to-REST translation proxy (Caddy + Node.js). The proxy intercepts Cursor's proprietary protobuf protocol, translates to OpenAI-compatible API calls, and streams responses back. Binary installs to ~/.local/bin/agent.",
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/agents/cursor.png",
+      "featured_cloud": [
+        "digitalocean",
+        "sprite"
+      ],
+      "creator": "Anysphere",
+      "repo": "cursor/cursor",
+      "license": "Proprietary",
+      "created": "2025-01",
+      "added": "2026-03",
+      "github_stars": 32526,
+      "stars_updated": "2026-03-29",
+      "language": "TypeScript",
+      "runtime": "binary",
+      "category": "cli",
+      "tagline": "Cursor's AI coding agent — plan, build, and ship from the terminal",
+      "tags": [
+        "coding",
+        "terminal",
+        "agentic",
+        "cursor"
+      ]
+    },
+    "t3code": {
+      "name": "T3 Code",
+      "description": "Minimal web GUI for coding agents by Ping.gg — wraps Claude Code and Codex with a browser-based interface",
+      "url": "https://github.com/pingdotgg/t3code",
+      "install": "npm install -g t3",
+      "launch": "t3",
+      "env": {
+        "THEGRID_API_KEY": "${THEGRID_API_KEY}",
+        "ANTHROPIC_BASE_URL": "https://api.thegrid.ai/api/v1",
+        "ANTHROPIC_API_KEY": "${THEGRID_API_KEY}",
+        "OPENAI_API_KEY": "${THEGRID_API_KEY}",
+        "OPENAI_BASE_URL": "https://api.thegrid.ai/api/v1"
+      },
+      "notes": "Web GUI that spawns Claude Code and Codex as subprocesses via node-pty. Child processes inherit THEGRID_API_KEY and OpenAI-compatible base URLs. Requires Node.js 22+. Default port 3773.",
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/agents/t3code.png",
+      "featured_cloud": [
+        "digitalocean",
+        "sprite"
+      ],
+      "creator": "Ping.gg",
+      "repo": "pingdotgg/t3code",
+      "license": "MIT",
+      "created": "2025-06",
+      "added": "2026-04",
+      "github_stars": 9500,
+      "stars_updated": "2026-04-18",
+      "language": "TypeScript",
+      "runtime": "node",
+      "category": "gui",
+      "tagline": "Minimal web GUI for coding agents — browse, code, and ship via Claude or Codex",
+      "tags": [
+        "coding",
+        "web-gui",
+        "wrapper",
+        "pinggg"
+      ]
+    }
+  },
+  "clouds": {
+    "local": {
+      "name": "Local Machine",
+      "price": "Free",
+      "description": "Your computer — no account or payment needed",
+      "url": "https://github.com/Spectral-Finance/grid-spawn",
+      "type": "local",
+      "auth": "none",
+      "provision_method": "none (local execution)",
+      "exec_method": "bash -c",
+      "interactive_method": "exec",
+      "notes": "No cloud provisioning needed. Installs agents and injects THEGRID_API_KEY locally. Useful for local development and testing."
+    },
+    "hetzner": {
+      "name": "Hetzner Cloud",
+      "price": "~€3/mo",
+      "description": "European cloud servers (account required)",
+      "url": "https://www.hetzner.com/cloud/",
+      "type": "api",
+      "auth": "HCLOUD_TOKEN",
+      "provision_method": "POST /v1/servers with cloud-init",
+      "exec_method": "ssh root@IP",
+      "interactive_method": "ssh -t root@IP",
+      "defaults": {
+        "server_type": "cx23",
+        "location": "nbg1",
+        "image": "ubuntu-24.04"
+      },
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/clouds/hetzner.png"
+    },
+    "aws": {
+      "name": "AWS Lightsail",
+      "price": "$3.50/mo",
+      "description": "Amazon cloud servers (AWS account required)",
+      "url": "https://aws.amazon.com/lightsail/",
+      "type": "cli",
+      "auth": "AWS_ACCESS_KEY_ID+AWS_SECRET_ACCESS_KEY",
+      "provision_method": "aws lightsail create-instances with --user-data",
+      "exec_method": "ssh ubuntu@IP",
+      "interactive_method": "ssh -t ubuntu@IP",
+      "defaults": {
+        "bundle": "nano_3_0",
+        "region": "us-east-1",
+        "blueprint": "ubuntu_24_04"
+      },
+      "notes": "Uses 'ubuntu' user instead of 'root'. Requires AWS CLI installed and configured.",
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/clouds/aws.png"
+    },
+    "digitalocean": {
+      "name": "DigitalOcean",
+      "price": "$4/mo",
+      "description": "Cloud servers (account + payment method required)",
+      "url": "https://www.digitalocean.com/",
+      "type": "api",
+      "auth": "DIGITALOCEAN_ACCESS_TOKEN",
+      "provision_method": "POST /v2/droplets with user_data",
+      "exec_method": "ssh root@IP",
+      "interactive_method": "ssh -t root@IP",
+      "defaults": {
+        "size": "s-2vcpu-2gb",
+        "region": "nyc3",
+        "image": "ubuntu-24-04-x64"
+      },
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/clouds/digitalocean.png"
+    },
+    "gcp": {
+      "name": "GCP Compute Engine",
+      "price": "$7/mo",
+      "description": "Google cloud servers — $300 free trial (Google account required)",
+      "url": "https://cloud.google.com/compute",
+      "type": "cli",
+      "auth": "gcloud auth login",
+      "provision_method": "gcloud compute instances create with --metadata startup-script",
+      "exec_method": "ssh user@IP",
+      "interactive_method": "ssh -t user@IP",
+      "defaults": {
+        "machine_type": "e2-medium",
+        "zone": "us-central1-a",
+        "image_family": "ubuntu-2404-lts-amd64"
+      },
+      "notes": "Uses current username for SSH. Requires gcloud CLI installed and configured.",
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/clouds/gcp.png"
+    },
+    "daytona": {
+      "name": "Daytona",
+      "price": "Usage-based",
+      "description": "Managed dev sandboxes with full SDK access (Daytona account required)",
+      "url": "https://www.daytona.io/",
+      "type": "sandbox",
+      "auth": "DAYTONA_API_KEY",
+      "provision_method": "Daytona SDK create()",
+      "exec_method": "Daytona SDK process.executeCommand",
+      "interactive_method": "ssh <token>@ssh.app.daytona.io",
+      "defaults": {
+        "image": "daytonaio/sandbox:latest",
+        "size": "small"
+      },
+      "notes": "Uses the Daytona SDK for sandbox lifecycle, file transfer, and signed preview URLs. SSH access tokens are minted on demand and never persisted.",
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/clouds/daytona.png"
+    },
+    "sprite": {
+      "name": "Sprite",
+      "price": "Free tier",
+      "description": "Managed cloud servers — one command to deploy",
+      "url": "https://sprites.dev",
+      "type": "cli",
+      "auth": "sprite login",
+      "provision_method": "sprite create",
+      "exec_method": "sprite exec",
+      "interactive_method": "sprite exec -tty",
+      "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/clouds/sprite.png"
+    }
+  },
+  "matrix": {
+    "local/claude": "implemented",
+    "local/openclaw": "implemented",
+    "local/codex": "implemented",
+    "local/opencode": "implemented",
+    "local/kilocode": "implemented",
+    "hetzner/claude": "implemented",
+    "hetzner/openclaw": "implemented",
+    "hetzner/codex": "implemented",
+    "hetzner/opencode": "implemented",
+    "hetzner/kilocode": "implemented",
+    "aws/claude": "implemented",
+    "aws/openclaw": "implemented",
+    "aws/codex": "implemented",
+    "aws/opencode": "implemented",
+    "aws/kilocode": "implemented",
+    "digitalocean/claude": "implemented",
+    "digitalocean/openclaw": "implemented",
+    "digitalocean/codex": "implemented",
+    "digitalocean/opencode": "implemented",
+    "digitalocean/kilocode": "implemented",
+    "gcp/claude": "implemented",
+    "gcp/openclaw": "implemented",
+    "gcp/codex": "implemented",
+    "gcp/opencode": "implemented",
+    "gcp/kilocode": "implemented",
+    "sprite/claude": "implemented",
+    "sprite/openclaw": "implemented",
+    "sprite/codex": "implemented",
+    "sprite/opencode": "implemented",
+    "sprite/kilocode": "implemented",
+    "local/hermes": "implemented",
+    "hetzner/hermes": "implemented",
+    "aws/hermes": "implemented",
+    "digitalocean/hermes": "implemented",
+    "gcp/hermes": "implemented",
+    "sprite/hermes": "implemented",
+    "local/junie": "implemented",
+    "hetzner/junie": "implemented",
+    "aws/junie": "implemented",
+    "digitalocean/junie": "implemented",
+    "gcp/junie": "implemented",
+    "daytona/claude": "implemented",
+    "daytona/openclaw": "implemented",
+    "daytona/codex": "implemented",
+    "daytona/opencode": "implemented",
+    "daytona/kilocode": "implemented",
+    "daytona/hermes": "implemented",
+    "daytona/junie": "implemented",
+    "sprite/junie": "implemented",
+    "local/pi": "implemented",
+    "hetzner/pi": "implemented",
+    "aws/pi": "implemented",
+    "digitalocean/pi": "implemented",
+    "gcp/pi": "implemented",
+    "daytona/pi": "implemented",
+    "sprite/pi": "implemented",
+    "local/cursor": "implemented",
+    "hetzner/cursor": "implemented",
+    "aws/cursor": "implemented",
+    "digitalocean/cursor": "implemented",
+    "gcp/cursor": "implemented",
+    "daytona/cursor": "implemented",
+    "sprite/cursor": "implemented",
+    "local/t3code": "implemented",
+    "hetzner/t3code": "implemented",
+    "aws/t3code": "implemented",
+    "digitalocean/t3code": "implemented",
+    "gcp/t3code": "implemented",
+    "daytona/t3code": "implemented",
+    "sprite/t3code": "implemented"
+  }
+}

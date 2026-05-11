@@ -1,0 +1,58 @@
+@import "src/styles/index";
+
+.block {
+  border-radius: br(m);
+  border: 1px solid c(stroke-2);
+  background: c(base-2);
+  overflow: hidden;
+}
+
+.toolbar {
+  @include flex(center, space-between);
+  @include padding(2, 4);
+  border-bottom: 1px solid c(stroke-2);
+  background: c(base-3);
+}
+
+.lang {
+  @include text(mono-s);
+  color: c(text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.copy {
+  @include text(text-s);
+  @include font(500);
+  padding: pad(1) pad(3);
+  border: 1px solid c(stroke-2);
+  border-radius: br(s);
+  background: c(base-2);
+  color: c(text-2);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+
+  &:hover {
+    color: c(text-1);
+    border-color: c(stroke-1);
+    background: c(base-1);
+  }
+}
+
+.pre {
+  margin: 0;
+  @include padding(4, 4);
+  overflow-x: auto;
+  @include text(mono-s);
+  color: c(text-1);
+  line-height: 1.55;
+}
+
+.pre code {
+  white-space: pre;
+  display: block;
+  font-family: inherit;
+}

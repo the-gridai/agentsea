@@ -1,0 +1,26 @@
+@import "src/styles/index";
+
+.empty {
+  @include flex-center-col;
+  @include gap(2);
+  @include padding(8, 4);
+  text-align: center;
+
+  &__icon {
+    width: 56px;
+    height: 56px;
+    @include flex-center;
+    @include br(full);
+    background: c(base-2);
+    color: c(text-3);
+    margin-bottom: pad(2);
+  }
+
+  &__desc {
+    max-width: 38ch;
+  }
+
+  &__action {
+    margin-top: pad(2);
+  }
+}

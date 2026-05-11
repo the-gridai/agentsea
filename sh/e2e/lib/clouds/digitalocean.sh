@@ -1,0 +1,392 @@
+#!/bin/bash
+# e2e/lib/clouds/digitalocean.sh — DigitalOcean cloud driver for E2E tests
+#
+# Implements the standard cloud driver interface (_digitalocean_*) for
+# provisioning and managing DigitalOcean droplets in the E2E test suite.
+#
+# Accepts: DIGITALOCEAN_ACCESS_TOKEN, DIGITALOCEAN_API_TOKEN, or DO_API_TOKEN
+# API: https://api.digitalocean.com/v2
+# SSH user: root
+set -eo pipefail
+
+# ── Resolve DigitalOcean token (canonical > alternate > legacy) ───────────
+if [ -n "${DIGITALOCEAN_ACCESS_TOKEN:-}" ]; then
+  DO_API_TOKEN="${DIGITALOCEAN_ACCESS_TOKEN}"
+elif [ -n "${DIGITALOCEAN_API_TOKEN:-}" ]; then
+  DO_API_TOKEN="${DIGITALOCEAN_API_TOKEN}"
+fi
+export DO_API_TOKEN
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+_DO_API="https://api.digitalocean.com/v2"
+_DO_DEFAULT_SIZE="s-2vcpu-2gb"
+_DO_DEFAULT_REGION="nyc3"
+
+# ---------------------------------------------------------------------------
+# _do_curl_auth [curl-args...]
+#
+# Wrapper around curl that passes the token via a temp config file
+# instead of a command-line -H flag. This keeps the token out of `ps` output.
+# All arguments are forwarded to curl.
+# ---------------------------------------------------------------------------
+_do_curl_auth() {
+  local _cfg
+  _cfg=$(mktemp)
+  chmod 600 "${_cfg}"
+  printf 'header = "Authorization: Bearer %s"\n' "${DO_API_TOKEN}" > "${_cfg}"
+  curl -K "${_cfg}" "$@"
+  local _rc=$?
+  rm -f "${_cfg}"
+  return "${_rc}"
+}
+
+# ---------------------------------------------------------------------------
+# _digitalocean_validate_env
+#
+# Validates that a DigitalOcean token is set and the API is reachable.
+# Accepts DIGITALOCEAN_ACCESS_TOKEN, DIGITALOCEAN_API_TOKEN, or DO_API_TOKEN.
+# Returns 0 on success, 1 on failure.
+# ---------------------------------------------------------------------------
+_digitalocean_validate_env() {
+  if [ -z "${DO_API_TOKEN:-}" ]; then
+    log_err "DigitalOcean token is not set (set DIGITALOCEAN_ACCESS_TOKEN, DIGITALOCEAN_API_TOKEN, or DO_API_TOKEN)"
+    return 1
+  fi
+
+  if ! _do_curl_auth -sf \
+    "${_DO_API}/account" >/dev/null 2>&1; then
+    log_err "DigitalOcean API authentication failed — check your token"
+    return 1
+  fi
+
+  log_ok "DigitalOcean credentials validated"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# _digitalocean_headless_env APP AGENT
+#
+# Prints export lines for headless provisioning environment variables.
+# These are consumed by the spawn CLI when running in non-interactive mode.
+# ---------------------------------------------------------------------------
+_digitalocean_headless_env() {
+  local app="$1"
+  # $2 = agent (unused but part of the interface)
+
+  printf 'export DO_DROPLET_NAME="%s"\n' "${app}"
+  printf 'export DO_DROPLET_SIZE="%s"\n' "${DO_DROPLET_SIZE:-${_DO_DEFAULT_SIZE}}"
+  printf 'export DO_REGION="%s"\n' "${DO_REGION:-${_DO_DEFAULT_REGION}}"
+}
+
+# ---------------------------------------------------------------------------
+# _digitalocean_provision_verify APP LOG_DIR
+#
+# Verifies that a droplet with the given name exists. Extracts its ID and
+# public IPv4 address. Writes the IP to $LOG_DIR/$APP.ip and JSON metadata
+# (id, name, region) to $LOG_DIR/$APP.meta.
+# Returns 0 if found, 1 if not.
+# ---------------------------------------------------------------------------
+_digitalocean_provision_verify() {
+  local app="$1"
+  local log_dir="$2"
+
+  log_step "Checking for droplet ${app}..."
+
+  local droplets_json
+  droplets_json=$(_do_curl_auth -sf \
+    -H "Content-Type: application/json" \
+    "${_DO_API}/droplets?per_page=200" 2>/dev/null || true)
+
+  if [ -z "${droplets_json}" ]; then
+    log_err "Failed to list DigitalOcean droplets"
+    return 1
+  fi
+
+  # Find the droplet matching the app name
+  local droplet_json
+  droplet_json=$(printf '%s' "${droplets_json}" | jq -r \
+    --arg name "${app}" \
+    '.droplets[] | select(.name == $name)' 2>/dev/null || true)
+
+  if [ -z "${droplet_json}" ]; then
+    log_err "Droplet ${app} not found"
+    return 1
+  fi
+
+  # Extract droplet ID
+  local droplet_id
+  droplet_id=$(printf '%s' "${droplet_json}" | jq -r '.id' 2>/dev/null || true)
+
+  if [ -z "${droplet_id}" ] || [ "${droplet_id}" = "null" ]; then
+    log_err "Could not extract droplet ID for ${app}"
+    return 1
+  fi
+
+  # Extract public IPv4 address
+  local droplet_ip
+  droplet_ip=$(printf '%s' "${droplet_json}" | jq -r \
+    '.networks.v4[] | select(.type == "public") | .ip_address' 2>/dev/null | head -1 || true)
+
+  if [ -z "${droplet_ip}" ] || [ "${droplet_ip}" = "null" ]; then
+    log_err "Could not extract public IP for droplet ${app}"
+    return 1
+  fi
+
+  # Extract region slug
+  local droplet_region
+  droplet_region=$(printf '%s' "${droplet_json}" | jq -r '.region.slug // "unknown"' 2>/dev/null || true)
+
+  # Write IP file
+  printf '%s' "${droplet_ip}" > "${log_dir}/${app}.ip"
+
+  # Write metadata file
+  printf '{"id":%s,"name":"%s","region":"%s"}\n' \
+    "${droplet_id}" "${app}" "${droplet_region}" > "${log_dir}/${app}.meta"
+
+  log_ok "Droplet ${app} found — ID: ${droplet_id}, IP: ${droplet_ip}, Region: ${droplet_region}"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# _digitalocean_exec APP CMD
+#
+# Executes a command on the droplet via SSH as root.
+# Reads the IP from $LOG_DIR/$APP.ip.
+# ---------------------------------------------------------------------------
+_digitalocean_exec() {
+  local app="$1"
+  local cmd="$2"
+
+  local ip_file="${LOG_DIR:-/tmp}/${app}.ip"
+  if [ ! -f "${ip_file}" ]; then
+    log_err "IP file not found: ${ip_file}"
+    return 1
+  fi
+
+  local ip
+  ip=$(cat "${ip_file}")
+
+  if [ -z "${ip}" ]; then
+    log_err "Empty IP in ${ip_file}"
+    return 1
+  fi
+
+  # Validate IP looks like an IPv4 address (defense-in-depth against file tampering)
+  if ! printf '%s' "${ip}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    log_err "Invalid IP address in ${ip_file}: ${ip}"
+    return 1
+  fi
+
+  # Base64-encode the command to prevent shell injection when passed as an
+  # SSH argument. The encoded string contains only [A-Za-z0-9+/=] characters,
+  # making it safe to embed in single quotes. Stdin is preserved for callers
+  # that pipe data into cloud_exec.
+  local encoded_cmd
+  encoded_cmd=$(printf '%s' "${cmd}" | base64 | tr -d '\n')
+
+  # Validate base64 output contains only safe characters (defense-in-depth).
+  # Standard base64 only produces [A-Za-z0-9+/=]. This rejects any corruption
+  # and ensures the value cannot break out of single quotes in the SSH command.
+  if ! printf '%s' "${encoded_cmd}" | grep -qE '^[A-Za-z0-9+/=]+$'; then
+    log_err "Invalid base64 encoding of command for SSH exec"
+    return 1
+  fi
+
+  ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=10 -o LogLevel=ERROR -o BatchMode=yes \
+      "root@${ip}" "printf '%s' '${encoded_cmd}' | base64 -d | bash"
+}
+
+# ---------------------------------------------------------------------------
+# _digitalocean_teardown APP
+#
+# Deletes the droplet by its ID (read from the .meta file) and untracks it.
+# Retries the DELETE up to 3 times on failure, then polls the API to confirm
+# the droplet is actually gone (up to 60s). This prevents batch 2 from
+# launching while batch 1 droplets still occupy the account's droplet limit.
+# ---------------------------------------------------------------------------
+_digitalocean_teardown() {
+  local app="$1"
+
+  log_step "Tearing down droplet ${app}..."
+
+  local meta_file="${LOG_DIR:-/tmp}/${app}.meta"
+  if [ ! -f "${meta_file}" ]; then
+    log_warn "Metadata file not found: ${meta_file} — cannot delete droplet by ID"
+    untrack_app "${app}"
+    return 0
+  fi
+
+  local droplet_id
+  droplet_id=$(jq -r '.id // empty' "${meta_file}" 2>/dev/null || true)
+
+  if [ -z "${droplet_id}" ]; then
+    log_warn "Could not extract droplet ID from ${meta_file}"
+    untrack_app "${app}"
+    return 0
+  fi
+
+  # Validate droplet ID is numeric (defense-in-depth against metadata tampering)
+  case "${droplet_id}" in ''|*[!0-9]*) log_warn "Non-numeric droplet ID: ${droplet_id}"; untrack_app "${app}"; return 0 ;; esac
+
+  # Retry DELETE up to 3 times with --max-time to prevent hangs
+  local attempt=0
+  local delete_accepted=0
+  while [ "${attempt}" -lt 3 ]; do
+    attempt=$((attempt + 1))
+
+    local http_code
+    http_code=$(_do_curl_auth -s -o /dev/null -w '%{http_code}' \
+      --max-time 30 \
+      -X DELETE \
+      -H "Content-Type: application/json" \
+      "${_DO_API}/droplets/${droplet_id}" 2>/dev/null || printf '000')
+
+    if [ "${http_code}" = "204" ] || [ "${http_code}" = "404" ]; then
+      delete_accepted=1
+      break
+    fi
+
+    if [ "${attempt}" -lt 3 ]; then
+      log_warn "Droplet DELETE attempt ${attempt}/3 returned HTTP ${http_code} — retrying in 5s..."
+      sleep 5
+    else
+      log_warn "Droplet DELETE failed after 3 attempts (last HTTP ${http_code}) for ${app} (ID: ${droplet_id})"
+    fi
+  done
+
+  # Poll to confirm the droplet is actually gone (up to 60s).
+  # The API may accept the DELETE (204) but the droplet lingers briefly.
+  if [ "${delete_accepted}" -eq 1 ]; then
+    local poll_waited=0
+    while [ "${poll_waited}" -lt 60 ]; do
+      local check_code
+      check_code=$(_do_curl_auth -s -o /dev/null -w '%{http_code}' \
+        --max-time 10 \
+        "${_DO_API}/droplets/${droplet_id}" 2>/dev/null || printf '000')
+
+      if [ "${check_code}" = "404" ]; then
+        log_ok "Droplet ${app} (ID: ${droplet_id}) confirmed destroyed"
+        untrack_app "${app}"
+        return 0
+      fi
+
+      sleep 5
+      poll_waited=$((poll_waited + 5))
+    done
+
+    log_warn "Droplet ${app} (ID: ${droplet_id}) not yet gone after 60s — may still be deleting"
+  fi
+
+  untrack_app "${app}"
+}
+
+# ---------------------------------------------------------------------------
+# _digitalocean_cleanup_stale
+#
+# Lists all droplets, filters for names matching e2e-*, extracts the unix
+# timestamp from the last dash segment of the name, and destroys any older
+# than 30 minutes.
+# ---------------------------------------------------------------------------
+_digitalocean_cleanup_stale() {
+  log_step "Cleaning up stale DigitalOcean e2e droplets..."
+
+  local now
+  now=$(date +%s)
+  local max_age="${_CLEANUP_MAX_AGE:-1800}"  # default 30 min; pre-run uses shorter
+
+  local droplets_json
+  droplets_json=$(_do_curl_auth -sf \
+    -H "Content-Type: application/json" \
+    "${_DO_API}/droplets?per_page=200" 2>/dev/null || true)
+
+  if [ -z "${droplets_json}" ]; then
+    log_info "Could not list DigitalOcean droplets — skipping cleanup"
+    return 0
+  fi
+
+  # Extract e2e-* droplets as "id name" pairs
+  local e2e_droplets
+  e2e_droplets=$(printf '%s' "${droplets_json}" | jq -r \
+    '.droplets[] | select(.name | startswith("e2e-")) | "\(.id) \(.name)"' 2>/dev/null || true)
+
+  if [ -z "${e2e_droplets}" ]; then
+    log_ok "No stale e2e droplets found"
+    return 0
+  fi
+
+  local cleaned=0
+  local skipped=0
+
+  while IFS= read -r line; do
+    local droplet_id
+    droplet_id=$(printf '%s' "${line}" | cut -d' ' -f1)
+    local droplet_name
+    droplet_name=$(printf '%s' "${line}" | cut -d' ' -f2)
+
+    # Validate droplet ID is numeric before using it in API URL
+    case "${droplet_id}" in ''|*[!0-9]*) log_warn "Skipping ${line} — non-numeric droplet ID"; skipped=$((skipped + 1)); continue ;; esac
+
+    # Extract timestamp from name: e2e-AGENT-TIMESTAMP
+    # The timestamp is the last dash-separated segment
+    local ts
+    ts=$(printf '%s' "${droplet_name}" | sed 's/.*-//')
+
+    # Validate it looks like a unix timestamp (all digits, 10 chars)
+    if ! printf '%s' "${ts}" | grep -qE '^[0-9]{10}$'; then
+      log_warn "Skipping ${droplet_name} — cannot parse timestamp"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    local age=$((now - ts))
+    if [ "${age}" -gt "${max_age}" ]; then
+      local age_str
+      age_str=$(format_duration "${age}")
+      log_step "Destroying stale droplet ${droplet_name} (age: ${age_str})"
+
+      _do_curl_auth -sf -o /dev/null \
+        -X DELETE \
+        -H "Content-Type: application/json" \
+        "${_DO_API}/droplets/${droplet_id}" 2>/dev/null || log_warn "Failed to destroy ${droplet_name}"
+
+      cleaned=$((cleaned + 1))
+    else
+      skipped=$((skipped + 1))
+    fi
+  done <<EOF
+${e2e_droplets}
+EOF
+
+  if [ "${cleaned}" -gt 0 ]; then
+    log_ok "Cleaned ${cleaned} stale droplet(s)"
+  fi
+  if [ "${skipped}" -gt 0 ]; then
+    log_info "Skipped ${skipped} recent droplet(s)"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# _digitalocean_max_parallel
+#
+# Queries the DigitalOcean account to determine available droplet capacity.
+# Subtracts non-e2e droplets from the account limit so parallel test runs
+# don't fail due to pre-existing droplets consuming quota slots.
+# Returns 0 when no capacity is available so the caller can skip the cloud.
+# Falls back to 3 if the API is unavailable.
+# ---------------------------------------------------------------------------
+_digitalocean_max_parallel() {
+  local _account_json _limit _existing _available
+  _account_json=$(_do_curl_auth -sf "${_DO_API}/account" 2>/dev/null) || { printf '3'; return 0; }
+  _limit=$(printf '%s' "${_account_json}" | grep -o '"droplet_limit":[0-9]*' | grep -o '[0-9]*$') || { printf '3'; return 0; }
+  _existing=$(_do_curl_auth -sf "${_DO_API}/droplets?per_page=200" 2>/dev/null | jq -r '.droplets | length' 2>/dev/null) || { printf '3'; return 0; }
+  _available=$(( _limit - _existing ))
+  if [ "${_available}" -lt 1 ]; then
+    log_warn "DigitalOcean droplet limit reached: ${_existing}/${_limit} droplets in use (0 available)" >&2
+    printf '0'
+  else
+    printf '%d' "${_available}"
+  fi
+}

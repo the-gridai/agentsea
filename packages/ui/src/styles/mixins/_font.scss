@@ -1,0 +1,21 @@
+@mixin get-font($font-name: default, $font-weight: false) {
+  @if (map-has-key($typos, $font-name)) {
+    $typo: map-get($typos, $font-name);
+
+    font-family: map-get($typo, name);
+
+    @if ($font-weight != false) {
+      $weights: map-get($typo, variants);
+
+      @if (map-has-key($weights, $font-weight)) {
+        font-weight: map-get($weights, $font-weight);
+      } @else if (index((100, 200, 300, 400, 500, 600, 700, 800, 900), $font-weight)) {
+        font-weight: $font-weight;
+      }
+    }
+  }
+}
+
+@mixin font($font-name: default, $font-weight: false) {
+  @include get-font($font-name, $font-weight);
+}
