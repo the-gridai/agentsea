@@ -11,13 +11,34 @@ import { setupCursorProxy, startCursorProxy } from "./cursor-proxy.js";
 import { getTmpDir } from "./paths.js";
 import { asyncTryCatch, asyncTryCatchIf, isOperationalError, tryCatchIf } from "./result.js";
 import { validateRemotePath } from "./ssh.js";
-import { Err, jsonEscape, logError, logInfo, logStep, logWarn, Ok, prompt, shellQuote, withRetry } from "./ui.js";
+import { isSpawnVerbose } from "./verbosity.js";
 import {
+  Err,
+  jsonEscape,
+  logAlwaysStep,
+  logError,
+  logInfo,
+  logStep,
+  logWarn,
+  Ok,
+  prompt,
+  shellQuote,
+  validateModelId,
+  withRetry,
+} from "./ui.js";
+import {
+  GRID_INFERENCE_DEFAULT_MODEL_ID,
+  OPENCLAW_GRID_PROVIDER_ID,
   VENDOR_CHAT_MODEL_DEFAULT,
   VENDOR_CODEX_MODEL_PROVIDER_KEY,
   VENDOR_KILO_PROVIDER_TYPE_VALUE,
-  VENDOR_OPENCLAW_ONBOARD_API_KEY_CLI_FLAG,
 } from "./vendor-routing.js";
+
+/** The Grid inference API base used by spawned agents (`GET …/models` validation, OpenAI-compat clients, …). */
+const THEGRID_API_INFERENCE_BASE = "https://api.thegrid.ai/api/v1";
+
+/** Default Control UI `/chat` session path (grid-spawn OpenClaw uses agent `main`). */
+const OPENCLAW_CONTROL_UI_DEFAULT_CHAT_SESSION = "agent:main:main";
 
 /**
  * Wrap an SSH-based async operation into a Result for use with withRetry.
@@ -323,16 +344,21 @@ export async function offerGithubAuth(runner: CloudRunner, explicitlyRequested?:
 
 // ─── Codex CLI Config ────────────────────────────────────────────────────────
 
-async function setupCodexConfig(runner: CloudRunner): Promise<void> {
+async function setupCodexConfig(runner: CloudRunner, modelId?: string): Promise<void> {
   logStep("Configuring Codex CLI for The Grid (OpenAI-compatible)...");
   const slot = VENDOR_CODEX_MODEL_PROVIDER_KEY;
-  const config = `model = "openai/gpt-5.3-codex"
+  const model = normalizeGridCatalogModelId(
+    typeof modelId === "string" && modelId.trim() && validateModelId(modelId.trim())
+      ? modelId.trim()
+      : VENDOR_CHAT_MODEL_DEFAULT,
+  );
+  const config = `model = "${model}"
 model_provider = "${slot}"
 sandbox_mode = "danger-full-access"
 
 [model_providers.${slot}]
 name = "The Grid"
-base_url = "https://api.thegrid.ai/api/v1"
+base_url = "${THEGRID_API_INFERENCE_BASE}"
 env_key = "THEGRID_API_KEY"
 wire_api = "responses"
 `;
@@ -373,9 +399,15 @@ async function waitForOpenclawBootstrap(runner: CloudRunner): Promise<void> {
   const pollScript = [
     "source ~/.spawnrc 2>/dev/null",
     "export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH",
-    "_elapsed=0",
-    "while [ $_elapsed -lt 60 ]; do",
-    "  _status=$(openclaw status --json 2>/dev/null) || { sleep 2; _elapsed=$((_elapsed + 2)); continue; }",
+    "_start=$(date +%s)",
+    "while true; do",
+    "  _now=$(date +%s)",
+    "  _elapsed=$((_now - _start))",
+    "  if [ \"$_elapsed\" -ge 60 ]; then",
+    '    echo "OpenClaw: bootstrapPending still true after ${_elapsed}s — continuing anyway"',
+    "    exit 0",
+    "  fi",
+    "  _status=$(openclaw status --json 2>/dev/null) || { sleep 2; continue; }",
     // Use bun to safely parse JSON — avoids jq dependency
     "  _pending=$(printf '%s' \"$_status\" | bun -e '",
     "    const d = await Bun.stdin.text();",
@@ -383,21 +415,88 @@ async function waitForOpenclawBootstrap(runner: CloudRunner): Promise<void> {
     '    catch { console.log("unknown"); }',
     "  ' 2>/dev/null)",
     '  if [ "$_pending" = "false" ]; then',
-    '    echo "Bootstrap complete after ${_elapsed}s"',
+    '    if [ "$_elapsed" -lt 1 ]; then',
+    '      echo "OpenClaw: bootstrapPending clear (<1s in this status poll — Chrome/install took longer separately)."',
+    "    else",
+    '      echo "OpenClaw: bootstrapPending clear (${_elapsed}s in this status poll)."',
+    "    fi",
     "    exit 0",
     "  fi",
     "  sleep 2",
-    "  _elapsed=$((_elapsed + 2))",
     "done",
-    'echo "Bootstrap still pending after 60s — continuing anyway"',
-    "exit 0",
   ].join("\n");
 
   const result = await asyncTryCatchIf(isOperationalError, () => runner.runServer(pollScript, 90));
   if (result.ok) {
-    logInfo("OpenClaw bootstrap ready");
+    logInfo("OpenClaw bootstrapPending poll finished (see remote line above for wait duration)");
   } else {
     logWarn("Bootstrap readiness check failed (non-fatal, continuing)");
+  }
+}
+
+/** OpenClaw `models.providers.thegrid` registers one slug — never OpenRouter placeholders. */
+function normalizeGridCatalogModelId(modelId: string): string {
+  const t = modelId.trim();
+  if (!t || /^openrouter\//i.test(t)) {
+    return GRID_INFERENCE_DEFAULT_MODEL_ID;
+  }
+  return t;
+}
+function openClawGridPrimaryModel(catalogModelId: string): string {
+  return `${OPENCLAW_GRID_PROVIDER_ID}/${catalogModelId}`;
+}
+
+/**
+ * Register **`models.providers.thegrid`** targeting **only** `api.thegrid.ai` (`THEGRID_API_KEY`).
+ * Builtin OpenClaw prefixes like **`openrouter/*`** map to third-party provider auth profiles; this avoids that path.
+ */
+async function mergeOpenClawGridInferenceProvider(
+  runner: CloudRunner,
+  catalogModelId: string,
+  plaintextApiKey: string,
+): Promise<void> {
+  const ocPrimary = openClawGridPrimaryModel(catalogModelId);
+  const inferLit = JSON.stringify(THEGRID_API_INFERENCE_BASE);
+  // OpenSSL-claw validates config by resolving `${THEGRID_API_KEY}` markers; systemd/gateway shells may not
+  // export `THEGRID_*` yet. Persist the Grid key inlined (openclaw.json is chmod 600 on the VM).
+  const apiKeyLit = JSON.stringify(plaintextApiKey);
+  const mergeScript = [
+    "import fs from 'fs';",
+    `const apiKeyPlain = ${apiKeyLit};`,
+    `const infer = ${inferLit};`,
+    "const providerId = process.env.SPAWN_GRID_PROVIDER_ID || 'thegrid';",
+    "const slug = process.env.SPAWN_GRID_CATALOG_MODEL;",
+    "const ocPrimary = process.env.SPAWN_GRID_PRIMARY;",
+    "if (!slug || !ocPrimary) { console.error('spawn grid-merge: missing env'); process.exit(1); }",
+    "const cfgPath = (process.env.HOME ?? '') + '/.openclaw/openclaw.json';",
+    "const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));",
+    "cfg.env ||= {};",
+    `if (!cfg.env.OPENAI_BASE_URL) cfg.env.OPENAI_BASE_URL = ${inferLit};`,
+    "cfg.env.THEGRID_API_KEY = apiKeyPlain;",
+    "cfg.env.OPENAI_API_KEY = apiKeyPlain;",
+    "cfg.models ||= {};",
+    "if (!cfg.models.mode) cfg.models.mode = 'merge';",
+    "cfg.models.providers ||= {};",
+    "cfg.models.providers[providerId] = { baseUrl: infer, apiKey: apiKeyPlain, api: 'openai-completions', models: [{ id: slug, name: 'The Grid (' + slug + ')' }] };",
+    "cfg.agents ||= {}; cfg.agents.defaults ||= {}; cfg.agents.defaults.model ||= {};",
+    "cfg.agents.defaults.model.primary = ocPrimary;",
+    "cfg.agents.defaults.models ||= {};",
+    "cfg.agents.defaults.models[ocPrimary] = { alias: 'The Grid' };",
+    "fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2)); fs.chmodSync(cfgPath, 0o600);",
+  ].join(" ");
+
+  const qb = !isSpawnVerbose() ? " 2>/dev/null" : "";
+  const merged = await asyncTryCatchIf(isOperationalError, () =>
+    runner.runServer(
+      "source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
+        `export SPAWN_GRID_CATALOG_MODEL=${shellQuote(catalogModelId)}; ` +
+        `export SPAWN_GRID_PRIMARY=${shellQuote(ocPrimary)}; ` +
+        `export SPAWN_GRID_PROVIDER_ID=${shellQuote(OPENCLAW_GRID_PROVIDER_ID)}; ` +
+        `bun -e ${shellQuote(mergeScript)}${qb}`,
+    ),
+  );
+  if (!merged.ok) {
+    logWarn("Could not merge OpenClaw The Grid provider block — chat may fall back to built-in routing");
   }
 }
 
@@ -408,6 +507,9 @@ async function setupOpenclawConfig(
   token?: string,
   enabledSteps?: Set<string>,
 ): Promise<void> {
+  const catalogModelId = normalizeGridCatalogModelId(modelId);
+
+  logInfo(`OpenClaw configure (${catalogModelId}): Chrome → onboard → Grid merge → prefs.`);
   logStep("Configuring openclaw...");
   await runner.runServer("mkdir -p ~/.openclaw");
 
@@ -439,28 +541,39 @@ async function setupOpenclawConfig(
 
   const gatewayToken = token ?? crypto.randomUUID().replace(/-/g, "");
 
-  // Run `openclaw onboard --non-interactive` to create a properly structured
-  // config with auth profiles, provider setup, gateway config, and workspace.
-  // This replaces our previous manual JSON construction + deep-merge approach
-  // that bypassed OpenClaw's credential/auth profile system.
-  // Onboard passes THEGRID_API_KEY via the CLI flag required by that tool (see vendor-routing.ts).
+  // OpenClaw onboarding: workspace + gateway token + custom OpenAI-compat probe (see docs.openclaw.ai/cli/onboard).
+  // Chat routing is forced afterward via mergeOpenClawGridInferenceProvider: builtin `openrouter/*` maps to
+  // third-party auth profiles — we register **only** `models.providers.thegrid` → `api.thegrid.ai` + `THEGRID_API_KEY`.
   const onboardCmd =
     "source ~/.spawnrc 2>/dev/null; " +
     "export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
-    "openclaw onboard --non-interactive" +
-    ` ${VENDOR_OPENCLAW_ONBOARD_API_KEY_CLI_FLAG} ${shellQuote(apiKey)}` +
-    " --gateway-auth token" +
-    ` --gateway-token ${shellQuote(gatewayToken)}` +
-    " --skip-health" +
-    " --accept-risk";
-  const onboardResult = await asyncTryCatchIf(isOperationalError, () => runner.runServer(onboardCmd, 120));
+    "openclaw onboard --non-interactive " +
+    "--auth-choice custom-api-key " +
+    `--custom-base-url ${shellQuote(THEGRID_API_INFERENCE_BASE)} ` +
+    `--custom-model-id ${shellQuote(catalogModelId)} ` +
+    `--custom-api-key ${shellQuote(apiKey)} ` +
+    "--secret-input-mode plaintext " +
+    "--custom-compatibility openai " +
+    "--gateway-auth token " +
+    `--gateway-token ${shellQuote(gatewayToken)} ` +
+    "--skip-health " +
+    "--accept-risk";
+  const onboardQuietTail = !isSpawnVerbose() ? "> /tmp/openclaw-onboard.log 2>&1" : "";
+  const onboardResult = await asyncTryCatchIf(isOperationalError, () =>
+    runner.runServer(onboardQuietTail ? `${onboardCmd} ${onboardQuietTail}` : onboardCmd, 120),
+  );
   if (!onboardResult.ok) {
     logWarn("openclaw onboard failed — falling back to manual config");
-    // Minimal fallback: upload a basic config so the agent can still start
+    if (!isSpawnVerbose()) {
+      logAlwaysStep("Tip: on the droplet, run `tail -80 /tmp/openclaw-onboard.log` for full OpenClaw setup output.");
+    }
+    const ocPrimary = openClawGridPrimaryModel(catalogModelId);
     const fallbackConfig = JSON.stringify(
       {
         env: {
           THEGRID_API_KEY: apiKey,
+          OPENAI_API_KEY: apiKey,
+          OPENAI_BASE_URL: THEGRID_API_INFERENCE_BASE,
         },
         gateway: {
           mode: "local",
@@ -468,11 +581,36 @@ async function setupOpenclawConfig(
             mode: "token",
             token: gatewayToken,
           },
+          controlUi: {
+            allowInsecureAuth: true,
+            dangerouslyDisableDeviceAuth: true,
+          },
+        },
+        models: {
+          mode: "merge",
+          providers: {
+            [OPENCLAW_GRID_PROVIDER_ID]: {
+              baseUrl: THEGRID_API_INFERENCE_BASE,
+              apiKey,
+              api: "openai-completions",
+              models: [
+                {
+                  id: catalogModelId,
+                  name: `The Grid (${catalogModelId})`,
+                },
+              ],
+            },
+          },
         },
         agents: {
           defaults: {
             model: {
-              primary: modelId,
+              primary: ocPrimary,
+            },
+            models: {
+              [ocPrimary]: {
+                alias: "The Grid",
+              },
             },
             sandbox: {
               mode: "off",
@@ -486,6 +624,8 @@ async function setupOpenclawConfig(
     await uploadConfigFile(runner, fallbackConfig, "$HOME/.openclaw/openclaw.json");
   }
 
+  await mergeOpenClawGridInferenceProvider(runner, catalogModelId, apiKey);
+
   // Batch all `openclaw config set` calls into ONE exec to reduce Sprite
   // connection overhead. Previously 4 separate exec calls, each triggering a
   // "Config overwrite" log line from OpenClaw. On Sprite (container-exec, not
@@ -494,20 +634,17 @@ async function setupOpenclawConfig(
   //
   // Each individual config set is chained with `;` (not `&&`) so a failure
   // in one doesn't skip the rest — these are all non-fatal preferences.
+  const q = !isSpawnVerbose();
+  const ocSfx = q ? " >/dev/null 2>&1" : "";
   const configCmds = [
-    // Model — openclaw onboard writes arcee/trinity-large-thinking to the
-    // agent-specific config (agents.main.model.primary) which overrides
-    // the defaults path. Set BOTH so our model always wins.
-    `openclaw config set agents.defaults.model.primary ${shellQuote(modelId)} >/dev/null`,
-    `openclaw config set agents.main.model.primary ${shellQuote(modelId)} >/dev/null`,
-    // Disable Docker sandboxing — auto-detected Docker hangs the session
-    "openclaw config set agents.defaults.sandbox.mode off >/dev/null",
-    "openclaw config set agents.main.sandbox.mode off >/dev/null",
-    // Browser (requires Chrome installed above)
-    "openclaw config set browser.executablePath /usr/bin/google-chrome-stable >/dev/null",
-    "openclaw config set browser.noSandbox true >/dev/null",
-    "openclaw config set browser.headless true >/dev/null",
-    "openclaw config set browser.defaultProfile openclaw >/dev/null",
+    // Model primary + `models.providers.thegrid` are merged above (avoid `openrouter/*` → builtin OpenRouter auth).
+    `openclaw config set agents.defaults.sandbox.mode off${ocSfx}`,
+    `openclaw config set browser.executablePath /usr/bin/google-chrome-stable${ocSfx}`,
+    `openclaw config set browser.noSandbox true${ocSfx}`,
+    `openclaw config set browser.headless true${ocSfx}`,
+    `openclaw config set browser.defaultProfile openclaw${ocSfx}`,
+    `openclaw config set gateway.controlUi.allowInsecureAuth true${ocSfx}`,
+    `openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth true${ocSfx}`,
   ];
 
   // Channel stubs so the dashboard renders channel cards
@@ -521,16 +658,40 @@ async function setupOpenclawConfig(
     "bluebubbles",
   ].filter((ch) => !enabledSteps || enabledSteps.has(ch));
   for (const ch of channelNames) {
-    configCmds.push(`openclaw config set channels.${ch}.enabled true >/dev/null`);
+    configCmds.push(`openclaw config set channels.${ch}.enabled true${ocSfx}`);
   }
 
   const batchResult = await asyncTryCatchIf(isOperationalError, () =>
     runner.runServer(
-      "export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " + configCmds.join("; "),
+      "source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
+        configCmds.join("; "),
     ),
   );
   if (!batchResult.ok) {
     logWarn("Some config settings may have failed (non-fatal)");
+  }
+
+  // Guaranteed JSON merge — `openclaw config set gateway.controlUi.*` can fail silently on
+  // some releases; Without these flags the Control UI may require device identity over HTTP.
+  const controlUiMerge = [
+    "import fs from 'fs';",
+    "const cfgPath = process.env.HOME + '/.openclaw/openclaw.json';",
+    "const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));",
+    "cfg.gateway ||= {};",
+    "const prev = typeof cfg.gateway.controlUi === 'object' && cfg.gateway.controlUi !== null ? cfg.gateway.controlUi : {};",
+    "cfg.gateway.controlUi = Object.assign(prev, { allowInsecureAuth: true, dangerouslyDisableDeviceAuth: true });",
+    "fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));",
+    "fs.chmodSync(cfgPath, 0o600);",
+  ].join(" ");
+  const quietBun = q ? " 2>/dev/null" : "";
+  const controlUiMergeResult = await asyncTryCatchIf(isOperationalError, () =>
+    runner.runServer(
+      "source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
+        `bun -e ${shellQuote(controlUiMerge)}${quietBun}`,
+    ),
+  );
+  if (!controlUiMergeResult.ok) {
+    logWarn("Could not merge gateway.controlUi bypass flags — Control UI may require manual token/device setup");
   }
 
   // Configure Telegram channel if a bot token was provided.
@@ -561,9 +722,9 @@ async function setupOpenclawConfig(
     ].join(" ");
     const telegramResult = await asyncTryCatchIf(isOperationalError, () =>
       runner.runServer(
-        "export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
+        "source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
           `export TELEGRAM_CONFIG=${shellQuote(telegramConfig)}; ` +
-          `bun -e ${shellQuote(mergeScript)}`,
+          `bun -e ${shellQuote(mergeScript)}${quietBun}`,
       ),
     );
     if (telegramResult.ok) {
@@ -596,7 +757,7 @@ async function setupOpenclawConfig(
     "(WhatsApp, Telegram, etc.), always guide them to use the web dashboard",
     "instead of the TUI — QR codes cannot be scanned from a terminal.",
     "",
-    "The dashboard URL is: http://localhost:18789",
+    "The dashboard URL is: http://127.0.0.1:18789",
     "(It may also be SSH-tunneled to the user's local machine automatically.)",
     ...messagingLines,
     "",
@@ -689,7 +850,10 @@ export async function startGateway(runner: CloudRunner): Promise<void> {
     '  (crontab -l 2>/dev/null | grep -v openclaw-gateway; echo "0 * * * * nc -z 127.0.0.1 18789 2>/dev/null || $_cron_restart >> /tmp/openclaw-gateway.log 2>&1") | crontab - 2>/dev/null || true',
     "else",
     "  mv /tmp/openclaw-gateway-wrapper.tmp /tmp/openclaw-gateway-wrapper",
-    `  if ${portCheck}; then echo "Gateway already running"; exit 0; fi`,
+    "  # Always restart — marketplace images often leave an old gateway on :18789 with stale config",
+    `  command -v fuser >/dev/null 2>&1 && fuser -k 18789/tcp 2>/dev/null || true`,
+    "  pkill -f '[o]penclaw gateway' 2>/dev/null || true",
+    "  sleep 2",
     "  if command -v setsid >/dev/null 2>&1; then setsid /tmp/openclaw-gateway-wrapper > /tmp/openclaw-gateway.log 2>&1 < /dev/null &",
     "  else nohup /tmp/openclaw-gateway-wrapper > /tmp/openclaw-gateway.log 2>&1 < /dev/null & fi",
     "fi",
@@ -1232,6 +1396,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
     codex: {
       name: "Codex CLI",
       cloudInitTier: "node",
+      modelDefault: VENDOR_CHAT_MODEL_DEFAULT,
       preProvision: detectGithubAuth,
       install: () =>
         installAgent(
@@ -1242,7 +1407,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
       envVars: (apiKey) => [
         `THEGRID_API_KEY=${apiKey}`,
       ],
-      configure: () => setupCodexConfig(runner),
+      configure: (_apiKey, modelId, _enabledSteps) => setupCodexConfig(runner, modelId),
       launchCmd: () => "source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; codex",
       promptCmd: (prompt) =>
         `source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; codex --full-auto ${shellQuote(prompt)}`,
@@ -1265,8 +1430,8 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         },
         envVars: (apiKey: string) => [
           `THEGRID_API_KEY=${apiKey}`,
-          `ANTHROPIC_API_KEY=${apiKey}`,
-          "ANTHROPIC_BASE_URL=https://api.thegrid.ai/api/v1",
+          `OPENAI_API_KEY=${apiKey}`,
+          `OPENAI_BASE_URL=${THEGRID_API_INFERENCE_BASE}`,
         ],
         configure: (apiKey: string, modelId?: string, enabledSteps?: Set<string>) =>
           setupOpenclawConfig(runner, apiKey, modelId || VENDOR_CHAT_MODEL_DEFAULT, dashboardToken, enabledSteps),
@@ -1278,7 +1443,13 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
           `source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; openclaw run ${shellQuote(prompt)}`,
         tunnel: {
           remotePort: 18789,
-          browserUrl: (localPort: number) => `http://localhost:${localPort}/#token=${dashboardToken}`,
+          logGatewayToken: dashboardToken,
+          // Prefer 127.0.0.1 over localhost (OpenClaw docs). Include session + token on `/chat`
+          // so route changes cannot drop bootstrap (see openclaw/openclaw#43037).
+          browserUrl: (localPort: number) =>
+            `http://127.0.0.1:${localPort}/chat?session=${encodeURIComponent(
+              OPENCLAW_CONTROL_UI_DEFAULT_CHAT_SESSION,
+            )}&token=${encodeURIComponent(dashboardToken)}#token=${dashboardToken}`,
         },
         updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + "npm install -g $_NPM_G_FLAGS openclaw@latest",
       };

@@ -2,6 +2,8 @@
 
 // gcp/main.ts — Orchestrator: deploys an agent on GCP Compute Engine
 
+import "../load-env.js";
+
 import type { CloudOrchestrator } from "../shared/orchestrate.js";
 
 import { getErrorMessage } from "@grid-spawn/sdk";

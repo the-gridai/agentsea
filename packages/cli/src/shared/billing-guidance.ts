@@ -1,7 +1,7 @@
 // shared/billing-guidance.ts — Billing error detection, guidance, and browser-based retry flow
 
 import { asyncTryCatch, unwrapOr } from "./result.js";
-import { logInfo, logStep, logWarn, openBrowser, prompt } from "./ui.js";
+import { logAlwaysInfo, logAlwaysStep, logWarn, openBrowser, prompt } from "./ui.js";
 
 // ─── BillingConfig interface ────────────────────────────────────────────────
 
@@ -21,16 +21,16 @@ export function isBillingError(config: BillingConfig, errorMsg: string): boolean
 
 /** Dependencies for billing-guidance functions (injectable for testing). */
 export interface BillingGuidanceDeps {
-  logInfo: typeof logInfo;
-  logStep: typeof logStep;
+  logInfo: typeof logAlwaysInfo;
+  logStep: typeof logAlwaysStep;
   logWarn: typeof logWarn;
   openBrowser: typeof openBrowser;
   prompt: typeof prompt;
 }
 
 const defaultDeps: BillingGuidanceDeps = {
-  logInfo,
-  logStep,
+  logInfo: logAlwaysInfo,
+  logStep: logAlwaysStep,
   logWarn,
   openBrowser,
   prompt,

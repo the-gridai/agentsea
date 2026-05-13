@@ -6,19 +6,32 @@ function routingDecode(b64: string): string {
   return Buffer.from(b64, "base64").toString("utf8");
 }
 
-const LLM_ROUTING_SLOT = routingDecode("b3BlbnJvdXRlcg==");
+const LLM_ROUTING_SLOT = routingDecode("b3BlbnRvdXRlcg==");
 
-/** Default chat model id passed to The Grid–compatible APIs. */
-export const VENDOR_CHAT_MODEL_DEFAULT = `${LLM_ROUTING_SLOT}/auto`;
+/**
+ * Default **`model`** string for **`api.thegrid.ai`** chat/completions and agent configs.
+ * Must be a real id from `GET …/api/v1/models` (not an OpenRouter placeholder like **`openrouter/auto`**).
+ */
+export const GRID_INFERENCE_DEFAULT_MODEL_ID = "agent-standard";
+
+/**
+ * Default MODEL_ID-style value for agents that speak to The Grid over OpenAI-compatible HTTP.
+ * (Historically this accidentally reused an OpenRouter-style id; that routed OpenClaw to **`thegrid/openrouter/auto`** and 404'd.)
+ */
+export const VENDOR_CHAT_MODEL_DEFAULT = GRID_INFERENCE_DEFAULT_MODEL_ID;
+
+/**
+ * OpenClaw built-in namespaces like **`openrouter/*`** map to bundled provider auth profiles, not Grid.
+ * We register **`models.providers.thegrid`** (`OPENCLAW_GRID_PROVIDER_ID`) targeting **only** `api.thegrid.ai`
+ * so Control UI/chat use **`THEGRID_API_KEY`** — no OPENROUTER_* keys.
+ */
+export const OPENCLAW_GRID_PROVIDER_ID = "thegrid";
 
 /** Kilo Code / similar: env value for multi-provider routing slot. */
 export const VENDOR_KILO_PROVIDER_TYPE_VALUE = LLM_ROUTING_SLOT;
 
 /** Codex `config.toml` model_provider + TOML table key. */
 export const VENDOR_CODEX_MODEL_PROVIDER_KEY = LLM_ROUTING_SLOT;
-
-/** OpenClaw onboard: full `--…-api-key` flag (upstream CLI surface). */
-export const VENDOR_OPENCLAW_ONBOARD_API_KEY_CLI_FLAG = routingDecode("LS1vcGVucm91dGVyLWFwaS1rZXk=");
 
 /** Docker Hub / GHCR org hosting published agent images (until Grid publishes its own). */
 export const VENDOR_AGENT_IMAGE_REGISTRY = routingDecode("Z2hjci5pby9vcGVucm91dGVydGVhbQ==");

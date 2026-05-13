@@ -4,7 +4,7 @@
 import type { CloudRunner } from "./agent-setup.js";
 
 import { asyncTryCatch } from "./result.js";
-import { killWithTimeout, SSH_BASE_OPTS, validateRemotePath } from "./ssh.js";
+import { killWithTimeout, SSH_BASE_OPTS, scpQuietArgs, validateRemotePath } from "./ssh.js";
 import { shellQuote } from "./ui.js";
 
 /**
@@ -71,6 +71,7 @@ export function makeSshRunner(ip: string, user: string, keyOpts: string[]): Clou
       const proc = Bun.spawn(
         [
           "scp",
+          ...scpQuietArgs(),
           ...SSH_BASE_OPTS,
           ...keyOpts,
           localPath,
@@ -103,6 +104,7 @@ export function makeSshRunner(ip: string, user: string, keyOpts: string[]): Clou
       const proc = Bun.spawn(
         [
           "scp",
+          ...scpQuietArgs(),
           ...SSH_BASE_OPTS,
           ...keyOpts,
           `${user}@${ip}:${normalizedRemote}`,

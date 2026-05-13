@@ -4,7 +4,9 @@ import { spawnSync as nodeSpawnSync } from "node:child_process";
 import { connect } from "node:net";
 import { normalize } from "node:path/posix";
 import { asyncTryCatch, tryCatch } from "./result.js";
-import { logError, logInfo, logStep, logStepDone, logStepInline } from "./ui.js";
+import { isWslLinux } from "./shell.js";
+import { logAlwaysStep, logError, logInfo, logStep, logStepDone, logStepInline } from "./ui.js";
+import { isSpawnVerbose } from "./verbosity.js";
 
 // ─── Shared SSH Options ──────────────────────────────────────────────────────
 
@@ -36,6 +38,11 @@ export const SSH_BASE_OPTS: string[] = [
   "-o",
   "IdentitiesOnly=yes",
 ];
+
+/** Extra argv after `scp` — hide progress meter when not `--verbose` / `SPAWN_VERBOSE`. */
+export function scpQuietArgs(): string[] {
+  return isSpawnVerbose() ? [] : ["-q"];
+}
 
 /**
  * SSH options for interactive sessions (user-facing TTY).
@@ -251,6 +258,11 @@ export async function startSshTunnel(opts: {
   remotePort: number;
   localPort?: number;
   sshKeyOpts?: string[];
+  /**
+   * Listen on `0.0.0.0` so Windows browsers can reach a forward started from WSL.
+   * Defaults to true when running under WSL; stays `127.0.0.1` elsewhere.
+   */
+  listenAllInterfaces?: boolean;
 }): Promise<SshTunnelHandle> {
   const { host, user, remotePort, sshKeyOpts } = opts;
 
@@ -269,13 +281,16 @@ export async function startSshTunnel(opts: {
     throw new Error(`No available local port in range ${remotePort}-${remotePort + 10}`);
   }
 
+  const listenWide = opts.listenAllInterfaces ?? isWslLinux();
+  const localListenHost = listenWide ? "0.0.0.0" : "127.0.0.1";
+
   const args = [
     "ssh",
     ...SSH_BASE_OPTS,
     ...(sshKeyOpts ?? []),
     "-N",
     "-L",
-    `${localPort}:127.0.0.1:${remotePort}`,
+    `${localListenHost}:${localPort}:127.0.0.1:${remotePort}`,
     `${user}@${host}`,
   ];
 
@@ -344,7 +359,11 @@ export async function waitForSsh(opts: WaitForSshOpts): Promise<void> {
   }
 
   // ── Phase 1: TCP probe ────────────────────────────────────────────────────
-  logStep("Waiting for SSH port to open...");
+  if (isSpawnVerbose()) {
+    logStep("Waiting for SSH port to open...");
+  } else {
+    logAlwaysStep("Waiting for SSH (server may still be booting)…");
+  }
   let attempt = 0;
   let tcpOpen = false;
   while (attempt < maxAttempts) {
@@ -369,7 +388,9 @@ export async function waitForSsh(opts: WaitForSshOpts): Promise<void> {
   }
 
   // ── Phase 2: SSH handshake ────────────────────────────────────────────────
-  logStep("Waiting for SSH handshake...");
+  if (isSpawnVerbose()) {
+    logStep("Waiting for SSH handshake...");
+  }
   const remaining = maxAttempts - attempt;
   // At least 5 handshake attempts even if TCP phase used most of the budget
   const handshakeAttempts = Math.max(remaining, 5);
@@ -427,7 +448,13 @@ export async function waitForSsh(opts: WaitForSshOpts): Promise<void> {
       return inner.data;
     });
     if (r.ok && r.data !== null) {
-      logInfo("SSH is ready");
+      if (isSpawnVerbose()) {
+        logInfo("SSH is ready");
+      } else {
+        logAlwaysStep(
+          "SSH connected — setup continues on the server (large downloads like Chrome can take a few minutes). Pass --verbose for full remote output.",
+        );
+      }
       return;
     }
     if (!r.ok) {

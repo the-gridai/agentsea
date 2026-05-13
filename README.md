@@ -51,6 +51,8 @@ npm run build
 
 CDN / one-liner base URL defaults with **`GRID_SPAWN_CDN`**; the marketing env mirror is **`NEXT_PUBLIC_GRID_SPAWN_PUBLIC_ORIGIN`**.
 
+For local provisioning, copy **`.env.example`** → **`.env`** at the repo root (ignored by git). **`grid-spawn`** loads it automatically when your shell is under this tree, or set **`GRID_SPAWN_ROOT`** to point at it.
+
 Older routes (`/spawns`, `/login`, `/settings`, …) **redirect** to **`/`** or **`/cli`**.
 
 ## License

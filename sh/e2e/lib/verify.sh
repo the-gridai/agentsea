@@ -440,12 +440,12 @@ verify_openclaw() {
     failures=$((failures + 1))
   fi
 
-  # Env check
-  log_step "Checking openclaw env (ANTHROPIC_API_KEY)..."
-  if cloud_exec "${app}" "grep -q ANTHROPIC_API_KEY ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok "ANTHROPIC_API_KEY present in .spawnrc"
+  # Env check: OpenAI-compat vars for The Grid (same pattern as Codex/Hermes)
+  log_step "Checking openclaw env (OPENAI_API_KEY / OPENAI_BASE_URL for The Grid)..."
+  if cloud_exec "${app}" "grep -q OPENAI_API_KEY ~/.spawnrc && grep -q OPENAI_BASE_URL ~/.spawnrc" >/dev/null 2>&1; then
+    log_ok "OPENAI_API_KEY / OPENAI_BASE_URL present in .spawnrc"
   else
-    log_err "ANTHROPIC_API_KEY not found in .spawnrc"
+    log_err "OPENAI_* Grid inference env vars not found in .spawnrc"
     failures=$((failures + 1))
   fi
 

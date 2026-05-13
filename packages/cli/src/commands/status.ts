@@ -9,6 +9,7 @@ import { loadManifest } from "../manifest.js";
 import { validateServerIdentifier } from "../security.js";
 import { parseJsonObj } from "../shared/parse.js";
 import { asyncTryCatch, asyncTryCatchIf, isNetworkError, tryCatch, unwrapOr } from "../shared/result.js";
+import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
 import { SSH_BASE_OPTS } from "../shared/ssh.js";
 import { loadApiToken } from "../shared/ui.js";
 import { formatRelativeTime } from "./list.js";
@@ -515,7 +516,7 @@ export async function cmdStatus(opts: StatusOpts = {}): Promise<void> {
       return;
     }
     p.log.info("No active cloud servers found in history.");
-    p.log.info(`Run ${pc.cyan("spawn <agent> <cloud>")} to launch your first agent.`);
+    p.log.info(`Run ${pc.cyan(`${GRID_SPAWN_CLI} <agent> <cloud>`)} to launch your first agent.`);
     return;
   }
 
@@ -572,7 +573,7 @@ export async function cmdStatus(opts: StatusOpts = {}): Promise<void> {
   } else if (!opts.prune && goneRecords.length > 0) {
     p.log.info(
       pc.dim(
-        `${goneRecords.length} server${goneRecords.length !== 1 ? "s" : ""} marked as gone. Run ${pc.cyan("spawn status --prune")} to remove them.`,
+        `${goneRecords.length} server${goneRecords.length !== 1 ? "s" : ""} marked as gone. Run ${pc.cyan(`${GRID_SPAWN_CLI} status --prune`)} to remove them.`,
       ),
     );
   }
@@ -618,7 +619,7 @@ export async function cmdStatus(opts: StatusOpts = {}): Promise<void> {
   const running = results.filter((r) => r.liveState === "running").length;
   if (running > 0) {
     p.log.info(
-      pc.dim(`${running} server${running !== 1 ? "s" : ""} running. Use ${pc.cyan("spawn list")} to reconnect.`),
+      pc.dim(`${running} server${running !== 1 ? "s" : ""} running. Use ${pc.cyan(`${GRID_SPAWN_CLI} list`)} to reconnect.`),
     );
   }
 }

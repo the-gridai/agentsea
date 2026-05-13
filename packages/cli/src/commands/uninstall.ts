@@ -10,6 +10,7 @@ import {
   RC_MARKER_LEGACY,
   RC_MARKER_START,
 } from "../shared/paths.js";
+import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
 import { tryCatch } from "../shared/result.js";
 import { getErrorMessage } from "./shared.js";
 
@@ -256,5 +257,5 @@ export async function cmdUninstall(): Promise<void> {
     p.log.info(`\nRestart your shell or run ${pc.cyan("exec $SHELL")} to apply PATH changes.`);
   }
 
-  p.outro("spawn has been uninstalled");
+  p.outro(`${GRID_SPAWN_CLI} has been uninstalled`);
 }

@@ -1,5 +1,6 @@
 import type { Manifest } from "../manifest.js";
 
+import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,10 +20,18 @@ import {
 } from "../security.js";
 import { asyncTryCatch, isFileError, tryCatch, tryCatchIf } from "../shared/result.js";
 import { getLocalShell, isWindows } from "../shared/shell.js";
+import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
 import { maybeShowStarPrompt } from "../shared/star-prompt.js";
 import { captureEvent, setTelemetryContext } from "../shared/telemetry.js";
-import { logError, logInfo, logStep, prepareStdinForHandoff, toKebabCase } from "../shared/ui.js";
-import { promptSetupOptions, promptSpawnName } from "./interactive.js";
+import {
+  CLACK_LOG_OPTS,
+  logError,
+  logInfo,
+  logStep,
+  prepareStdinForHandoff,
+  toKebabCase,
+} from "../shared/ui.js";
+import { getDefaultSpawnEnabledStepsCsv, promptSetupOptions, promptSpawnName } from "./interactive.js";
 import { handleRecordAction } from "./list.js";
 import {
   buildRetryCommand,
@@ -32,6 +41,7 @@ import {
   formatCredStatusLine,
   getAuthHint,
   getErrorMessage,
+  isInteractiveTTY,
   loadManifestWithSpinner,
   parseAuthEnvVars,
   preflightCredentialCheck,
@@ -79,7 +89,7 @@ function detectAndFixSwappedArgs(
 } {
   if (!manifest.agents[agent] && manifest.clouds[agent] && manifest.agents[cloud]) {
     p.log.info("It looks like you swapped the agent and cloud arguments.");
-    p.log.info(`Running: ${pc.cyan(`spawn ${cloud} ${agent}`)}`);
+    p.log.info(`Running: ${pc.cyan(`${GRID_SPAWN_CLI} ${cloud} ${agent}`)}`);
     return {
       agent: cloud,
       cloud: agent,
@@ -93,7 +103,7 @@ function detectAndFixSwappedArgs(
 
 /** Print a labeled section: bold header, body lines, then a blank line */
 function printDryRunSection(title: string, lines: string[]): void {
-  p.log.step(pc.bold(title));
+  p.log.step(pc.bold(title), CLACK_LOG_OPTS);
   for (const line of lines) {
     console.log(line);
   }
@@ -198,7 +208,7 @@ export function showDryRunPreview(manifest: Manifest, agent: string, cloud: stri
   const allSet = credLines.every((l) => l.includes("-- set"));
   if (!allSet) {
     p.log.warn("Some credentials are missing. Set them before launching.");
-    p.log.info(`Run ${pc.cyan(`spawn ${cloud}`)} for setup instructions.`);
+    p.log.info(`Run ${pc.cyan(`${GRID_SPAWN_CLI} ${cloud}`)} for setup instructions.`);
     console.log();
   }
 
@@ -254,7 +264,7 @@ function report404Failure(): void {
   console.error("  \u2022 The script is currently being deployed (rare)");
   console.error("  \u2022 There's a temporary issue with the file server");
   console.error(`\n${pc.bold("Next steps:")}`);
-  console.error(`  1. Verify it's implemented: ${pc.cyan("spawn matrix")}`);
+  console.error(`  1. Verify it's implemented: ${pc.cyan(`${GRID_SPAWN_CLI} matrix`)}`);
   console.error("  2. If the matrix shows \u2713, wait 1-2 minutes and retry");
   console.error(`  3. Still broken? Report it: ${pc.cyan(`https://github.com/${REPO}/issues`)}`);
 }
@@ -310,7 +320,7 @@ const NETWORK_ERROR_GUIDANCE: Record<"timeout" | "connection" | "unknown", Error
       "  \u2022 Firewall blocking or slowing the connection",
     ],
     steps: (ghUrl) => [
-      "  2. Verify combination exists: " + pc.cyan("spawn matrix"),
+      "  2. Verify combination exists: " + pc.cyan(`${GRID_SPAWN_CLI} matrix`),
       "  3. Wait a moment and retry",
       "  4. Test URL directly: " + pc.dim(ghUrl),
     ],
@@ -333,7 +343,7 @@ const NETWORK_ERROR_GUIDANCE: Record<"timeout" | "connection" | "unknown", Error
       "  \u2022 GitHub's servers temporarily down",
     ],
     steps: (ghUrl) => [
-      "  2. Verify combination exists: " + pc.cyan("spawn matrix"),
+      "  2. Verify combination exists: " + pc.cyan(`${GRID_SPAWN_CLI} matrix`),
       "  3. Wait a moment and retry",
       "  4. Test URL directly: " + pc.dim(ghUrl),
     ],
@@ -358,6 +368,9 @@ function reportDownloadError(ghUrl: string, err: unknown): never {
   for (const step of guidance.steps(ghUrl)) {
     console.error(step);
   }
+  console.error(
+    `  5. Offline / local dev: run from the grid-spawn checkout (with ${pc.cyan("sh/")}), or set ${pc.cyan("SPAWN_CLI_DIR")} / ${pc.cyan("GRID_SPAWN_ROOT")} to that repo root`,
+  );
   process.exit(1);
 }
 
@@ -527,7 +540,14 @@ function spawnScript(script: string, env: Record<string, string | undefined>): v
   throw new Error(`Script was killed by ${sig}`);
 }
 
-function runBash(script: string, prompt?: string, debug?: boolean, spawnName?: string): void {
+function runBash(
+  script: string,
+  prompt?: string,
+  debug?: boolean,
+  spawnName?: string,
+  /** Monorepo root — sets SPAWN_CLI_DIR so sh wrappers run packages/cli/src/... instead of curling digitalocean.js */
+  bundledRepoRoot?: string,
+): void {
   // SECURITY: Validate script content before execution
   validateScriptContent(script);
 
@@ -535,6 +555,9 @@ function runBash(script: string, prompt?: string, debug?: boolean, spawnName?: s
   const env = {
     ...process.env,
   };
+  if (bundledRepoRoot) {
+    env.SPAWN_CLI_DIR = bundledRepoRoot;
+  }
   if (prompt) {
     env.SPAWN_PROMPT = prompt;
     env.SPAWN_MODE = "non-interactive";
@@ -568,8 +591,9 @@ function runBashScript(
   dashboardUrl?: string,
   debug?: boolean,
   spawnName?: string,
+  bundledRepoRoot?: string,
 ): string | undefined {
-  const r = tryCatch(() => runBash(script, prompt, debug, spawnName));
+  const r = tryCatch(() => runBash(script, prompt, debug, spawnName, bundledRepoRoot));
   if (r.ok) {
     return undefined;
   }
@@ -581,7 +605,7 @@ function runBashScript(
   if (isRetryableExitCode(errMsg)) {
     console.error();
     p.log.warn("SSH connection lost. Your server is likely still running.");
-    p.log.warn("To reconnect, re-run the same spawn command.");
+    p.log.warn(`Reconnect manually: ${pc.cyan(`${GRID_SPAWN_CLI} last`)} — or re-run the same ${GRID_SPAWN_CLI} command.`);
     return undefined; // Don't report as failure — user already has clear guidance
   }
 
@@ -743,10 +767,10 @@ export async function execScript(
     return true;
   }
 
-  // macOS/Linux: prefer the checked-in wrapper when running from a local checkout.
   let scriptContent = "";
-  const cliDir = process.env.SPAWN_CLI_DIR;
-  const localScriptResolved = cliDir ? resolveLocalWrapperScript(cliDir, cloud, agent) : "";
+  // macOS/Linux: checked-in wrapper when running from a local checkout (or explicit SPAWN_CLI_DIR / GRID_SPAWN_ROOT).
+  const repoRoot = resolveBundledShRepoRoot(cloud, agent);
+  const localScriptResolved = repoRoot ? resolveLocalWrapperScript(repoRoot, cloud, agent) : "";
 
   if (localScriptResolved) {
     scriptContent = fs.readFileSync(localScriptResolved, "utf-8");
@@ -766,7 +790,14 @@ export async function execScript(
     scriptContent = dlResult.data;
   }
 
-  const lastErr = runBashScript(scriptContent, prompt, dashboardUrl, debug, spawnName);
+  const lastErr = runBashScript(
+    scriptContent,
+    prompt,
+    dashboardUrl,
+    debug,
+    spawnName,
+    localScriptResolved ? repoRoot : undefined,
+  );
   if (lastErr) {
     reportScriptFailure(lastErr, cloud, agent, authHint, prompt, dashboardUrl, spawnName);
     return false;
@@ -845,6 +876,57 @@ function headlessError(
   process.exit(exitCode);
 }
 
+/** Reject path traversal / weird cloud|agent slugs for local script lookup. */
+function hasUnsafePathSegment(s: string): boolean {
+  return s.includes("..") || s.includes("/") || s.includes("\\");
+}
+
+/**
+ * Resolve repo root that ships `sh/<cloud>/<agent>.sh` (and `manifest.json`).
+ * Tries `SPAWN_CLI_DIR`, `GRID_SPAWN_ROOT`, then walks up from `cwd` (same spirit as load-env).
+ */
+function resolveBundledShRepoRoot(cloud: string, agent: string): string {
+  if (hasUnsafePathSegment(cloud) || hasUnsafePathSegment(agent)) {
+    return "";
+  }
+
+  const tryDir = (raw: string): string => {
+    const base = raw.trim();
+    if (!base) {
+      return "";
+    }
+    const resolved = path.resolve(base);
+    const scriptFile = path.join(resolved, "sh", cloud, `${agent}.sh`);
+    const manifestFile = path.join(resolved, "manifest.json");
+    if (fs.existsSync(scriptFile) && fs.existsSync(manifestFile)) {
+      return resolved;
+    }
+    return "";
+  };
+
+  for (const envBase of [process.env.SPAWN_CLI_DIR, process.env.GRID_SPAWN_ROOT]) {
+    const hit = envBase ? tryDir(envBase) : "";
+    if (hit) {
+      return hit;
+    }
+  }
+
+  let dir = process.cwd();
+  for (let i = 0; i < 10; i++) {
+    const hit = tryDir(dir);
+    if (hit) {
+      return hit;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+
+  return "";
+}
+
 /**
  * Resolve a trusted local Spawn checkout path for SPAWN_CLI_DIR.
  *
@@ -885,12 +967,21 @@ function resolveLocalWrapperScript(cliDir: string, cloud: string, agent: string)
 }
 
 /** Run a script in headless mode (all output to stderr, no interactive session) */
-function runScriptHeadless(script: string, prompt?: string, debug?: boolean, spawnName?: string): Promise<number> {
+function runScriptHeadless(
+  script: string,
+  prompt?: string,
+  debug?: boolean,
+  spawnName?: string,
+  bundledRepoRoot?: string,
+): Promise<number> {
   validateScriptContent(script);
 
   const env = {
     ...process.env,
   };
+  if (bundledRepoRoot) {
+    env.SPAWN_CLI_DIR = bundledRepoRoot;
+  }
   env.SPAWN_HEADLESS = "1";
   env.SPAWN_MODE = "non-interactive";
   env.SPAWN_NON_INTERACTIVE = "1";
@@ -1122,8 +1213,8 @@ export async function cmdRunHeadless(agent: string, cloud: string, opts: Headles
   } else {
     // macOS/Linux: download bash wrapper script
     let scriptContent: string;
-    const cliDir = process.env.SPAWN_CLI_DIR;
-    const localScriptResolved = cliDir ? resolveLocalWrapperScript(cliDir, resolvedCloud, resolvedAgent) : "";
+    const repoRoot = resolveBundledShRepoRoot(resolvedCloud, resolvedAgent);
+    const localScriptResolved = repoRoot ? resolveLocalWrapperScript(repoRoot, resolvedCloud, resolvedAgent) : "";
 
     if (localScriptResolved) {
       scriptContent = fs.readFileSync(localScriptResolved, "utf-8");
@@ -1173,7 +1264,13 @@ export async function cmdRunHeadless(agent: string, cloud: string, opts: Headles
       console.error(`[headless] Executing ${resolvedAgent} on ${resolvedCloud}...`);
     }
 
-    exitCode = await runScriptHeadless(scriptContent, prompt, debug, spawnName);
+    exitCode = await runScriptHeadless(
+      scriptContent,
+      prompt,
+      debug,
+      spawnName,
+      localScriptResolved ? repoRoot : undefined,
+    );
   }
 
   if (exitCode !== 0) {
@@ -1273,16 +1370,38 @@ export async function cmdRun(
 
   // Skip setup prompt if steps already set via --steps or --config
   if (!process.env.SPAWN_ENABLED_STEPS) {
-    captureEvent("setup_options_shown");
-    const enabledSteps = await promptSetupOptions(agent);
-    if (enabledSteps) {
-      process.env.SPAWN_ENABLED_STEPS = [
-        ...enabledSteps,
-      ].join(",");
-      captureEvent("setup_options_selected", {
-        step_count: enabledSteps.size,
+    const wantSetupPrompt =
+      process.env.SPAWN_SETUP_PROMPT === "1" || process.env.SPAWN_CUSTOM_SETUP === "1";
+    if (wantSetupPrompt && isInteractiveTTY()) {
+      captureEvent("setup_options_shown");
+      const enabledSteps = await promptSetupOptions(agent);
+      if (enabledSteps) {
+        process.env.SPAWN_ENABLED_STEPS = [
+          ...enabledSteps,
+        ].join(",");
+        captureEvent("setup_options_selected", {
+          step_count: enabledSteps.size,
+        });
+      }
+    } else {
+      const defaultsCsv = getDefaultSpawnEnabledStepsCsv(agent);
+      if (defaultsCsv !== undefined) {
+        process.env.SPAWN_ENABLED_STEPS = defaultsCsv;
+      }
+      captureEvent("setup_options_auto_defaults", {
+        step_count: defaultsCsv ? defaultsCsv.split(",").filter(Boolean).length : 0,
       });
     }
+  }
+
+  // OpenRouter-style direct run: pick a unique name so we don't block on clack prompts.
+  if (
+    !process.env.SPAWN_NAME &&
+    process.env.SPAWN_PROMPT_FOR_NAME !== "1" &&
+    process.env.SPAWN_SETUP_PROMPT !== "1" &&
+    process.env.SPAWN_CUSTOM_SETUP !== "1"
+  ) {
+    process.env.SPAWN_NAME = `spawn-${randomBytes(4).toString("hex")}`;
   }
 
   captureEvent("name_prompt_shown");
@@ -1308,7 +1427,7 @@ export async function cmdRun(
   const agentName = manifest.agents[agent].name;
   const cloudName = manifest.clouds[cloud].name;
   const suffix = prompt ? " with prompt..." : "...";
-  p.log.step(`Launching ${pc.bold(agentName)} on ${pc.bold(cloudName)}${suffix}`);
+  p.log.step(`Launching ${pc.bold(agentName)} on ${pc.bold(cloudName)}${suffix}`, CLACK_LOG_OPTS);
   captureEvent("picker_completed");
 
   const success = await execScript(

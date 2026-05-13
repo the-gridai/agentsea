@@ -6,12 +6,12 @@ import { getErrorMessage, isString } from "@grid-spawn/sdk";
 import { parseJsonObj } from "./parse.js";
 import { getSpawnCloudConfigPath } from "./paths.js";
 import { asyncTryCatchIf, isFileError, isNetworkError, tryCatch } from "./result.js";
-import { logDebug, logError, logInfo, logWarn, prompt, retryOrQuit } from "./ui.js";
+import { logDebug, logError, logInfo, logWarn, logAlwaysInfo, prompt, retryOrQuit } from "./ui.js";
 import { LEGACY_SAVED_API_KEY_CONFIG_STEM } from "./vendor-routing.js";
 
 // ─── Key Validation ──────────────────────────────────────────────────────────
 
-/** Validate THEGRID_API_KEY against the Grid API (best-effort; skips on network errors). */
+/** Validate THEGRID_API_KEY via Grid `GET /api/v1/models` (best-effort; skips on network errors). */
 export async function verifyTheGridApiKey(apiKey: string): Promise<boolean> {
   if (!apiKey) {
     return false;
@@ -26,7 +26,9 @@ export async function verifyTheGridApiKey(apiKey: string): Promise<boolean> {
   }
 
   const result = await asyncTryCatchIf(isNetworkError, async () => {
-    const resp = await fetch("https://api.thegrid.ai/api/v1/auth/key", {
+    // Use the OpenAI-compatible models list — it returns 200 when the key is valid.
+    // (/api/v1/auth/key has been observed to 404 on production; models is the stable probe.)
+    const resp = await fetch("https://api.thegrid.ai/api/v1/models", {
       headers: {
         Authorization: `Bearer ${apiKey}`,
       },
@@ -82,7 +84,7 @@ async function tryOauthFlow(callbackPort = 5180, agentSlug?: string, cloudSlug?:
   void callbackPort;
   void agentSlug;
   void cloudSlug;
-  logInfo("Paste THEGRID_API_KEY or enter it below — browser OAuth for The Grid is not wired in this CLI yet.");
+  logAlwaysInfo("Paste THEGRID_API_KEY or enter it below — browser OAuth for The Grid is not wired in this CLI yet.");
   return null;
 }
 
@@ -181,9 +183,8 @@ export async function getOrPromptApiKey(agentSlug?: string, cloudSlug?: string):
     logWarn("Environment key failed validation, prompting for a new one...");
   }
 
-  // 2. Check saved key from previous session (only if user opted in via setup options)
-  const reuseKeyEnabled = process.env.SPAWN_ENABLED_STEPS?.split(",").includes("reuse-api-key");
-  if (reuseKeyEnabled) {
+  // 2. Check saved key from a previous run (unless forcing re-auth via --reauth).
+  if (process.env.SPAWN_REAUTH !== "1") {
     const savedKey = loadSavedTheGridApiKey();
     if (savedKey) {
       logInfo("Using saved Grid API key");
@@ -209,7 +210,7 @@ export async function getOrPromptApiKey(agentSlug?: string, cloudSlug?: string):
       // OAuth failed — fall through to manual entry
       process.stderr.write("\n");
       logWarn("Browser-based login was not completed.");
-      logInfo("Get your API key from: https://thegrid.ai (API keys dashboard)");
+      logAlwaysInfo("Get your API key from: https://thegrid.ai (API keys dashboard)");
       process.stderr.write("\n");
 
       const manualKey = await promptAndValidateApiKey();

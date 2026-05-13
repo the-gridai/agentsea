@@ -1,8 +1,9 @@
 import pc from "picocolors";
+import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
 import { isFileError, tryCatchIf } from "../shared/result.js";
 
 /**
- * `spawn pick` — interactive option picker invokable from bash scripts.
+ * `grid-spawn pick` — interactive option picker invokable from bash scripts.
  *
  * Reads options from stdin (when piped) as tab-separated lines:
  *   "value\tLabel\tHint"
@@ -16,7 +17,7 @@ import { isFileError, tryCatchIf } from "../shared/result.js";
  *
  * Example from bash:
  *   zone=$(printf 'us-central1-a\tIowa\nus-east1-b\tVirginia\n' \
- *            | spawn pick --prompt "Select GCP zone" --default "us-central1-a")
+ *            | grid-spawn pick --prompt "Select GCP zone" --default "us-central1-a")
  */
 export async function cmdPick(pickArgs: string[]): Promise<void> {
   // ── parse flags ──────────────────────────────────────────────────────────
@@ -53,10 +54,10 @@ export async function cmdPick(pickArgs: string[]): Promise<void> {
 
   if (options.length === 0) {
     process.stderr.write(
-      pc.red("spawn pick: no options provided.\n") +
+      pc.red(`${GRID_SPAWN_CLI} pick: no options provided.\n`) +
         pc.dim(
           "  Supply options via stdin as tab-separated lines:\n" +
-            '  printf "value1\\tLabel1\\nvalue2\\tLabel2" | spawn pick --prompt "..."\n',
+            `  printf "value1\\tLabel1\\nvalue2\\tLabel2" | ${GRID_SPAWN_CLI} pick --prompt "..."\n`,
         ),
     );
     process.exit(1);

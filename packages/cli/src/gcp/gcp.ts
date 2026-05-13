@@ -7,6 +7,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isString, toObjectArray } from "@grid-spawn/sdk";
 import { handleBillingError, isBillingError, showNonBillingError } from "../shared/billing-guidance.js";
+import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
 import { getPackagesForTier, NODE_INSTALL_CMD, needsBun, needsNode } from "../shared/cloud-init.js";
 import { getUserHome } from "../shared/paths.js";
 import { asyncTryCatch, tryCatch } from "../shared/result.js";
@@ -14,6 +15,7 @@ import {
   killWithTimeout,
   SSH_BASE_OPTS,
   SSH_INTERACTIVE_OPTS,
+  scpQuietArgs,
   waitForSsh as sharedWaitForSsh,
   sleep,
   spawnInteractive,
@@ -1041,6 +1043,7 @@ export async function uploadFile(localPath: string, remotePath: string): Promise
   const proc = Bun.spawn(
     [
       "scp",
+      ...scpQuietArgs(),
       ...SSH_BASE_OPTS,
       ...keyOpts,
       localPath,
@@ -1079,6 +1082,7 @@ export async function downloadFile(remotePath: string, localPath: string): Promi
   const proc = Bun.spawn(
     [
       "scp",
+      ...scpQuietArgs(),
       ...SSH_BASE_OPTS,
       ...keyOpts,
       `${username}@${_state.serverIp}:${normalizedRemote}`,
@@ -1131,9 +1135,9 @@ export async function interactiveSession(cmd: string): Promise<number> {
   logWarn(`  ${DASHBOARD_URL}`);
   logWarn("");
   logInfo("To delete from CLI:");
-  logInfo("  spawn delete");
+  logInfo(`  ${GRID_SPAWN_CLI} delete`);
   logInfo("To reconnect:");
-  logInfo("  spawn last");
+  logInfo(`  ${GRID_SPAWN_CLI} last`);
   logInfo(`  or: gcloud compute ssh ${_state.instanceName} --zone=${_state.zone} --project=${_state.project}`);
 
   return exitCode;

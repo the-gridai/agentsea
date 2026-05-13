@@ -14,6 +14,7 @@ import {
   validateTunnelUrl,
   validateUsername,
 } from "../security.js";
+import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
 import { parseJsonWith } from "../shared/parse.js";
 import { getSpawnCloudConfigPath } from "../shared/paths.js";
 import { asyncTryCatch } from "../shared/result.js";
@@ -932,7 +933,7 @@ export async function interactiveSession(cmd: string): Promise<number> {
   process.stderr.write("\n");
   logWarn(`Session ended. Your sandbox '${_state.sandboxId}' may still be running.`);
   logWarn(`Manage or delete it in the Daytona dashboard: ${DAYTONA_DASHBOARD_URL}`);
-  logInfo("Delete it from Spawn with: spawn delete");
+  logInfo(`Delete it from Spawn with: ${GRID_SPAWN_CLI} delete`);
   return exitCode;
 }
 
@@ -1052,7 +1053,7 @@ export async function getSignedPreviewBrowserUrl(
 }
 
 function isOpenClawPreview(remotePort: number, urlSuffix: string): boolean {
-  return remotePort === OPENCLAW_DASHBOARD_PORT && urlSuffix.includes("#token=");
+  return remotePort === OPENCLAW_DASHBOARD_PORT && /(?:\?|#)token=/.test(urlSuffix);
 }
 
 async function prepareOpenClawPreviewAccess(

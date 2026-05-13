@@ -8,6 +8,7 @@ import pc from "picocolors";
 import { loadHistory } from "../history.js";
 import { loadManifest } from "../manifest.js";
 import { asyncTryCatch } from "../shared/result.js";
+import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
 import { formatRelativeTime } from "./list.js";
 import { resolveDisplayName } from "./shared.js";
 
@@ -78,7 +79,7 @@ export async function cmdTree(jsonOutput?: boolean): Promise<void> {
 
   if (records.length === 0) {
     p.log.info("No spawn history found.");
-    p.log.info(`Run ${pc.cyan("spawn <agent> <cloud>")} to create your first spawn.`);
+    p.log.info(`Run ${pc.cyan(`${GRID_SPAWN_CLI} <agent> <cloud>`)} to create your first spawn.`);
     return;
   }
 

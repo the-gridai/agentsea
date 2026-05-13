@@ -1,12 +1,26 @@
 // shared/shell.ts — Platform-aware shell execution utilities
 // Enables spawn CLI to work natively on Windows (PowerShell) without requiring bash.
 
+import { existsSync, readFileSync } from "node:fs";
+
 /**
  * Check if the current platform is Windows.
  * Accepts an optional override for testability (process.platform is read-only).
  */
 export function isWindows(platform?: string): boolean {
   return (platform ?? process.platform) === "win32";
+}
+
+/** True when Node/Bun runs under WSL/Linux (loopback differs from Edge/Chrome on Windows host). */
+export function isWslLinux(platform?: string): boolean {
+  if ((platform ?? process.platform) !== "linux") {
+    return false;
+  }
+  try {
+    return existsSync("/proc/version") && readFileSync("/proc/version", "utf8").toLowerCase().includes("microsoft");
+  } catch {
+    return false;
+  }
 }
 
 /**

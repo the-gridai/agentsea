@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { getErrorMessage, isNumber, isString, toObjectArray, toRecord } from "@grid-spawn/sdk";
 import { handleBillingError, isBillingError, showNonBillingError } from "../shared/billing-guidance.js";
+import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
 import { getPackagesForTier, NODE_INSTALL_CMD, needsBun, needsNode } from "../shared/cloud-init.js";
 import { parseJsonObj } from "../shared/parse.js";
 import { getSpawnCloudConfigPath } from "../shared/paths.js";
@@ -15,6 +16,7 @@ import {
   killWithTimeout,
   SSH_BASE_OPTS,
   SSH_INTERACTIVE_OPTS,
+  scpQuietArgs,
   waitForSsh as sharedWaitForSsh,
   sleep,
   spawnInteractive,
@@ -846,6 +848,7 @@ export async function uploadFile(localPath: string, remotePath: string, ip?: str
   const proc = Bun.spawn(
     [
       "scp",
+      ...scpQuietArgs(),
       ...SSH_BASE_OPTS,
       ...keyOpts,
       localPath,
@@ -880,6 +883,7 @@ export async function downloadFile(remotePath: string, localPath: string, ip?: s
   const proc = Bun.spawn(
     [
       "scp",
+      ...scpQuietArgs(),
       ...SSH_BASE_OPTS,
       ...keyOpts,
       `root@${serverIp}:${normalizedRemote}`,
@@ -931,9 +935,9 @@ export async function interactiveSession(cmd: string, ip?: string): Promise<numb
   logWarn(`  ${HETZNER_DASHBOARD_URL}`);
   logWarn("");
   logInfo("To delete from CLI:");
-  logInfo("  spawn delete");
+  logInfo(`  ${GRID_SPAWN_CLI} delete`);
   logInfo("To reconnect:");
-  logInfo("  spawn last");
+  logInfo(`  ${GRID_SPAWN_CLI} last`);
   logInfo(`  or: ssh -i ~/.ssh/${SPAWN_KEY_NAME} root@${serverIp}`);
 
   return exitCode;

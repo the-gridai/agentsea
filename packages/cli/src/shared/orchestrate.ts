@@ -8,6 +8,7 @@ import type { SshTunnelHandle } from "./ssh.js";
 
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { getErrorMessage } from "@grid-spawn/sdk";
+import pc from "picocolors";
 import * as v from "valibot";
 import {
   generateSpawnId,
@@ -20,6 +21,7 @@ import {
 import { offerGithubAuth, setupAutoUpdate, setupSecurityScan, wrapSshCall } from "./agent-setup.js";
 import { tryTarballInstall } from "./agent-tarball.js";
 import { generateEnvConfig } from "./agents.js";
+import { fetchGridModelIds } from "./grid-models.js";
 import { getOrPromptApiKey } from "./oauth.js";
 import { parseJsonWith } from "./parse.js";
 import { getSpawnCloudConfigPath, getSpawnPreferencesPath, getTmpDir } from "./paths.js";
@@ -28,9 +30,12 @@ import { isWindows } from "./shell.js";
 import { injectSpawnSkill } from "./spawn-skill.js";
 import { sleep, startSshTunnel } from "./ssh.js";
 import { ensureSshKeys, getSshKeyOpts } from "./ssh-keys.js";
+import { GRID_SPAWN_CLI } from "./cli-invocation.js";
 import { captureEvent, setTelemetryContext } from "./telemetry.js";
-import { VENDOR_AGENT_IMAGE_REGISTRY } from "./vendor-routing.js";
+import { GRID_INFERENCE_DEFAULT_MODEL_ID, VENDOR_AGENT_IMAGE_REGISTRY } from "./vendor-routing.js";
 import {
+  logAlwaysInfo,
+  logAlwaysStep,
   logDebug,
   logError,
   logInfo,
@@ -39,11 +44,30 @@ import {
   openBrowser,
   prepareStdinForHandoff,
   prompt,
+  promptGridCatalogModelId,
   retryOrQuit,
+  rewriteLocalhostHttpUrlForWindowsBrowserFromWsl,
   shellQuote,
   validateModelId,
   withRetry,
 } from "./ui.js";
+
+import { isInteractiveTTY } from "../commands/shared.js";
+
+function logDashboardAuthHandoff(url: string, gatewayToken?: string): void {
+  const alt = rewriteLocalhostHttpUrlForWindowsBrowserFromWsl(url);
+  const lines = [
+    pc.dim("Opening your browser — paste below if the page loses auth:"),
+    url,
+  ];
+  if (alt !== url) {
+    lines.push(pc.dim("From Windows Chrome/Edge (WSL):"), alt);
+  }
+  if (gatewayToken) {
+    lines.push(pc.dim("Gateway token — Connect › Gateway Token:"), gatewayToken);
+  }
+  logAlwaysInfo(lines.join("\n"));
+}
 
 // ── Funnel telemetry ────────────────────────────────────────────────────────
 //
@@ -205,12 +229,12 @@ export async function installSpawnCli(runner: CloudRunner): Promise<void> {
     "curl -fsSL https://spawn.thegrid.ai/cli/install.sh | bash",
   ].join("; ");
   const result = await asyncTryCatch(() =>
-    withRetry("spawn CLI install", () => wrapSshCall(runner.runServer(installCmd)), 2, 5),
+    withRetry(`${GRID_SPAWN_CLI} CLI install`, () => wrapSshCall(runner.runServer(installCmd)), 2, 5),
   );
   if (!result.ok) {
     logWarn("Spawn CLI install failed — recursive spawning will not be available on this VM");
   } else {
-    logInfo("Spawn CLI installed on VM");
+    logAlwaysInfo("Spawn CLI installed on VM");
   }
 }
 
@@ -279,7 +303,7 @@ export async function delegateCloudCredentials(runner: CloudRunner): Promise<voi
     }
   }
 
-  logInfo("Cloud credentials delegated to VM");
+  logAlwaysInfo("Cloud credentials delegated to VM");
 }
 
 /** Get parent_id and depth fields for spawn records (set when running inside a child VM). */
@@ -335,7 +359,7 @@ export interface OrchestrationOptions {
 
 /**
  * Load a preferred model from ~/.config/grid-spawn/preferences.json.
- * Format: { "models": { "codex": "openai/gpt-5.3-codex", "openclaw": "anthropic/claude-sonnet-4.6" } }
+ * Format: { "models": { "codex": "<Grid catalogue id>", "openclaw": "<Grid catalogue id>" } }
  * Returns null if no preference is set or the file doesn't exist.
  */
 const PreferencesSchema = v.object({
@@ -353,6 +377,75 @@ function loadPreferredModel(agentName: string): string | null {
     return parsed.output.models?.[agentName] ?? null;
   });
   return result.ok ? result.data : null;
+}
+
+function agentSupportsGridModelPick(agent: AgentConfig): boolean {
+  return agent.modelDefault !== undefined || agent.modelEnvVar !== undefined;
+}
+
+function shouldOfferGridModelPicker(agent: AgentConfig, preference: string | null): boolean {
+  if (!agentSupportsGridModelPick(agent)) {
+    return false;
+  }
+  if (!isInteractiveTTY()) {
+    return false;
+  }
+  if (
+    process.env.SPAWN_NON_INTERACTIVE === "1" ||
+    process.env.SPAWN_HEADLESS === "1" ||
+    process.env.SPAWN_SKIP_MODEL_PROMPT === "1"
+  ) {
+    return false;
+  }
+  if (process.env.MODEL_ID) {
+    return false;
+  }
+  if (preference) {
+    return false;
+  }
+  return true;
+}
+
+/** Resolve MODEL_ID → validated id; optionally prompt against `GET …/models` when interactive. */
+async function resolveProvisionModelId(agentName: string, agent: AgentConfig, apiKey: string): Promise<string | undefined> {
+  const preference = loadPreferredModel(agentName);
+  let rawModelId = process.env.MODEL_ID || preference || agent.modelDefault;
+  if (
+    typeof rawModelId === "string" &&
+    rawModelId.trim().length > 0 &&
+    /^openrouter\//i.test(rawModelId.trim())
+  ) {
+    logWarn(
+      `Ignoring model id "${rawModelId.trim()}" — OpenRouter-style ids are not The Grid catalogue models. Using ${GRID_INFERENCE_DEFAULT_MODEL_ID} unless the catalogue picker overrides.`,
+    );
+    rawModelId = preference && !/^openrouter\//i.test(preference.trim()) ? preference : agent.modelDefault;
+    if (typeof rawModelId === "string" && /^openrouter\//i.test(rawModelId.trim())) {
+      rawModelId = GRID_INFERENCE_DEFAULT_MODEL_ID;
+    }
+  }
+
+  if (shouldOfferGridModelPicker(agent, preference)) {
+    logAlwaysStep("Fetching models from The Grid…");
+    const catalogue = await fetchGridModelIds(apiKey);
+    if (catalogue.length > 0) {
+      const fallback =
+        agent.modelDefault && catalogue.includes(agent.modelDefault) ? agent.modelDefault : catalogue[0]!;
+      const suggested =
+        rawModelId && catalogue.includes(rawModelId) ? rawModelId : fallback;
+      const picked = await promptGridCatalogModelId(catalogue, suggested);
+      if (picked && validateModelId(picked)) {
+        rawModelId = picked;
+      }
+    } else {
+      logWarn("Could not load model catalogue from The Grid — continuing with CLI defaults.");
+    }
+  }
+
+  const modelId = rawModelId && validateModelId(rawModelId) ? rawModelId : undefined;
+  if (rawModelId && !modelId) {
+    logWarn(`Ignoring invalid MODEL_ID: ${rawModelId}`);
+  }
+  return modelId;
 }
 
 export async function runOrchestration(
@@ -466,12 +559,8 @@ export async function runOrchestration(
       const apiKey = apiKeyResult.value;
       trackFunnel("funnel_credentials_ready");
 
-      // Model ID
-      const rawModelId = process.env.MODEL_ID || loadPreferredModel(agentName) || agent.modelDefault;
-      const modelId = rawModelId && validateModelId(rawModelId) ? rawModelId : undefined;
-      if (rawModelId && !modelId) {
-        logWarn(`Ignoring invalid MODEL_ID: ${rawModelId}`);
-      }
+      // Model ID (interactive: pick from Grid `GET /api/v1/models` when catalogue fetch succeeds)
+      const modelId = await resolveProvisionModelId(agentName, agent, apiKey);
 
       // Env config (computed locally, no SSH needed)
       const envPairs = agent.envVars(apiKey);
@@ -535,12 +624,8 @@ export async function runOrchestration(
         }
       }
 
-      // 4. Model ID
-      const rawModelId = process.env.MODEL_ID || loadPreferredModel(agentName) || agent.modelDefault;
-      const modelId = rawModelId && validateModelId(rawModelId) ? rawModelId : undefined;
-      if (rawModelId && !modelId) {
-        logWarn(`Ignoring invalid MODEL_ID: ${rawModelId}`);
-      }
+      // 4. Model ID (interactive: pick from Grid catalogue when eligible)
+      const modelId = await resolveProvisionModelId(agentName, agent, apiKey);
 
       // 5. Provision server (retry loop)
       let connection: VMConnection;
@@ -715,6 +800,7 @@ async function postInstall(
 
   // Agent-specific configuration
   if (agent.configure) {
+    logAlwaysStep(`${agent.name}: remote configuration…`);
     const configResult = await asyncTryCatch(() =>
       withRetry("agent config", () => wrapSshCall(agent.configure!(apiKey, modelId, enabledSteps)), 2, 5),
     );
@@ -871,7 +957,9 @@ async function postInstall(
         if (tunnelCfg.browserUrl) {
           const url = tunnelCfg.browserUrl(tunnelHandle.localPort);
           if (url) {
-            openBrowser(url);
+          logAlwaysStep("Web dashboard — Control UI");
+          logDashboardAuthHandoff(url, tunnelCfg.logGatewayToken);
+          openBrowser(url);
           }
         }
       });
@@ -880,7 +968,9 @@ async function postInstall(
       }
     } else if (cloud.getSignedPreviewUrl) {
       const previewResult = await asyncTryCatchIf(isOperationalError, async () => {
-        const urlSuffix = templateUrl ? templateUrl.replace("http://localhost:0", "") : undefined;
+        const urlSuffix = templateUrl
+          ? templateUrl.replace(/^http:\/\/127\.0\.0\.1:0/, "").replace(/^http:\/\/localhost:0/, "")
+          : undefined;
         const url = await cloud.getSignedPreviewUrl!(tunnelCfg.remotePort, urlSuffix, 3600);
         openBrowser(url);
       });
@@ -891,6 +981,8 @@ async function postInstall(
       if (agent.tunnel.browserUrl) {
         const url = agent.tunnel.browserUrl(agent.tunnel.remotePort);
         if (url) {
+          logAlwaysStep("Web dashboard — Control UI");
+          logDashboardAuthHandoff(url, tunnelCfg.logGatewayToken);
           openBrowser(url);
         }
       }
@@ -900,7 +992,9 @@ async function postInstall(
       tunnel_remote_port: String(agent.tunnel.remotePort),
     };
     if (templateUrl) {
-      tunnelMeta.tunnel_browser_url_template = templateUrl.replace("localhost:0", "localhost:__PORT__");
+      tunnelMeta.tunnel_browser_url_template = templateUrl
+        .replace("127.0.0.1:0", "127.0.0.1:__PORT__")
+        .replace("localhost:0", "localhost:__PORT__");
     }
     saveMetadata(tunnelMeta, spawnId);
   }
@@ -909,13 +1003,16 @@ async function postInstall(
   const ocPath = "export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH";
 
   if (enabledSteps?.has("telegram")) {
-    logStep("Telegram pairing...");
-    logInfo("To pair your Telegram account:");
-    logInfo("  1. Open Telegram on your phone");
-    logInfo("  2. Search for the bot you created with @BotFather");
-    logInfo('  3. Send it any message (e.g. "hello")');
-    logInfo("  4. The bot will reply with a pairing code");
-    logInfo("  5. Enter the code below");
+    logAlwaysStep("Telegram pairing");
+    logAlwaysInfo(
+      [
+        pc.dim("Steps:"),
+        "  1. Open Telegram on your phone",
+        "  2. Find the bot you created with @BotFather",
+        '  3. Send any message (e.g. "hello")',
+        "  4. Enter the pairing code the bot sends",
+      ].join("\n"),
+    );
     process.stderr.write("\n");
     const pairingCode = (await prompt("Telegram pairing code: ")).trim();
     if (pairingCode) {
@@ -926,22 +1023,22 @@ async function postInstall(
         ),
       );
       if (result.ok) {
-        logInfo("Telegram paired successfully");
+        logAlwaysInfo("Telegram paired successfully");
       } else {
         logWarn("Pairing failed — you can pair later via: openclaw pairing approve telegram <CODE>");
       }
     } else {
-      logInfo("No code entered — pair later via: openclaw pairing approve telegram <CODE>");
+      logAlwaysInfo("No code entered — pair later via: openclaw pairing approve telegram <CODE>");
     }
   }
 
   if (agent.preLaunchMsg) {
     process.stderr.write("\n");
-    logInfo(`Tip: ${agent.preLaunchMsg}`);
+    logAlwaysInfo(`Tip: ${agent.preLaunchMsg}`);
   }
 
   // Launch agent
-  logInfo(`Agent setup complete — ${agent.name} is ready on ${cloud.cloudLabel}`);
+  logAlwaysInfo(`Agent setup complete — ${agent.name} is ready on ${cloud.cloudLabel}`);
   process.stderr.write("\n");
 
   // Final funnel event — pipeline completed all the way to handoff.
@@ -964,18 +1061,24 @@ async function postInstall(
   if (isHeadless) {
     const headlessPrompt = process.env.SPAWN_PROMPT;
     if (headlessPrompt && agent.promptCmd) {
-      logInfo("Headless mode — running prompt on provisioned VM...");
+      logAlwaysInfo("Headless mode — running prompt on provisioned VM...");
       const promptRunCmd = agent.promptCmd(headlessPrompt);
       const promptResult = await asyncTryCatch(() => cloud.runner.runServer(promptRunCmd, 600));
       if (!promptResult.ok) {
         logWarn(`Prompt execution failed: ${getErrorMessage(promptResult.error)}`);
       } else {
-        logInfo("Prompt execution completed");
+        logAlwaysInfo("Prompt execution completed");
       }
     } else {
-      logInfo("Headless mode — provisioning complete. Skipping interactive session.");
+      logAlwaysInfo("Headless mode — provisioning complete. Skipping interactive session.");
     }
     if (tunnelHandle) {
+      logAlwaysInfo(
+        "Closing SSH tunnel to the dashboard — localhost URLs only work while grid-spawn holds the tunnel open.",
+      );
+      logAlwaysInfo(
+        `The gateway on your VM keeps running. Re-open the UI: run ${GRID_SPAWN_CLI} list → pick this server → "Open Dashboard".`,
+      );
       tunnelHandle.stop();
     }
     if (cloud.cloudName !== "local") {
@@ -984,7 +1087,7 @@ async function postInstall(
     process.exit(0);
   }
 
-  logStep("Provisioning complete. Connecting to agent session...");
+  logAlwaysStep("Provisioning complete. Connecting to agent session...");
 
   // Reset terminal state before handing off to the interactive SSH session.
   // @clack/prompts may have left the cursor hidden or set ANSI attributes
@@ -1021,7 +1124,7 @@ async function postInstall(
   if (isConnectionDrop(exitCode)) {
     process.stderr.write("\n");
     logWarn("Could not reconnect. Server is still running.");
-    logInfo("Reconnect manually: spawn last");
+    logAlwaysInfo(`Reconnect manually: ${GRID_SPAWN_CLI} last`);
   }
 
   if (tunnelHandle) {

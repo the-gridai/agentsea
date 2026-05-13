@@ -3,22 +3,27 @@
 
 import "../unicode-detect.js"; // Must run before @clack/prompts: configures TERM for unicode detection
 
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import * as p from "@clack/prompts";
 import { isString } from "@grid-spawn/sdk";
 import { parseJsonObj } from "./parse.js";
 import { getSpawnCloudConfigPath } from "./paths.js";
 import { asyncTryCatch, tryCatch, unwrapOr } from "./result.js";
+import { isSpawnVerbose } from "./verbosity.js";
+import { isWslLinux } from "./shell.js";
 import { captureError, captureWarning } from "./telemetry.js";
 
-const RED = "\x1b[0;31m";
 const GREEN = "\x1b[0;32m";
-const YELLOW = "\x1b[1;33m";
 const CYAN = "\x1b[0;36m";
 const DIM = "\x1b[2m";
 const NC = "\x1b[0m";
 
+/** Operational detail — hidden unless `--verbose` or `SPAWN_VERBOSE=1`. */
 export function logInfo(msg: string): void {
+  if (!isSpawnVerbose()) {
+    return;
+  }
   process.stderr.write(`${GREEN}${msg}${NC}\n`);
 }
 
@@ -29,23 +34,45 @@ export function logDebug(msg: string): void {
   }
 }
 
+/** Pass on every `p.log.*` so output matches spinners (`Loading manifest…`) — stderr only. */
+export const CLACK_LOG_OPTS = {
+  output: process.stderr,
+} as const;
+
 export function logWarn(msg: string): void {
-  process.stderr.write(`${YELLOW}${msg}${NC}\n`);
+  p.log.warn(msg, CLACK_LOG_OPTS);
   captureWarning(msg);
 }
 
 export function logError(msg: string): void {
-  process.stderr.write(`${RED}${msg}${NC}\n`);
+  p.log.error(msg, CLACK_LOG_OPTS);
   captureError("log_error", msg);
 }
 
+/** Operational progress — hidden unless verbose (use {@link logAlwaysStep} for required UX). */
 export function logStep(msg: string): void {
+  if (!isSpawnVerbose()) {
+    return;
+  }
   process.stderr.write(`${CYAN}${msg}${NC}\n`);
+}
+
+/** Important message always shown (URLs, confirmations, OAuth prompts). Uses Clack ● styling on stderr. */
+export function logAlwaysInfo(msg: string): void {
+  p.log.success(msg, CLACK_LOG_OPTS);
+}
+
+/** Important milestone lines — same ◇ rhythm as `Launching … on …`. */
+export function logAlwaysStep(msg: string): void {
+  p.log.step(msg, CLACK_LOG_OPTS);
 }
 
 /** Overwrite the current line with a status message (no newline). Call logStepDone() when finished.
  *  Falls back to newline-separated output when stderr is not a TTY (e.g., piped or captured). */
 export function logStepInline(msg: string): void {
+  if (!isSpawnVerbose()) {
+    return;
+  }
   if (process.stderr.isTTY) {
     process.stderr.write(`\r${CYAN}${msg}${NC}\x1b[K`);
   } else {
@@ -126,7 +153,9 @@ export async function selectFromList(items: string[], promptText: string, defaul
   });
 
   if (parsed.length === 1) {
-    logInfo(`Using ${promptText}: ${parsed[0].id}`);
+    if (isSpawnVerbose()) {
+      logInfo(`Using ${promptText}: ${parsed[0].id}`);
+    }
     return parsed[0].id;
   }
 
@@ -147,8 +176,138 @@ export async function selectFromList(items: string[], promptText: string, defaul
   return isString(result) ? result : String(result);
 }
 
+function tryFirstNonLoopbackIpv4FromHostnameDashI(): string | undefined {
+  const result = Bun.spawnSync(["hostname", "-I"], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  if (result.exitCode !== 0) {
+    return undefined;
+  }
+  const text = new TextDecoder().decode(result.stdout).trim();
+  for (const raw of text.split(/\s+/)) {
+    const part = raw.trim();
+    if (!part || part.includes(":")) {
+      continue;
+    }
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(part)) {
+      continue;
+    }
+    if (part.startsWith("127.") || part.startsWith("169.254.")) {
+      continue;
+    }
+    return part;
+  }
+  return undefined;
+}
+
+/**
+ * When grid-spawn runs in WSL, Windows Edge/Chrome resolve 127.0.0.1 on the host while
+ * SSH -L listens inside the distro unless bound to all interfaces — use the WSL NIC IP instead.
+ */
+export function rewriteLocalhostHttpUrlForWindowsBrowserFromWsl(url: string): string {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") {
+      return url;
+    }
+    if (u.hostname !== "127.0.0.1" && u.hostname !== "localhost") {
+      return url;
+    }
+    const host = tryFirstNonLoopbackIpv4FromHostnameDashI();
+    if (!host) {
+      return url;
+    }
+    u.hostname = host;
+    return u.href;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Encode a PowerShell script for `-EncodedCommand` (UTF-16LE, no BOM — required by pwsh/ps 5.x).
+ */
+function powerShellUtf16LeBase64(script: string): string {
+  return Buffer.from(script, "utf16le").toString("base64");
+}
+
+/**
+ * Launch the default HTTP handler via PowerShell. Uses `-EncodedCommand` so wrappers never
+ * see literal `?`, `&`, or `#` in argv (WSL→Windows interop and cmd chaining would otherwise
+ * truncate OpenClaw bootstrap URLs after the first `&`).
+ */
+function powerShellOpenUrlCommand(url: string): [string, string[]] {
+  const escapedForSingleQuoted = url.replace(/'/g, "''");
+  const script = `Start-Process '${escapedForSingleQuoted}'`;
+  return [
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      powerShellUtf16LeBase64(script),
+    ],
+  ];
+}
+
+/** WSL-only: rewrite loopback URLs to the distro NIC IP for Windows browsers that cannot use mirrored localhost into WSL (legacy). Prefer loopback unless this is set — OpenClaw’s Control UI rejects unknown Origins otherwise. */
+function shouldRewriteLoopbackOpenUrlForWsl(): boolean {
+  return process.env.SPAWN_WSL_OPEN_BROWSER_LAN_IP === "1";
+}
+
 /** Open a URL in the user's browser. */
 export function openBrowser(url: string): void {
+  const windowsBrowserUrl =
+    process.platform === "linux" && isWslLinux() && shouldRewriteLoopbackOpenUrlForWsl()
+      ? rewriteLocalhostHttpUrlForWindowsBrowserFromWsl(url)
+      : url;
+
+  const linuxFallback: [
+    string,
+    string[],
+  ][] = [
+    [
+      "xdg-open",
+      [
+        url,
+      ],
+    ],
+    [
+      "termux-open-url",
+      [
+        url,
+      ],
+    ],
+  ];
+
+  /** WSL: open Windows browser; default loopback URL keeps OpenClaw allowedOrigins happy (set SPAWN_WSL_OPEN_BROWSER_LAN_IP=1 if needed). */
+  const wslAttempts: [
+    string,
+    string[],
+  ][] = [
+    powerShellOpenUrlCommand(windowsBrowserUrl),
+    ...linuxFallback,
+  ];
+
+  /** Native Windows: never use `xdg-open` (not available). */
+  const win32Attempts: [
+    string,
+    string[],
+  ][] = [
+    powerShellOpenUrlCommand(url),
+    [
+      "cmd.exe",
+      [
+        "/d",
+        "/c",
+        "start",
+        "",
+        url,
+      ],
+    ],
+  ];
+
   const cmds: [
     string,
     string[],
@@ -162,20 +321,11 @@ export function openBrowser(url: string): void {
             ],
           ],
         ]
-      : [
-          [
-            "xdg-open",
-            [
-              url,
-            ],
-          ],
-          [
-            "termux-open-url",
-            [
-              url,
-            ],
-          ],
-        ];
+      : process.platform === "win32"
+        ? win32Attempts
+        : process.platform === "linux" && isWslLinux()
+          ? wslAttempts
+          : linuxFallback;
 
   let opened = false;
   for (const [cmd, args] of cmds) {
@@ -200,11 +350,24 @@ export function openBrowser(url: string): void {
     }
   }
 
+  const wslLanAlt =
+    process.platform === "linux" && isWslLinux() ? rewriteLocalhostHttpUrlForWindowsBrowserFromWsl(url) : url;
+
   // Always show the URL as fallback (headless VMs, VNC, SSH sessions)
   if (opened) {
-    logStep(`If the browser didn't open, visit: ${url}`);
+    logAlwaysStep(`If the browser didn't open, visit: ${url}`);
+    if (wslLanAlt !== url) {
+      logAlwaysStep(
+        `If the page fails with "origin not allowed" or localhost does not connect from Windows, try: ${wslLanAlt}`,
+      );
+    }
   } else {
-    logStep(`Please open: ${url}`);
+    logAlwaysStep(`Please open: ${url}`);
+    if (isWslLinux()) {
+      if (wslLanAlt !== url) {
+        logAlwaysStep(`If localhost fails here, try from Windows browser: ${wslLanAlt}`);
+      }
+    }
   }
 }
 
@@ -328,9 +491,80 @@ export function validateRegionName(region: string): boolean {
   return /^[a-zA-Z0-9_-]{1,63}$/.test(region);
 }
 
-/** Validate model ID: provider/model format, alphanumeric + slash + dash + dot + underscore + colon. */
+/**
+ * MODEL_ID validation: catalogue slugs **`agent-standard`** and provider-scoped **`openai/gpt-5`**.
+ * (The Grid `GET …/models` listing often omits the `vendor/` prefix; slugs alone must remain valid.)
+ */
 export function validateModelId(id: string): boolean {
-  return /^[a-zA-Z0-9][a-zA-Z0-9_.:-]*\/[a-zA-Z0-9][a-zA-Z0-9_.:-]*$/.test(id);
+  const t = id.trim();
+  if (t.length < 1 || t.length > 200) {
+    return false;
+  }
+  const segment = String.raw`(?:[a-zA-Z0-9][a-zA-Z0-9_.:-]*)`;
+  if (new RegExp(`^${segment}$`).test(t)) {
+    return true;
+  }
+  return new RegExp(`^${segment}\/${segment}$`).test(t);
+}
+
+const GRID_MODEL_OTHER = "__grid_spawn_model_other__";
+
+/**
+ * Let the user choose a model from The Grid catalogue (see `GET …/models`).
+ * Adds "Other…" for manual entry. Returns undefined if the user cancels.
+ */
+export async function promptGridCatalogModelId(catalogueIds: string[], suggestedId: string): Promise<string | undefined> {
+  if (catalogueIds.length === 0) {
+    return undefined;
+  }
+
+  const initial = catalogueIds.includes(suggestedId) ? suggestedId : catalogueIds[0]!;
+
+  const choice = await p.select({
+    message: "Which Grid model should this server use?",
+    options: [
+      ...catalogueIds.map((id) => ({
+        value: id,
+        label: id,
+      })),
+      {
+        value: GRID_MODEL_OTHER,
+        label: "Other…",
+        hint: "enter a catalogue model id manually",
+      },
+    ],
+    initialValue: initial,
+  });
+
+  if (p.isCancel(choice)) {
+    return undefined;
+  }
+
+  if (choice !== GRID_MODEL_OTHER) {
+    return choice;
+  }
+
+  for (;;) {
+    const typed = await p.text({
+      message: "Model ID (from The Grid catalogue)",
+      placeholder: "provider/model-name",
+      validate: (val) => {
+        if (!val?.trim()) {
+          return "Model ID is required";
+        }
+        if (!validateModelId(val.trim())) {
+          return "Invalid format — use provider/model";
+        }
+        return undefined;
+      },
+    });
+    if (p.isCancel(typed)) {
+      return undefined;
+    }
+    if (typed.trim() && validateModelId(typed.trim())) {
+      return typed.trim();
+    }
+  }
 }
 
 /** Convert display name to kebab-case. */
@@ -342,10 +576,43 @@ export function toKebabCase(name: string): string {
     .replace(/^-|-$/g, "");
 }
 
-/** Generate a default spawn name with random suffix (e.g. "spawn-a1b2"). */
+/**
+ * DigitalOcean hostname (RFC 1123-ish): alphanumeric + hyphen, ≤63 chars.
+ * Appends a full UUID suffix so ephemeral droplets are unique even when operators
+ * reuse `--name`/labels like "retest". Trims kebab-case base only if necessary.
+ */
+export function dropletNameWithUuidSuffix(baseKebabInput: string): string {
+  const uuid = randomUUID().toLowerCase();
+  let base =
+    typeof baseKebabInput === "string" && baseKebabInput.trim().length > 0 ? toKebabCase(baseKebabInput) : "";
+  if (!base.length) {
+    base = "spawn";
+  }
+
+  const maxBase = Math.max(1, 63 - 1 - uuid.length);
+
+  if (base.length > maxBase) {
+    base = base.slice(0, maxBase).replace(/-+$/u, "");
+  }
+  if (!base.length) {
+    base = "spawn";
+  }
+
+  const candidate = `${base}-${uuid}`;
+  if (validateServerName(candidate)) {
+    return candidate;
+  }
+  const trimmedBase = candidate.slice(0, Math.min(base.length, 63 - 1 - uuid.length)).replace(/-+$/u, "") || "s";
+  const retry = `${trimmedBase}-${uuid}`;
+  if (validateServerName(retry)) {
+    return retry;
+  }
+  return uuid.length >= 3 && uuid.length <= 63 && validateServerName(uuid) ? uuid : `s-${uuid.slice(0, 60)}`;
+}
+
+/** Generate a default spawn name (`spawn-<uuid>`). */
 export function defaultSpawnName(): string {
-  const suffix = Math.random().toString(36).slice(2, 6);
-  return `spawn-${suffix}`;
+  return dropletNameWithUuidSuffix("spawn");
 }
 
 /**
@@ -359,7 +626,9 @@ export function getServerNameFromEnv(cloudEnvVar: string): string {
       logError(`Invalid ${cloudEnvVar}: '${cloudName}'`);
       throw new Error("Invalid server name");
     }
-    logInfo(`Using server name from environment: ${cloudName}`);
+    if (isSpawnVerbose()) {
+      logInfo(`Using server name from environment: ${cloudName}`);
+    }
     return cloudName;
   }
 
@@ -391,7 +660,9 @@ export async function promptSpawnNameShared(cloudLabel: string): Promise<void> {
 
   process.env.SPAWN_NAME_DISPLAY = kebab;
   process.env.SPAWN_NAME_KEBAB = kebab;
-  logInfo(`Using resource name: ${kebab}`);
+  if (isSpawnVerbose()) {
+    logInfo(`Using resource name: ${kebab}`);
+  }
 }
 
 /** Known-safe TERM values — defense-in-depth allowlist. */

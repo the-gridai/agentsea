@@ -6,11 +6,15 @@ import type { NextConfig } from "next";
 // and 404s on /_next/static/* (missing CSS/chunks).
 const distDir = process.argv[2] === "dev" ? ".next-dev" : ".next";
 
+const repoRoot = join(__dirname, "../../");
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   distDir,
+  // Load `.env*` from monorepo root so GRID_SPAWN_ROOT / overrides match CLI behaviour.
+  envDir: repoRoot,
   // Pin the workspace root so Next does not climb up to the spectral parent.
-  outputFileTracingRoot: join(__dirname, "../../"),
+  outputFileTracingRoot: repoRoot,
   experimental: {
     optimizePackageImports: ["@tanstack/react-query"],
   },

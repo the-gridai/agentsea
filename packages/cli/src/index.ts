@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 
+import "./load-env.js";
+
 import type { Manifest } from "./manifest.js";
 
 import { readFileSync } from "node:fs";
@@ -138,9 +140,11 @@ function checkUnknownFlags(args: string[]): void {
     console.error(`    ${pc.cyan("--prompt-file, -f")}   Read prompt from a file`);
     console.error(`    ${pc.cyan("--dry-run, -n")}       Preview what would be provisioned`);
     console.error(`    ${pc.cyan("--debug")}             Show all commands being executed`);
+    console.error(`    ${pc.cyan("--verbose")}           Verbose provisioning logs (poll lines, credential hints)`);
     console.error(`    ${pc.cyan("--headless")}          Non-interactive mode (no prompts, no SSH session)`);
     console.error(`    ${pc.cyan("--output json")}       Output structured JSON to stdout`);
     console.error(`    ${pc.cyan("--custom")}            Show interactive size/region pickers`);
+    console.error(`    ${pc.cyan("--setup-prompt")}       Show setup step multiselect (direct mode default is silent)`);
     console.error(`    ${pc.cyan("--zone, --region")}    Set zone/region (e.g. us-east1-b, nyc3)`);
     console.error(`    ${pc.cyan("--size, --machine-type")}  Set instance size (e.g. e2-standard-4, s-2vcpu-2gb)`);
     console.error(`    ${pc.cyan("--model, -m <id>")}    Set the LLM model (e.g. openai/gpt-5.3-codex)`);
@@ -907,6 +911,13 @@ async function main(): Promise<void> {
     filteredArgs.splice(debugIdx, 1);
   }
 
+  // Extract --verbose boolean flag — show full provisioning chatter on stderr (or set SPAWN_VERBOSE=1).
+  const verboseIdx = filteredArgs.indexOf("--verbose");
+  if (verboseIdx !== -1) {
+    filteredArgs.splice(verboseIdx, 1);
+    process.env.SPAWN_VERBOSE = "1";
+  }
+
   // Extract --headless boolean flag
   const headlessIdx = filteredArgs.indexOf("--headless");
   const headless = headlessIdx !== -1;
@@ -920,6 +931,12 @@ async function main(): Promise<void> {
   if (custom) {
     filteredArgs.splice(customIdx, 1);
     process.env.SPAWN_CUSTOM = "1";
+  }
+
+  const setupPromptIdx = filteredArgs.indexOf("--setup-prompt");
+  if (setupPromptIdx !== -1) {
+    filteredArgs.splice(setupPromptIdx, 1);
+    process.env.SPAWN_SETUP_PROMPT = "1";
   }
 
   // Extract --reauth boolean flag

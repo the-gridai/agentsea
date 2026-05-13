@@ -2,6 +2,8 @@
 
 // daytona/e2e.ts — QA helper for Daytona E2E shell drivers
 
+import "../load-env.js";
+
 import { getErrorMessage } from "@grid-spawn/sdk";
 import { destroyServer, getDaytonaClient, runDaytonaCommand } from "./daytona.js";
 

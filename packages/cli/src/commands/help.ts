@@ -11,6 +11,7 @@ function getHelpUsageSection(): string {
   grid-spawn <agent> <cloud> --model <id>  Set the LLM model (e.g. openai/gpt-5.3-codex)
   grid-spawn <agent> <cloud> --custom      Show interactive size/region pickers
   grid-spawn <agent> <cloud> --fast        Enable all speed optimizations (images, tarballs, parallel)
+  grid-spawn <agent> <cloud> --verbose     Full provisioning logs (default is minimal stderr)
   grid-spawn <agent> <cloud> --headless   Provision and exit (no interactive session)
   grid-spawn <agent> <cloud> --output json
                                      Headless mode with structured JSON on stdout
@@ -116,19 +117,24 @@ function getHelpTroubleshootingSection(): string {
   ${pc.dim("*")} Update issues: Try ${pc.cyan("grid-spawn update")} or reinstall manually
   ${pc.dim("*")} Garbled unicode: Set ${pc.cyan("SPAWN_NO_UNICODE=1")} for ASCII-only output
   ${pc.dim("*")} Missing unicode over SSH: Set ${pc.cyan("SPAWN_UNICODE=1")} to force unicode on
+  ${pc.dim("*")} OpenClaw dashboard on WSL shows "origin not allowed": the CLI opens ${pc.cyan("http://127.0.0.1:…")} in Windows so the origin matches the gateway; if that fails, use the logged ${pc.cyan("http://172.x…")} URL and set ${pc.cyan("SPAWN_WSL_OPEN_BROWSER_LAN_IP=1")} if needed (you may need matching gateway.controlUi.allowedOrigins for the LAN host).
   ${pc.dim("*")} Slow startup: Set ${pc.cyan("SPAWN_NO_UPDATE_CHECK=1")} to skip auto-update`;
 }
 
 function getHelpEnvVarsSection(): string {
   return `${pc.bold("ENVIRONMENT VARIABLES")}
   ${pc.cyan("THEGRID_API_KEY")}        The Grid platform API key (all agents require this)
-  ${pc.cyan("MODEL_ID")}                  Override agent's default LLM model (or use --model flag)
+  ${pc.cyan("MODEL_ID")}                  Override agent's default LLM model (or use --model flag; skips catalogue picker)
+  ${pc.cyan("SPAWN_SKIP_MODEL_PROMPT=1")} Skip interactive model picker (${pc.cyan("--headless")} already implies no prompts)
   ${pc.cyan("SPAWN_NO_UPDATE_CHECK=1")}   Skip auto-update check on startup
   ${pc.cyan("SPAWN_NO_UNICODE=1")}        Force ASCII output (no unicode symbols)
   ${pc.cyan("SPAWN_UNICODE=1")}           Force Unicode output (override auto-detection)
   ${pc.cyan("SPAWN_HOME")}                Override spawn data directory (default: ~/.spawn)
   ${pc.cyan("SPAWN_DEBUG=1")}             Show debug output (unicode detection, etc.)
+  ${pc.cyan("SPAWN_VERBOSE=1")}           Verbose provisioning logs (same effect as ${pc.cyan("--verbose")})
   ${pc.cyan("SPAWN_ENABLED_STEPS")}       Comma-separated setup steps (set by --steps/--config)
+  ${pc.cyan("SPAWN_SETUP_PROMPT=1")}     Show setup multiselect on direct \`agent cloud\` runs (or use --setup-prompt)
+  ${pc.cyan("SPAWN_PROMPT_FOR_NAME=1")}  Ask for spawn name even on direct runs (default is an auto-generated name)
   ${pc.cyan("TELEGRAM_BOT_TOKEN")}       Telegram bot token for non-interactive setup
   ${pc.cyan("SPAWN_HEADLESS=1")}          Set automatically in --headless mode (for scripts)
   ${pc.cyan("SPAWN_CUSTOM=1")}           Set automatically in --custom mode (show size/region pickers)`;

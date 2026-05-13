@@ -3,6 +3,7 @@
 import type { ReadinessBlockerCode, ReadinessState } from "./readiness.js";
 
 import pc from "picocolors";
+import { isSpawnVerbose } from "../shared/verbosity.js";
 
 /** Display order: DO → email → SSH → payment → Grid API key → capacity. */
 export const READINESS_CHECKLIST_ROWS: {
@@ -73,6 +74,22 @@ function rowBullet(status: ChecklistLineStatus): string {
 /** Print the readiness checklist to stderr (interactive UX). */
 export function renderReadinessChecklist(state: ReadinessState): void {
   const allReady = state.status === "READY";
+
+  if (!isSpawnVerbose()) {
+    process.stderr.write("\n");
+    if (allReady) {
+      process.stderr.write(pc.green("DigitalOcean ready — account checks passed") + "\n");
+      return;
+    }
+    const blockedRows = READINESS_CHECKLIST_ROWS.filter((row) => checklistLineStatus(row.code, state) === "blocked");
+    process.stderr.write(`${pc.yellow("DigitalOcean readiness")}${pc.dim(" — action needed:")}\n`);
+    for (const { label } of blockedRows) {
+      process.stderr.write(`  ${pc.yellow("-")} ${label}\n`);
+    }
+    process.stderr.write("\n");
+    return;
+  }
+
   const title = allReady ? pc.green("Readiness check complete") : pc.yellow("Readiness check");
   const subtitle = allReady ? pc.green("All checks passed") : pc.dim("Some requirements still need attention");
 

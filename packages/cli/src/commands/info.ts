@@ -1,6 +1,7 @@
 import type { Manifest } from "../manifest.js";
 
 import pc from "picocolors";
+import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
 import { agentKeys, cloudKeys, countImplemented, matrixStatus } from "../manifest.js";
 import {
   getImplementedAgents,
@@ -140,7 +141,7 @@ function renderMatrixFooter(manifest: Manifest, agents: string[], clouds: string
   console.log(pc.green(`${impl}/${total} combinations implemented`));
   console.log(
     pc.dim(
-      `Launch: ${pc.cyan("spawn <agent> <cloud>")}  |  Details: ${pc.cyan("spawn <agent>")} or ${pc.cyan("spawn <cloud>")}`,
+      `Launch: ${pc.cyan(`${GRID_SPAWN_CLI} <agent> <cloud>`)}  |  Details: ${pc.cyan(`${GRID_SPAWN_CLI} <agent>`)} or ${pc.cyan(`${GRID_SPAWN_CLI} <cloud>`)}`,
     ),
   );
   console.log();
@@ -214,7 +215,7 @@ export async function cmdAgents(): Promise<void> {
     console.log(pc.dim(`  ${pc.green("ready")} = credentials detected for at least one cloud`));
   }
   console.log(
-    pc.dim(`  Run ${pc.cyan("spawn <agent>")} for details, or ${pc.cyan("spawn <agent> <cloud>")} to launch.`),
+    pc.dim(`  Run ${pc.cyan(`${GRID_SPAWN_CLI} <agent>`)} for details, or ${pc.cyan(`${GRID_SPAWN_CLI} <agent> <cloud>`)} to launch.`),
   );
   console.log();
 }
@@ -260,12 +261,12 @@ export async function cmdClouds(): Promise<void> {
     console.log(pc.dim(`  ${pc.green("ready")} = credentials detected  ${pc.yellow("needs")} = credentials not set`));
   } else {
     console.log(
-      pc.dim(`  ${pc.yellow("needs")} = credentials not set (run ${pc.cyan("spawn <cloud>")} for setup instructions)`),
+      pc.dim(`  ${pc.yellow("needs")} = credentials not set (run ${pc.cyan(`${GRID_SPAWN_CLI} <cloud>`)} for setup instructions)`),
     );
   }
   console.log(
     pc.dim(
-      `  Run ${pc.cyan("spawn <cloud>")} for setup instructions, or ${pc.cyan("spawn <agent> <cloud>")} to launch.`,
+      `  Run ${pc.cyan(`${GRID_SPAWN_CLI} <cloud>`)} for setup instructions, or ${pc.cyan(`${GRID_SPAWN_CLI} <agent> <cloud>`)} to launch.`,
     ),
   );
   console.log();
@@ -274,7 +275,7 @@ export async function cmdClouds(): Promise<void> {
 // ── Agent Info ───────────────────────────────────────────────────────────────
 
 function buildCloudCommandHint(agentKey: string, cloudKey: string, manifest: Manifest): string {
-  const hint = `spawn ${agentKey} ${cloudKey}`;
+  const hint = `${GRID_SPAWN_CLI} ${agentKey} ${cloudKey}`;
   return hasCloudCredentials(manifest.clouds[cloudKey].auth) ? `${hint}  ${pc.green("(credentials detected)")}` : hint;
 }
 

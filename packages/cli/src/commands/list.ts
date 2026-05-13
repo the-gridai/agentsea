@@ -17,6 +17,7 @@ import {
 import { agentKeys, cloudKeys, loadManifest } from "../manifest.js";
 import { trackSpawnConnected } from "../shared/lifecycle-telemetry.js";
 import { asyncTryCatch, tryCatch, unwrapOr } from "../shared/result.js";
+import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
 import { cmdConnect, cmdEnterAgent, cmdOpenDashboard } from "./connect.js";
 import { confirmAndDelete } from "./delete.js";
 import { fixSpawn } from "./fix.js";
@@ -123,11 +124,11 @@ async function suggestFilterCorrection(
 ): Promise<void> {
   const resolved = resolveKey(manifest, filter);
   if (resolved && resolved !== filter) {
-    p.log.info(`Did you mean ${pc.cyan(`spawn list ${flag} ${resolved}`)}?`);
+    p.log.info(`Did you mean ${pc.cyan(`${GRID_SPAWN_CLI} list ${flag} ${resolved}`)}?`);
   } else if (!resolved) {
     const match = findClosestKeyByNameOrKey(filter, keys, getDisplayName);
     if (match) {
-      p.log.info(`Did you mean ${pc.cyan(`spawn list ${flag} ${match}`)}?`);
+      p.log.info(`Did you mean ${pc.cyan(`${GRID_SPAWN_CLI} list ${flag} ${match}`)}?`);
     }
   }
 }
@@ -135,7 +136,7 @@ async function suggestFilterCorrection(
 async function showEmptyListMessage(agentFilter?: string, cloudFilter?: string): Promise<void> {
   if (!agentFilter && !cloudFilter) {
     p.log.info("No spawns recorded yet.");
-    p.log.info(`Run ${pc.cyan("spawn <agent> <cloud>")} to launch your first agent.`);
+    p.log.info(`Run ${pc.cyan(`${GRID_SPAWN_CLI} <agent> <cloud>`)} to launch your first agent.`);
     return;
   }
 
@@ -176,7 +177,7 @@ async function showEmptyListMessage(agentFilter?: string, cloudFilter?: string):
   const totalRecords = filterHistory();
   if (totalRecords.length > 0) {
     p.log.info(
-      `Run ${pc.cyan("spawn list")} to see all ${totalRecords.length} recorded spawn${totalRecords.length !== 1 ? "s" : ""}.`,
+      `Run ${pc.cyan(`${GRID_SPAWN_CLI} list`)} to see all ${totalRecords.length} recorded spawn${totalRecords.length !== 1 ? "s" : ""}.`,
     );
   }
 }
@@ -193,12 +194,12 @@ function buildListFooterLines(records: SpawnRecord[], agentFilter?: string, clou
     lines.push(
       pc.dim(`Showing ${records.length} of ${totalRecords.length} spawn${totalRecords.length !== 1 ? "s" : ""}`),
     );
-    lines.push(pc.dim(`Clear filter: ${pc.cyan("spawn list")}`));
+    lines.push(pc.dim(`Clear filter: ${pc.cyan(`${GRID_SPAWN_CLI} list`)}`));
   } else {
     lines.push(pc.dim(`${records.length} spawn${records.length !== 1 ? "s" : ""} recorded`));
     lines.push(
       pc.dim(
-        `Filter: ${pc.cyan("spawn list -a <agent>")}  or  ${pc.cyan("spawn list -c <cloud>")}  |  Clear: ${pc.cyan("spawn list --clear")}`,
+        `Filter: ${pc.cyan(`${GRID_SPAWN_CLI} list -a <agent>`)}  or  ${pc.cyan(`${GRID_SPAWN_CLI} list -c <cloud>`)}  |  Clear: ${pc.cyan(`${GRID_SPAWN_CLI} list --clear`)}`,
       ),
     );
   }
@@ -625,7 +626,7 @@ export async function handleRecordAction(
   if (!conn.deleted) {
     const reconnectHint =
       conn.cloud === "daytona"
-        ? "spawn last"
+        ? `${GRID_SPAWN_CLI} last`
         : conn.ip === "sprite-console"
           ? `sprite console -s ${conn.server_name}`
           : `ssh ${conn.user}@${conn.ip}`;
@@ -678,7 +679,7 @@ export async function handleRecordAction(
   if (action === "enter" || action === "reconnect" || action === "fix") {
     const refreshResult = await asyncTryCatch(() => refreshConnectionIp(selected));
     if (refreshResult.ok && refreshResult.data === "gone") {
-      p.log.info(`Use ${pc.cyan(`spawn ${selected.agent} ${selected.cloud}`)} to start a new one.`);
+      p.log.info(`Use ${pc.cyan(`${GRID_SPAWN_CLI} ${selected.agent} ${selected.cloud}`)} to start a new one.`);
       return RecordActionOutcome.Back;
     }
     if (!refreshResult.ok) {
@@ -693,7 +694,7 @@ export async function handleRecordAction(
       p.log.error(`Connection failed: ${getErrorMessage(enterResult.error)}`);
 
       p.log.info(
-        `VM may no longer be running. Use ${pc.cyan(`spawn ${selected.agent} ${selected.cloud}`)} to start a new one.`,
+        `VM may no longer be running. Use ${pc.cyan(`${GRID_SPAWN_CLI} ${selected.agent} ${selected.cloud}`)} to start a new one.`,
       );
     }
     return RecordActionOutcome.Exit;
@@ -717,7 +718,7 @@ export async function handleRecordAction(
       p.log.error(`Connection failed: ${getErrorMessage(reconnectResult.error)}`);
 
       p.log.info(
-        `VM may no longer be running. Use ${pc.cyan(`spawn ${selected.agent} ${selected.cloud}`)} to start a new one.`,
+        `VM may no longer be running. Use ${pc.cyan(`${GRID_SPAWN_CLI} ${selected.agent} ${selected.cloud}`)} to start a new one.`,
       );
     }
     return RecordActionOutcome.Exit;
@@ -863,8 +864,8 @@ export async function cmdListClear(forceYes?: boolean): Promise<void> {
   }
 
   if (!isInteractiveTTY() && !forceYes) {
-    p.log.error("spawn list --clear requires --yes in non-interactive mode.");
-    p.log.info(`Usage: ${pc.cyan("spawn list --clear --yes")}`);
+    p.log.error(`${GRID_SPAWN_CLI} list --clear requires --yes in non-interactive mode.`);
+    p.log.info(`Usage: ${pc.cyan(`${GRID_SPAWN_CLI} list --clear --yes`)}`);
     process.exit(1);
   }
 
@@ -952,7 +953,7 @@ export async function cmdLast(): Promise<void> {
 
   if (records.length === 0) {
     p.log.info("No spawn history found.");
-    p.log.info(`Run ${pc.cyan("spawn <agent> <cloud>")} to create your first spawn.`);
+    p.log.info(`Run ${pc.cyan(`${GRID_SPAWN_CLI} <agent> <cloud>`)} to create your first spawn.`);
     return;
   }
 

@@ -66,7 +66,7 @@ provision_agent() {
   rm -f "${exit_file}"
 
   # Environment for headless provisioning
-  # MODEL_ID bypasses the interactive model selection prompt (required by openclaw)
+  # MODEL_ID bypasses interactive model selection (must be a real The Grid catalogue id).
   (
     export SPAWN_NON_INTERACTIVE=1
     export SPAWN_SKIP_GITHUB_AUTH=1
@@ -74,8 +74,7 @@ provision_agent() {
     export SPAWN_NO_UPDATE_CHECK=1
     export BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
     export SPAWN_CLI_DIR="${SPAWN_CLI_DIR:-}"
-    _routing_slot="$(printf '%b' '\x6f\x70\x65\x6e\x72\x6f\x75\x74\x65\x72')"
-    export MODEL_ID="${MODEL_ID:-${_routing_slot}/auto}"
+    export MODEL_ID="${MODEL_ID:-agent-standard}"
     export THEGRID_API_KEY="${THEGRID_API_KEY}"
 
     # Apply cloud-specific env vars (safe: only processes export VAR="VALUE" lines)
@@ -266,8 +265,8 @@ CLOUD_ENV
       ;;
     openclaw)
       {
-        printf 'export ANTHROPIC_API_KEY=%q\n' "${api_key}"
-        printf 'export ANTHROPIC_BASE_URL=%q\n' "https://api.thegrid.ai/api/v1"
+        printf 'export OPENAI_API_KEY=%q\n' "${api_key}"
+        printf 'export OPENAI_BASE_URL=%q\n' "https://api.thegrid.ai/api/v1"
       } >> "${env_tmp}"
       ;;
     codex)

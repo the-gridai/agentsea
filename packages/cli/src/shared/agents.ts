@@ -60,6 +60,11 @@ export interface AgentConfig {
 export interface TunnelConfig {
   remotePort: number;
   browserUrl?: (localPort: number) => string | undefined;
+  /**
+   * After the tunnel is up, print this so users can paste into the Control UI Connect
+   * form if the OS/browser drops ?token= / #token= from the opened URL (common on WSL).
+   */
+  logGatewayToken?: string;
 }
 
 // ─── Agent Optional Steps (static metadata — no CloudRunner needed) ─────────
@@ -142,7 +147,7 @@ const COMMON_STEPS: OptionalStep[] = [
   {
     value: "custom-model",
     label: "Custom model",
-    hint: "enter a model ID manually (The Grid catalogue)",
+    hint: "set MODEL_ID before provision (skip interactive catalogue picker)",
   },
   {
     value: "auto-update",

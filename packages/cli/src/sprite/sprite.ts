@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { dirname as posixDirname } from "node:path/posix";
 import { getErrorMessage } from "@grid-spawn/sdk";
+import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
 import { getUserHome } from "../shared/paths.js";
 import { asyncTryCatch } from "../shared/result.js";
 import { killWithTimeout, sleep, spawnInteractive, validateRemotePath } from "../shared/ssh.js";
@@ -799,7 +800,7 @@ export async function interactiveSession(cmd: string, spawnFn?: (args: string[])
   logInfo("To destroy:");
   logInfo(`  sprite destroy ${_state.name}`);
   logInfo("To reconnect:");
-  logInfo("  spawn last");
+  logInfo(`  ${GRID_SPAWN_CLI} last`);
   logInfo(`  or: sprite console -s ${_state.name}`);
 
   return exitCode;

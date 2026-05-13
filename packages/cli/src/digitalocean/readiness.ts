@@ -3,7 +3,8 @@
 import * as p from "@clack/prompts";
 import { handleBillingError } from "../shared/billing-guidance.js";
 import { getOrPromptApiKey, loadSavedTheGridApiKey, verifyTheGridApiKey } from "../shared/oauth.js";
-import { logError, logInfo, logStep, openBrowser, prompt } from "../shared/ui.js";
+import { getSpawnKey } from "../shared/ssh-keys.js";
+import { logAlwaysInfo, logAlwaysStep, logError, logWarn, openBrowser, prompt } from "../shared/ui.js";
 import { DIGITALOCEAN_BILLING_ADD_PAYMENT_URL, digitaloceanBilling } from "./billing.js";
 import {
   areSshKeysRegisteredOnDigitalOcean,
@@ -11,8 +12,10 @@ import {
   ensureSshKey,
   fetchDoAccountSnapshot,
   getDropletCount,
+  preloadDigitalOceanApiTokenForReadiness,
 } from "./digitalocean.js";
 import { renderReadinessChecklist } from "./readiness-checklist.js";
+import { isInteractiveTTY } from "../commands/shared.js";
 
 const DO_PROFILE_URL = "https://cloud.digitalocean.com/account/profile";
 const DO_DROPLETS_URL = "https://cloud.digitalocean.com/droplets";
@@ -67,8 +70,14 @@ export async function evaluateDigitalOceanReadiness(_agentName: string): Promise
   void _agentName;
   const blockers: ReadinessBlockerCode[] = [];
 
+  const hadTokenBeforeAccount = preloadDigitalOceanApiTokenForReadiness();
   const snapshot = await fetchDoAccountSnapshot();
   if (!snapshot) {
+    if (!hadTokenBeforeAccount) {
+      logWarn(
+        "DigitalOcean readiness: no API token in CLI state. Set DIGITALOCEAN_ACCESS_TOKEN (or DIGITALOCEAN_API_TOKEN / DO_API_TOKEN), add a repo-root .env beside manifest.json, or run without --headless to sign in.",
+      );
+    }
     return {
       status: "BLOCKED",
       blockers: sortBlockers([
@@ -118,35 +127,35 @@ export async function evaluateDigitalOceanReadiness(_agentName: string): Promise
 async function resolveFirstBlocker(first: ReadinessBlockerCode, agentName: string): Promise<void> {
   switch (first) {
     case "do_auth": {
-      logStep("Connect your DigitalOcean account...");
+      logAlwaysStep("Connect your DigitalOcean account...");
       await ensureDoToken();
       break;
     }
     case "droplet_limit": {
-      logStep("Droplet limit reached. Delete a droplet in the control panel or raise your limit, then continue.");
+      logAlwaysStep("Droplet limit reached. Delete a droplet in the control panel or raise your limit, then continue.");
       openBrowser(DO_DROPLETS_URL);
       await prompt("Press Enter after freeing capacity to re-check...");
       break;
     }
     case "email_unverified": {
-      logStep("Verify your DigitalOcean email to continue.");
+      logAlwaysStep("Verify your DigitalOcean email to continue.");
       openBrowser(DO_PROFILE_URL);
       await prompt("Press Enter after verifying your email to re-check...");
       break;
     }
     case "payment_required": {
-      logStep("Your DigitalOcean account needs billing attention.");
+      logAlwaysStep("Your DigitalOcean account needs billing attention.");
       await handleBillingError(digitaloceanBilling);
       break;
     }
     case "ssh_missing": {
-      logStep("Registering SSH keys with DigitalOcean...");
+      logAlwaysStep("Registering SSH keys with DigitalOcean...");
       await ensureSshKey();
-      logInfo("SSH keys updated.");
+      logAlwaysInfo("SSH keys updated.");
       break;
     }
     case "grid_api_key_missing": {
-      logStep("Add a valid The Grid API key to continue.");
+      logAlwaysStep("Add a valid The Grid API key to continue.");
       await getOrPromptApiKey(agentName, "digitalocean");
       break;
     }
@@ -159,8 +168,28 @@ async function resolveFirstBlocker(first: ReadinessBlockerCode, agentName: strin
  */
 export async function runDigitalOceanReadinessGate(opts: { agentName: string }): Promise<void> {
   const { agentName } = opts;
+
+  const canPrompt =
+    isInteractiveTTY() && process.env.SPAWN_NON_INTERACTIVE !== "1" && process.env.SPAWN_HEADLESS !== "1";
+  if (canPrompt) {
+    preloadDigitalOceanApiTokenForReadiness();
+    let snapshot = await fetchDoAccountSnapshot();
+    if (!snapshot) {
+      await ensureDoToken();
+      preloadDigitalOceanApiTokenForReadiness();
+      snapshot = await fetchDoAccountSnapshot();
+    }
+    if (!snapshot) {
+      logWarn("DigitalOcean account could not be verified yet — readiness checks may ask you to sign in again.");
+    }
+    if (!(await hasValidGridApiKey())) {
+      await getOrPromptApiKey(agentName, "digitalocean");
+    }
+  }
+
   let previousTopBlocker: ReadinessBlockerCode | undefined;
   let sameTopBlockerRepeats = 0;
+  let attemptedNonInteractiveSshRegistration = false;
 
   for (;;) {
     const state = await evaluateDigitalOceanReadiness(agentName);
@@ -177,11 +206,26 @@ export async function runDigitalOceanReadinessGate(opts: { agentName: string }):
     }
 
     if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+      const firstBlocker = state.blockers[0];
+      if (firstBlocker === "ssh_missing" && !attemptedNonInteractiveSshRegistration) {
+        attemptedNonInteractiveSshRegistration = true;
+        logAlwaysStep("Registering Spawn SSH key with DigitalOcean (non-interactive)...");
+        await ensureSshKey();
+        continue;
+      }
+
       if (jsonReadiness) {
         console.log(JSON.stringify(state));
       } else {
         logError(`DigitalOcean readiness blocked: ${state.blockers.join(", ")}`);
-        logInfo(`Billing: ${DIGITALOCEAN_BILLING_ADD_PAYMENT_URL}`);
+        logAlwaysInfo(`Billing: ${DIGITALOCEAN_BILLING_ADD_PAYMENT_URL}`);
+        if (attemptedNonInteractiveSshRegistration && state.blockers.includes("ssh_missing")) {
+          const pubPath = getSpawnKey().pubPath;
+          logAlwaysInfo(
+            "SSH key registration did not succeed (try adding a payment method in DigitalOcean, or add this public key manually under Account → Security → SSH Keys):",
+          );
+          logAlwaysInfo(`  ${pubPath}`);
+        }
       }
       process.exit(1);
     }
@@ -203,7 +247,7 @@ export async function runDigitalOceanReadinessGate(opts: { agentName: string }):
         "Readiness is still blocked after several attempts. " +
           "If DigitalOcean rejected SSH key upload, add a payment method first or register your public key in Account → Security.",
       );
-      logInfo(`Billing: ${DIGITALOCEAN_BILLING_ADD_PAYMENT_URL}`);
+      logAlwaysInfo(`Billing: ${DIGITALOCEAN_BILLING_ADD_PAYMENT_URL}`);
       await prompt("Press Enter after you've addressed this to re-check...");
       sameTopBlockerRepeats = 0;
     }

@@ -5,6 +5,7 @@
 
 import pc from "picocolors";
 
+import { GRID_SPAWN_CLI } from "./shared/cli-invocation.js";
 interface SignalEntry {
   header: string;
   causes: string[];
@@ -57,7 +58,7 @@ export const EXIT_CODE_GUIDANCE: Record<number, ExitCodeEntry> = {
     ],
     includeDashboard: false,
     specialHandling: (cloud) => [
-      `  - Cloud-specific CLI tools (run ${pc.cyan(`spawn ${cloud}`)} for details)`,
+      `  - Cloud-specific CLI tools (run ${pc.cyan(`${GRID_SPAWN_CLI} ${cloud}`)} for details)`,
     ],
   },
   126: {

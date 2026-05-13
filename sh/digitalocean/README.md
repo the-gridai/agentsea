@@ -77,7 +77,7 @@ bash <(curl -fsSL https://spawn.thegrid.ai/digitalocean/t3code.sh)
 
 ### Pre-flight readiness
 
-Before region/size selection, the CLI checks DigitalOcean account state (`GET /v2/account`), SSH keys registered on your account, and **`THEGRID_API_KEY`**. If something blocks deployment (unverified email, locked or warning billing status, droplet quota, missing SSH registration, or an invalid Grid API key), you get guided steps and a readiness checklist. Billing issues open the add-payment flow: `https://cloud.digitalocean.com/account/billing?defer-onboarding-for=or&open-add-payment-method=true`.
+Before region/size selection, the CLI checks DigitalOcean account state (`GET /v2/account`), SSH keys registered on your account, and **`THEGRID_API_KEY`**. If something blocks deployment (unverified email, locked or warning billing status, droplet quota, missing SSH registration, or an invalid Grid API key), you get guided steps and a readiness checklist. With **`--headless`** / **`SPAWN_NON_INTERACTIVE=1`**, a **missing Spawn SSH key** triggers a one-shot attempt to **POST the managed public key** (`~/.ssh/spawn_ed25519.pub` by default) to `/v2/account/keys` before exiting. Billing issues open the add-payment flow: `https://cloud.digitalocean.com/account/billing?defer-onboarding-for=or&open-add-payment-method=true`.
 
 OAuth tokens requested by the CLI include `tag:create` so droplets can be tagged `spawn` for attribution. If your token cannot create tags, the CLI retries creation without the tag.
 

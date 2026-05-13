@@ -8,9 +8,11 @@ Shared **Spawn manifest contract** and small runtime helpers for the marketing s
 - **Pure helpers** — `parseJsonObj`, `Result` / `tryCatch` / `asyncTryCatch`, `isPlainObject`, `isString`, …
 - **Node loader** (`@grid-spawn/sdk/node`) — `loadManifest()` reads, in order:
 
-  1. `GRID_SPAWN_MANIFEST` (absolute path), **or** the nearest `manifest.json` walking up from `process.cwd()`
-  2. `https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/manifest.json`
-  3. `~/.cache/grid-spawn/manifest.json` stale cache
+  1. `GRID_SPAWN_MANIFEST` (absolute path), if set and valid
+  2. `GRID_SPAWN_ROOT/manifest.json` when `GRID_SPAWN_ROOT` points at a checkout (same as CLI dotenv resolution)
+  3. The nearest `manifest.json` walking up from `process.cwd()` (max 10 segments)
+  4. `https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/manifest.json`
+  5. `~/.cache/grid-spawn/manifest.json` stale cache
 
 Runtime is **Node + browser-safe**: import types and pure helpers from `@grid-spawn/sdk`; import `loadManifest` only from **`@grid-spawn/sdk/node`** (uses `node:fs`).
 

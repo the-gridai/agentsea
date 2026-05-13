@@ -2,6 +2,8 @@
 
 // sprite/main.ts — Orchestrator: deploys an agent on Sprite
 
+import "../load-env.js";
+
 import type { CloudOrchestrator } from "../shared/orchestrate.js";
 
 import { getErrorMessage } from "@grid-spawn/sdk";

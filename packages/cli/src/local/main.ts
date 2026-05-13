@@ -2,6 +2,8 @@
 
 // local/main.ts — Orchestrator: deploys an agent on the local machine
 
+import "../load-env.js";
+
 import type { CloudOrchestrator } from "../shared/orchestrate.js";
 
 import * as p from "@clack/prompts";

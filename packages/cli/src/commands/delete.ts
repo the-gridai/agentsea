@@ -23,6 +23,7 @@ import {
   validateUsername,
 } from "../security.js";
 import { trackSpawnDeleted } from "../shared/lifecycle-telemetry.js";
+import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
 import { getHistoryPath } from "../shared/paths.js";
 import { asyncTryCatch, asyncTryCatchIf, isNetworkError, tryCatch } from "../shared/result.js";
 import { ensureSpriteAuthenticated, ensureSpriteCli, destroyServer as spriteDestroyServer } from "../sprite/sprite.js";
@@ -103,7 +104,7 @@ async function execDeleteServer(record: SpawnRecord): Promise<boolean> {
       `Invalid server identifier in history: ${getErrorMessage(idValidation.error)}\n\n` +
         "Your spawn history file may be corrupted or tampered with.\n" +
         `Location: ${getHistoryPath()}\n` +
-        "To fix: edit the file and remove the invalid entry, or run 'spawn list --clear'",
+        `To fix: edit the file and remove the invalid entry, or run '${GRID_SPAWN_CLI} list --clear'`,
     );
   }
 
@@ -296,7 +297,7 @@ export async function pullChildHistory(record: SpawnRecord): Promise<void> {
         ...SSH_BASE_OPTS,
         ...keyOpts,
         `${conn.user}@${conn.ip}`,
-        "spawn history export 2>/dev/null",
+        `${GRID_SPAWN_CLI} history export 2>/dev/null`,
       ],
       {
         stdout: "pipe",
@@ -428,9 +429,9 @@ export async function cmdDelete(
           `${servers.length} active server${servers.length !== 1 ? "s" : ""} found, but none matched your filters.`,
         ),
       );
-      p.log.info(`Run ${pc.cyan("spawn delete")} without filters to see all servers.`);
+      p.log.info(`Run ${pc.cyan(`${GRID_SPAWN_CLI} delete`)} without filters to see all servers.`);
     } else {
-      p.log.info(`Run ${pc.cyan("spawn <agent> <cloud>")} to create a spawn first.`);
+      p.log.info(`Run ${pc.cyan(`${GRID_SPAWN_CLI} <agent> <cloud>`)} to create a spawn first.`);
     }
     return;
   }
@@ -441,8 +442,8 @@ export async function cmdDelete(
   // Non-interactive headless delete: --name + --yes skips the picker
   if (!isInteractiveTTY()) {
     if (!forceYes) {
-      p.log.error("spawn delete requires --yes in non-interactive mode.");
-      p.log.info(`Usage: ${pc.cyan("spawn delete --name <name> --yes")}`);
+      p.log.error(`${GRID_SPAWN_CLI} delete requires --yes in non-interactive mode.`);
+      p.log.info(`Usage: ${pc.cyan(`${GRID_SPAWN_CLI} delete --name <name> --yes`)}`);
       process.exit(1);
     }
     for (const record of filtered) {

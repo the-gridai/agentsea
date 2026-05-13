@@ -12,6 +12,7 @@ import { hasSavedTheGridKey } from "../shared/oauth.js";
 import { PkgVersionSchema, parseJsonObj } from "../shared/parse.js";
 import { getSpawnCloudConfigPath } from "../shared/paths.js";
 import { asyncTryCatch, tryCatch, unwrapOr } from "../shared/result.js";
+import { CLACK_LOG_OPTS } from "../shared/ui.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -46,7 +47,7 @@ async function withSpinner<T>(msg: string, fn: () => Promise<T>, doneMsg?: strin
 export async function loadManifestWithSpinner(): Promise<Manifest> {
   const manifest = await withSpinner("Loading manifest...", loadManifest);
   if (isStaleCache()) {
-    p.log.warn("Using cached manifest (offline). Data may be outdated.");
+    p.log.warn("Using cached manifest (offline). Data may be outdated.", CLACK_LOG_OPTS);
   }
   return manifest;
 }

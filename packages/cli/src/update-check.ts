@@ -12,6 +12,7 @@ import { RAW_BASE, SPAWN_CDN, VERSION_URL } from "./manifest.js";
 import { PkgVersionSchema, parseJsonWith } from "./shared/parse.js";
 import { getUpdateCheckedPath, getUpdateFailedPath } from "./shared/paths.js";
 import { asyncTryCatchIf, isFileError, isNetworkError, tryCatch, tryCatchIf, unwrapOr } from "./shared/result.js";
+import { GRID_SPAWN_CLI } from "./shared/cli-invocation.js";
 import { getInstallCmd, getInstallScriptUrl, getWhichCommand, isWindows } from "./shared/shell.js";
 import { logDebug, logWarn } from "./shared/ui.js";
 
@@ -172,7 +173,7 @@ function printUpdateBanner(latestVersion: string): void {
 
 /**
  * Show a non-blocking update notice without auto-installing.
- * Users can update manually with `spawn update` or set SPAWN_AUTO_UPDATE=1.
+ * Users can update manually with `grid-spawn update` or set SPAWN_AUTO_UPDATE=1.
  */
 function printUpdateNotice(latestVersion: string): void {
   console.error();
@@ -183,7 +184,7 @@ function printUpdateNotice(latestVersion: string): void {
       pc.green(pc.bold(`v${latestVersion}`)),
   );
   console.error(
-    pc.dim(`  Run ${pc.cyan("spawn update")} to install, or set SPAWN_AUTO_UPDATE=1 for automatic updates`),
+    pc.dim(`  Run ${pc.cyan(`${GRID_SPAWN_CLI} update`)} to install, or set SPAWN_AUTO_UPDATE=1 for automatic updates`),
   );
   console.error();
 }

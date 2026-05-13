@@ -9,6 +9,7 @@ import * as p from "@clack/prompts";
 import { getErrorMessage, isNumber, isString, toObjectArray, toRecord } from "@grid-spawn/sdk";
 import { isInteractiveTTY } from "../commands/shared.js";
 import { handleBillingError, isBillingError, showNonBillingError } from "../shared/billing-guidance.js";
+import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
 import { getPackagesForTier, NODE_INSTALL_CMD, needsBun, needsNode } from "../shared/cloud-init.js";
 import { generateCsrfState, OAUTH_CSS } from "../shared/oauth.js";
 import { parseJsonObj } from "../shared/parse.js";
@@ -26,6 +27,7 @@ import {
   killWithTimeout,
   SSH_BASE_OPTS,
   SSH_INTERACTIVE_OPTS,
+  scpQuietArgs,
   waitForSsh as sharedWaitForSsh,
   sleep,
   spawnInteractive,
@@ -34,9 +36,12 @@ import {
 } from "../shared/ssh.js";
 import { ensureSshKeys, getSpawnKey, getSshFingerprint, getSshKeyOpts, SPAWN_KEY_NAME } from "../shared/ssh-keys.js";
 import {
-  defaultSpawnName,
+  dropletNameWithUuidSuffix,
   getServerNameFromEnv,
   loadApiToken,
+  logAlwaysInfo,
+  logAlwaysStep,
+  logDebug,
   logError,
   logInfo,
   logStep,
@@ -53,6 +58,7 @@ import {
   validateRegionName,
   validateServerName,
 } from "../shared/ui.js";
+import { isSpawnVerbose } from "../shared/verbosity.js";
 import { digitaloceanBilling } from "./billing.js";
 
 const DO_API_BASE = "https://api.digitalocean.com/v2";
@@ -320,6 +326,38 @@ function isTokenExpired(): boolean {
   return Math.floor(Date.now() / 1000) >= expiresAt - 300;
 }
 
+/**
+ * Hydrate internal API token from env or a non-expired saved PAT before readiness checks.
+ * Does not open OAuth or prompt — required for `--headless`, where `ensureDoToken()` runs too late.
+ *
+ * @returns true if a token string was loaded into CLI state (may still be invalid for the API).
+ */
+export function preloadDigitalOceanApiTokenForReadiness(): boolean {
+  const envToken =
+    process.env.DIGITALOCEAN_ACCESS_TOKEN ?? process.env.DIGITALOCEAN_API_TOKEN ?? process.env.DO_API_TOKEN;
+  if (envToken?.trim()) {
+    _state.token = envToken.trim();
+    const src = process.env.DIGITALOCEAN_ACCESS_TOKEN
+      ? "DIGITALOCEAN_ACCESS_TOKEN"
+      : process.env.DIGITALOCEAN_API_TOKEN
+        ? "DIGITALOCEAN_API_TOKEN"
+        : "DO_API_TOKEN";
+    logDebug(`DigitalOcean token loaded from environment (${src})`);
+    return true;
+  }
+  const saved = loadApiToken("digitalocean");
+  if (saved && !isTokenExpired()) {
+    _state.token = saved;
+    logDebug("DigitalOcean token loaded from saved credentials file");
+    return true;
+  }
+  _state.token = "";
+  logDebug(
+    "DigitalOcean token not preloaded: no DIGITALOCEAN_ACCESS_TOKEN / DIGITALOCEAN_API_TOKEN / DO_API_TOKEN, or saved token missing/expired",
+  );
+  return false;
+}
+
 // ─── Token Validation ────────────────────────────────────────────────────────
 
 async function testDoToken(): Promise<boolean> {
@@ -345,6 +383,7 @@ export interface DoAccountSnapshot {
 /** Fetch account record for readiness (requires valid `_state.token`). */
 export async function fetchDoAccountSnapshot(): Promise<DoAccountSnapshot | null> {
   if (!_state.token) {
+    logDebug("DigitalOcean GET /v2/account skipped: no token in CLI state after preload");
     return null;
   }
   const r = await asyncTryCatch(async () => {
@@ -361,7 +400,15 @@ export async function fetchDoAccountSnapshot(): Promise<DoAccountSnapshot | null
       droplet_limit: isNumber(rec.droplet_limit) ? rec.droplet_limit : 0,
     };
   });
-  return r.ok ? r.data : null;
+  if (!r.ok) {
+    logWarn(`DigitalOcean GET /v2/account failed: ${getErrorMessage(r.error)}`);
+    return null;
+  }
+  if (r.data === null || r.data === undefined) {
+    logWarn("DigitalOcean GET /v2/account returned unexpected JSON (missing account object).");
+    return null;
+  }
+  return r.data;
 }
 
 /**
@@ -720,11 +767,11 @@ async function tryDoOAuth(): Promise<string | null> {
   });
   const authUrl = `${DO_OAUTH_AUTHORIZE}?${authParams.toString()}`;
 
-  logStep("Opening browser to authorize with DigitalOcean...");
+  logAlwaysStep("Opening browser to authorize with DigitalOcean...");
   openBrowser(authUrl);
 
   // Initial wait window (after this, interactive TTY keeps the OAuth server up until callback or Escape)
-  logStep("Waiting for authorization in browser (extended-wait hint after 120s)...");
+  logAlwaysStep("Waiting for authorization in browser (extended-wait hint after 120s)...");
   const initialDeadline = Date.now() + 120_000;
   while (!oauthCode && !oauthDenied && Date.now() < initialDeadline) {
     await sleep(500);
@@ -743,7 +790,7 @@ async function tryDoOAuth(): Promise<string | null> {
   if (!oauthCode && !oauthDenied) {
     logWarn("Still waiting for you to complete authorization in your browser.");
     if (isInteractiveTTY()) {
-      logInfo("Press Escape to enter a DigitalOcean API token instead.");
+      logAlwaysInfo("Press Escape to enter a DigitalOcean API token instead.");
 
       let pendingEscTimer: ReturnType<typeof setTimeout> | null = null;
       const onData = (data: Buffer | string) => {
@@ -802,7 +849,7 @@ async function tryDoOAuth(): Promise<string | null> {
   }
 
   if (manualTokenRequested) {
-    logInfo("Switching to manual API token entry.");
+    logAlwaysInfo("Switching to manual API token entry.");
     return null;
   }
 
@@ -851,7 +898,7 @@ async function tryDoOAuth(): Promise<string | null> {
     const oauthRefreshToken = isString(data.refresh_token) ? data.refresh_token : undefined;
     const expiresIn = isNumber(data.expires_in) ? data.expires_in : undefined;
     await saveTokenToConfig(accessToken, oauthRefreshToken, expiresIn);
-    logInfo("Successfully obtained DigitalOcean access token via OAuth!");
+    logAlwaysInfo("Successfully obtained DigitalOcean access token via OAuth!");
     return accessToken;
   });
   if (!exchangeResult.ok) {
@@ -931,7 +978,7 @@ export async function ensureDoToken(): Promise<boolean> {
 
   // 4. Manual entry (retry loop — never exits unless user says no)
   for (;;) {
-    logStep("DigitalOcean API Token Required");
+    logAlwaysStep("DigitalOcean API Token Required");
     logWarn("Get a token from: https://cloud.digitalocean.com/account/api/tokens");
 
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -1191,9 +1238,13 @@ export async function createServer(
     : "ubuntu-24-04-x64";
   const imageLabel = imageOverride ?? "ubuntu-24-04-x64";
 
-  logStep(
-    `Creating DigitalOcean droplet '${name}' (size: ${size}, region: ${effectiveRegion}, image: ${imageLabel})...`,
-  );
+  if (isSpawnVerbose()) {
+    logStep(
+      `Creating DigitalOcean droplet '${name}' (size: ${size}, region: ${effectiveRegion}, image: ${imageLabel})...`,
+    );
+  } else {
+    logAlwaysStep("Creating DigitalOcean droplet…");
+  }
 
   // Attach only the spawn-managed key — user's other registered keys stay off
   // the droplet (privacy + avoids sshd MaxAuthTries flood on the client side).
@@ -1349,7 +1400,7 @@ async function waitForDropletActive(dropletId: string, maxAttempts = 60): Promis
       if (publicNet?.ip_address) {
         _state.serverIp = isString(publicNet.ip_address) ? publicNet.ip_address : "";
         logStepDone();
-        logInfo(`Droplet active, IP: ${_state.serverIp}`);
+        logAlwaysInfo(`Droplet active, IP: ${_state.serverIp}`);
         return;
       }
     }
@@ -1567,6 +1618,7 @@ export async function uploadFile(localPath: string, remotePath: string, ip?: str
   const proc = Bun.spawn(
     [
       "scp",
+      ...scpQuietArgs(),
       ...SSH_BASE_OPTS,
       ...keyOpts,
       localPath,
@@ -1601,6 +1653,7 @@ export async function downloadFile(remotePath: string, localPath: string, ip?: s
   const proc = Bun.spawn(
     [
       "scp",
+      ...scpQuietArgs(),
       ...SSH_BASE_OPTS,
       ...keyOpts,
       `root@${serverIp}:${normalizedRemote}`,
@@ -1650,11 +1703,11 @@ export async function interactiveSession(cmd: string, ip?: string): Promise<numb
   logWarn("Manage or delete it in your dashboard:");
   logWarn(`  ${DO_DASHBOARD_URL}`);
   logWarn("");
-  logInfo("To delete from CLI:");
-  logInfo("  spawn delete");
-  logInfo("To reconnect:");
-  logInfo("  spawn last");
-  logInfo(`  or: ssh -i ~/.ssh/${SPAWN_KEY_NAME} root@${serverIp}`);
+  logAlwaysInfo("To delete from CLI:");
+  logAlwaysInfo(`  ${GRID_SPAWN_CLI} delete`);
+  logAlwaysInfo("To reconnect:");
+  logAlwaysInfo(`  ${GRID_SPAWN_CLI} last`);
+  logAlwaysInfo(`  or: ssh -i ~/.ssh/${SPAWN_KEY_NAME} root@${serverIp}`);
 
   return exitCode;
 }
@@ -1666,36 +1719,40 @@ export async function getServerName(): Promise<string> {
 }
 
 export async function promptSpawnName(): Promise<void> {
-  if (process.env.SPAWN_NAME_KEBAB) {
-    return;
-  }
+  /** Every DO droplet hostname is `<kebab-base>-<uuid>` except when `DO_DROPLET_NAME` pins an exact label (e2e/headless). */
+  const finalize = (baseInput: string): void => {
+    const final = dropletNameWithUuidSuffix(baseInput.trim() || "spawn");
+    process.env.SPAWN_NAME_DISPLAY = final;
+    process.env.SPAWN_NAME_KEBAB = final;
+    logInfo(`Using droplet name: ${final}`);
+  };
 
-  // Honour DO_DROPLET_NAME so headless/e2e callers can control the droplet name
   if (process.env.DO_DROPLET_NAME) {
-    const name = process.env.DO_DROPLET_NAME;
+    const name = process.env.DO_DROPLET_NAME.trim();
     if (validateServerName(name)) {
       process.env.SPAWN_NAME_DISPLAY = name;
       process.env.SPAWN_NAME_KEBAB = name;
       logInfo(`Using resource name: ${name}`);
       return;
     }
-    logWarn(`Invalid DO_DROPLET_NAME '${name}', falling back to prompt`);
+    logWarn(`Invalid DO_DROPLET_NAME '${name}', falling back to generated name`);
   }
 
-  let kebab: string;
-  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
-    kebab = (process.env.SPAWN_NAME ? toKebabCase(process.env.SPAWN_NAME) : "") || defaultSpawnName();
+  let baseForSuffix: string | undefined;
+
+  if (process.env.SPAWN_NAME_KEBAB?.trim()) {
+    baseForSuffix = process.env.SPAWN_NAME_KEBAB.trim();
+  } else if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+    baseForSuffix = (process.env.SPAWN_NAME ? toKebabCase(process.env.SPAWN_NAME) : "").trim() || "spawn";
   } else {
     const derived = process.env.SPAWN_NAME ? toKebabCase(process.env.SPAWN_NAME) : "";
-    const fallback = derived || defaultSpawnName();
+    const fallback = derived || "spawn";
     process.stderr.write("\n");
-    const answer = await prompt(`DigitalOcean droplet name [${fallback}]: `);
-    kebab = toKebabCase(answer || fallback) || defaultSpawnName();
+    const answer = await prompt(`DigitalOcean droplet label [${fallback}]: `);
+    baseForSuffix = toKebabCase((answer || "").trim() || fallback) || "spawn";
   }
 
-  process.env.SPAWN_NAME_DISPLAY = kebab;
-  process.env.SPAWN_NAME_KEBAB = kebab;
-  logInfo(`Using resource name: ${kebab}`);
+  finalize(baseForSuffix ?? "spawn");
 }
 
 // ─── Lifecycle ───────────────────────────────────────────────────────────────

@@ -23,6 +23,7 @@
     "@clack/prompts": "1.0.0",
     "@daytonaio/sdk": "0.160.0",
     "@grid-spawn/sdk": "*",
+    "dotenv": "^16.6.1",
     "picocolors": "1.1.1",
     "valibot": "1.2.0"
   },

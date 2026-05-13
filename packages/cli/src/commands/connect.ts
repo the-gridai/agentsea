@@ -17,8 +17,16 @@ import { getHistoryPath } from "../shared/paths.js";
 import { asyncTryCatchIf, isOperationalError, tryCatch } from "../shared/result.js";
 import { SSH_BASE_OPTS, SSH_INTERACTIVE_OPTS, spawnInteractive, startSshTunnel } from "../shared/ssh.js";
 import { ensureSshKeys, getSshKeyOpts } from "../shared/ssh-keys.js";
-import { logWarn, openBrowser, shellQuote } from "../shared/ui.js";
+import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
+import { logWarn, openBrowser, rewriteLocalhostHttpUrlForWindowsBrowserFromWsl, shellQuote } from "../shared/ui.js";
 import { getErrorMessage } from "./shared.js";
+
+/** Strip persisted tunnel template down to path?query (Daytona preview host is prepended). */
+function tunnelTemplateToUrlSuffix(template: string): string {
+  return template
+    .replace(/^http:\/\/localhost:__PORT__/, "")
+    .replace(/^http:\/\/127\.0\.0\.1:__PORT__/, "");
+}
 
 /**
  * Check the remote VM for security alerts written by the spawn-security-scan cron.
@@ -100,7 +108,7 @@ async function openDaytonaDashboard(connection: VMConnection): Promise<boolean> 
   }
 
   const template = metadata?.tunnel_browser_url_template;
-  const urlSuffix = template ? template.replace("http://localhost:__PORT__", "") : "";
+  const urlSuffix = template ? tunnelTemplateToUrlSuffix(template) : "";
 
   // Daytona exposes web UIs through signed preview URLs instead of a local SSH tunnel.
   const { getSignedPreviewBrowserUrl } = await import("../daytona/daytona.js");
@@ -134,7 +142,7 @@ export async function cmdConnect(connection: VMConnection, agentKey?: string): P
     p.log.error(`Security validation failed: ${getErrorMessage(connectValidation.error)}`);
     p.log.info("Your spawn history file may be corrupted or tampered with.");
     p.log.info(`Location: ${getHistoryPath()}`);
-    p.log.info("To fix: edit the file and remove the invalid entry, or run 'spawn list --clear'");
+    p.log.info(`To fix: edit the file and remove the invalid entry, or run '${GRID_SPAWN_CLI} list --clear'`);
     process.exit(1);
   }
 
@@ -164,7 +172,7 @@ export async function cmdConnect(connection: VMConnection, agentKey?: string): P
     p.log.step(`Connecting to Daytona sandbox ${pc.bold(connection.server_name || connection.server_id)}...`);
     const { buildInteractiveSshArgs } = await import("../daytona/daytona.js");
     const args = await buildInteractiveSshArgs(connection.server_id);
-    return runInteractiveCommand(args[0], args.slice(1), "Daytona SSH connection failed", "spawn last");
+    return runInteractiveCommand(args[0], args.slice(1), "Daytona SSH connection failed", `${GRID_SPAWN_CLI} last`);
   }
 
   // Handle SSH connections
@@ -214,7 +222,7 @@ export async function cmdEnterAgent(
     p.log.error(`Security validation failed: ${getErrorMessage(enterValidation.error)}`);
     p.log.info("Your spawn history file may be corrupted or tampered with.");
     p.log.info(`Location: ${getHistoryPath()}`);
-    p.log.info("To fix: edit the file and remove the invalid entry, or run 'spawn list --clear'");
+    p.log.info(`To fix: edit the file and remove the invalid entry, or run '${GRID_SPAWN_CLI} list --clear'`);
     process.exit(1);
   }
 
@@ -313,7 +321,7 @@ export async function cmdEnterAgent(
       p.log.error(`Security validation failed: ${getErrorMessage(tunnelValidation.error)}`);
       p.log.info("Your spawn history file may be corrupted or tampered with.");
       p.log.info(`Location: ${getHistoryPath()}`);
-      p.log.info("To fix: edit the file and remove the invalid entry, or run 'spawn list --clear'");
+      p.log.info(`To fix: edit the file and remove the invalid entry, or run '${GRID_SPAWN_CLI} list --clear'`);
       process.exit(1);
     }
 
@@ -406,7 +414,7 @@ export async function cmdOpenDashboard(connection: VMConnection): Promise<void> 
     p.log.error(`Security validation failed: ${getErrorMessage(tunnelValidation.error)}`);
     p.log.info("Your spawn history file may be corrupted or tampered with.");
     p.log.info(`Location: ${getHistoryPath()}`);
-    p.log.info("To fix: edit the file and remove the invalid entry, or run 'spawn list --clear'");
+    p.log.info(`To fix: edit the file and remove the invalid entry, or run '${GRID_SPAWN_CLI} list --clear'`);
     return;
   }
 
@@ -430,6 +438,10 @@ export async function cmdOpenDashboard(connection: VMConnection): Promise<void> 
     const url = urlTemplate.replace("__PORT__", String(handle.localPort));
     openBrowser(url);
     p.log.success(`Dashboard opened at ${pc.cyan(url)}`);
+    const wslAlt = rewriteLocalhostHttpUrlForWindowsBrowserFromWsl(url);
+    if (wslAlt !== url) {
+      p.log.info(`Windows browser from WSL: if localhost fails, use ${pc.cyan(wslAlt)}`);
+    }
   } else {
     p.log.success(`Dashboard tunnel open on localhost:${handle.localPort}`);
   }

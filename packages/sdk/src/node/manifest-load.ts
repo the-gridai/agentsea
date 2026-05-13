@@ -1,5 +1,5 @@
 /**
- * Loads `manifest.json` from repo root → GitHub raw → ~/.cache/grid-spawn/manifest.json fallback.
+ * Loads `manifest.json` from env overrides → cwd walk → GitHub raw → ~/.cache/grid-spawn/manifest.json fallback.
  */
 
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -155,13 +155,9 @@ function findRepoManifestPath(): string | null {
   return null;
 }
 
-function tryLoadLocalManifest(): Manifest | null {
-  if (process.env.NODE_ENV === "test" || process.env.BUN_ENV === "test") {
-    return null;
-  }
-
+/** Load and validate manifest.json from a filesystem path (no network). */
+function readManifestAt(localPath: string): Manifest | null {
   const result = tryCatch(() => {
-    const localPath = process.env.GRID_SPAWN_MANIFEST ?? findRepoManifestPath();
     if (!localPath || !existsSync(localPath)) {
       return null;
     }
@@ -173,6 +169,27 @@ function tryLoadLocalManifest(): Manifest | null {
     return isValidManifest(data) ? data : null;
   });
   return result.ok ? result.data : null;
+}
+
+function tryLoadLocalManifest(): Manifest | null {
+  if (process.env.NODE_ENV === "test" || process.env.BUN_ENV === "test") {
+    return null;
+  }
+
+  const manifestOverride = process.env.GRID_SPAWN_MANIFEST?.trim();
+  if (manifestOverride) {
+    const fromManifestEnv = readManifestAt(manifestOverride);
+    if (fromManifestEnv) return fromManifestEnv;
+  }
+
+  const rootOverride = process.env.GRID_SPAWN_ROOT?.trim();
+  if (rootOverride) {
+    const fromRoot = readManifestAt(join(rootOverride, "manifest.json"));
+    if (fromRoot) return fromRoot;
+  }
+
+  const walked = findRepoManifestPath();
+  return walked ? readManifestAt(walked) : null;
 }
 
 export async function loadManifest(forceRefresh = false): Promise<Manifest> {
@@ -203,7 +220,7 @@ export async function loadManifest(forceRefresh = false): Promise<Manifest> {
     "Cannot load manifest: failed to fetch from GitHub and no local cache available.\n\n" +
       "How to fix:\n" +
       "  1. Check your internet connection\n" +
-      "  2. Add a repo-root manifest.json\n" +
+      "  2. Run the UI from this repo or set GRID_SPAWN_ROOT to the checkout (or GRID_SPAWN_MANIFEST to manifest.json)\n" +
       `  3. Clear stale cache and retry:\n     rm -rf ${getManifestCacheDir()}`,
   );
 }
