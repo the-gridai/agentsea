@@ -37,3 +37,8 @@ packages/cli/grid-spawn
 
 # Sentry
 .sentryclirc
+
+# Local E2E artifacts (never commit)
+e2e-agent-results.txt
+e2e-triage-partial-*.txt
+sh/e2e/*_NOTES.txt
