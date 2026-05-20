@@ -27,3 +27,27 @@ describe("verbosity", () => {
     expect(isSpawnVerbose()).toBe(true);
   });
 });
+
+describe("remoteExecStdio", () => {
+  const original = process.env.SPAWN_VERBOSE;
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete process.env.SPAWN_VERBOSE;
+    } else {
+      process.env.SPAWN_VERBOSE = original;
+    }
+  });
+
+  it("pipes remote output when not verbose", async () => {
+    delete process.env.SPAWN_VERBOSE;
+    const { remoteExecStdio } = await import("../shared/ssh.js");
+    expect(remoteExecStdio()).toEqual(["ignore", "pipe", "pipe"]);
+  });
+
+  it("inherits remote output when verbose", async () => {
+    process.env.SPAWN_VERBOSE = "1";
+    const { remoteExecStdio } = await import("../shared/ssh.js");
+    expect(remoteExecStdio()).toEqual(["ignore", "inherit", "inherit"]);
+  });
+});

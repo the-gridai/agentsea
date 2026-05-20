@@ -59,7 +59,7 @@
       "env": {
         "THEGRID_API_KEY": "${THEGRID_API_KEY}",
         "OPENAI_API_KEY": "${THEGRID_API_KEY}",
-        "OPENAI_BASE_URL": "https://api.thegrid.ai/v1"
+        "OPENAI_BASE_URL": "https://messages-beta.api.thegrid.ai/v1"
       },
       "interactive_prompts": {
         "model_id": {
@@ -201,7 +201,7 @@
         "OPENAI_BASE_URL": "https://api.thegrid.ai/v1",
         "OPENAI_API_KEY": "${THEGRID_API_KEY}"
       },
-      "notes": "Uses THEGRID_API_KEY. Also OpenAI-compatible via OPENAI_BASE_URL + OPENAI_API_KEY. Installs Python 3.11 via uv. Ships a local web dashboard (port 9119) for configuration, session monitoring, skill browsing, and gateway management — auto-exposed via SSH tunnel when run through Grid Spawn.",
+      "notes": "Uses THEGRID_API_KEY via ~/.hermes/config.yaml (provider: custom, base_url: api.thegrid.ai). Spawn writes ~/.hermes/.env + config.yaml — Hermes v0.14+ ignores OPENAI_* in ~/.spawnrc. Installs Python 3.11 via uv. Ships a local web dashboard (port 9119) for configuration, session monitoring, skill browsing, and gateway management — auto-exposed via SSH tunnel when run through Grid Spawn.",
       "icon": "https://raw.githubusercontent.com/Spectral-Finance/grid-spawn/main/assets/agents/hermes.png",
       "featured_cloud": [
         "digitalocean",
@@ -300,7 +300,8 @@
       "launch": "agent",
       "env": {
         "THEGRID_API_KEY": "${THEGRID_API_KEY}",
-        "CURSOR_API_KEY": "${THEGRID_API_KEY}"
+        "CURSOR_API_KEY": "${THEGRID_API_KEY}",
+        "GRID_MODEL_ID": "${GRID_MODEL_ID}"
       },
       "config_files": {
         "~/.cursor/cli-config.json": {

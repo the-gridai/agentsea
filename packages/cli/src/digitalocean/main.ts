@@ -4,44 +4,12 @@
 
 import "../load-env.js";
 
-import type { CloudOrchestrator } from "../shared/orchestrate.js";
-
 import { getErrorMessage } from "@grid-spawn/sdk";
 import pkg from "../../package.json" with { type: "json" };
 import { runOrchestration } from "../shared/orchestrate.js";
 import { initTelemetry } from "../shared/telemetry.js";
-import { logInfo } from "../shared/ui.js";
 import { agents, resolveAgent } from "./agents.js";
-import {
-  AGENT_MIN_SIZE,
-  createServer as createDroplet,
-  downloadFile,
-  getConnectionInfo,
-  getServerName,
-  interactiveSession,
-  promptDoRegion,
-  promptDropletSize,
-  promptSpawnName,
-  runServer,
-  slugRamGb,
-  uploadFile,
-  waitForCloudInit,
-  waitForSshOnly,
-} from "./digitalocean.js";
-import { runDigitalOceanReadinessGate } from "./readiness.js";
-import { digitalOceanGridSpawnImageSlug } from "../shared/vendor-routing.js";
-
-
-/** DigitalOcean Marketplace snapshot slugs for Grid-published images (portal naming; see todo.md). */
-const MARKETPLACE_IMAGES: Record<string, string> = {
-  claude: digitalOceanGridSpawnImageSlug("claude"),
-  codex: digitalOceanGridSpawnImageSlug("codex"),
-  openclaw: digitalOceanGridSpawnImageSlug("openclaw"),
-  opencode: digitalOceanGridSpawnImageSlug("opencode"),
-  kilocode: digitalOceanGridSpawnImageSlug("kilocode"),
-  hermes: digitalOceanGridSpawnImageSlug("hermes"),
-  junie: digitalOceanGridSpawnImageSlug("junie"),
-};
+import { createDigitalOceanOrchestrator } from "./provider.js";
 
 async function main() {
   const agentName = process.argv[2];
@@ -52,64 +20,7 @@ async function main() {
   }
 
   const agent = resolveAgent(agentName);
-
-  let dropletSize = "";
-  let region = "";
-  let marketplaceImage: string | undefined;
-
-  const cloud: CloudOrchestrator = {
-    cloudName: "digitalocean",
-    cloudLabel: "DigitalOcean",
-    skipAgentInstall: false,
-    runner: {
-      runServer,
-      uploadFile,
-      downloadFile,
-    },
-    async authenticate() {
-      await promptSpawnName();
-    },
-    async ensureReadyBeforeSizing() {
-      await runDigitalOceanReadinessGate({
-        agentName,
-      });
-    },
-    async promptSize() {
-      dropletSize = await promptDropletSize();
-      // Enforce minimum size for agents that need more RAM (e.g. openclaw-plugins OOMs on 2GB)
-      const minSize = AGENT_MIN_SIZE[agentName];
-      if (minSize && (!dropletSize || slugRamGb(dropletSize) < slugRamGb(minSize))) {
-        dropletSize = minSize;
-        logInfo(`Using ${minSize} (minimum for ${agentName})`);
-      }
-      region = await promptDoRegion();
-    },
-    async createServer(name: string) {
-      // Use pre-built marketplace image when --beta images is active
-      const betaFeatures = (process.env.SPAWN_BETA ?? "").split(",");
-      if (betaFeatures.includes("images")) {
-        const slug = MARKETPLACE_IMAGES[agentName];
-        if (slug) {
-          marketplaceImage = slug;
-          cloud.skipAgentInstall = true;
-          logInfo(`Using marketplace image: ${slug}`);
-        } else {
-          logInfo(`No marketplace image for ${agentName}, using fresh install`);
-        }
-      }
-      return await createDroplet(name, agent.cloudInitTier, dropletSize, region, marketplaceImage);
-    },
-    getServerName,
-    async waitForReady() {
-      if (marketplaceImage || cloud.skipCloudInit) {
-        await waitForSshOnly();
-      } else {
-        await waitForCloudInit();
-      }
-    },
-    interactiveSession,
-    getConnectionInfo,
-  };
+  const cloud = createDigitalOceanOrchestrator(agentName, agent);
 
   await runOrchestration(cloud, agent, agentName);
 }

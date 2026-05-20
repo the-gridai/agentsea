@@ -42,6 +42,11 @@ async function main() {
   const cloud: CloudOrchestrator = {
     cloudName: "sprite",
     cloudLabel: "Sprite",
+    capabilities: {
+      connectionDropExitCodes: [
+        1,
+      ],
+    },
     runner: {
       runServer: runSprite,
       uploadFile: uploadFileSprite,

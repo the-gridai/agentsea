@@ -21,6 +21,7 @@ import {
 import { asyncTryCatch, isFileError, tryCatch, tryCatchIf } from "../shared/result.js";
 import { getLocalShell, isWindows } from "../shared/shell.js";
 import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
+import { getCloudProvider } from "../shared/cloud-provider-registry.js";
 import { maybeShowStarPrompt } from "../shared/star-prompt.js";
 import { captureEvent, setTelemetryContext } from "../shared/telemetry.js";
 import {
@@ -685,6 +686,35 @@ function runBundleSync(
   throw new Error(`Script was killed by ${sig}`);
 }
 
+function runBundlePathSync(bundlePath: string, agent: string, env: Record<string, string | undefined>): void {
+  const result = spawnSync(
+    "bun",
+    [
+      "run",
+      bundlePath,
+      agent,
+    ],
+    {
+      stdio: "inherit",
+      env,
+    },
+  );
+  if (result.error) {
+    throw result.error;
+  }
+  const code = result.status;
+  const signal = result.signal;
+  if (code === 0) {
+    return;
+  }
+  if (code !== null) {
+    const msg = code === 130 ? "Script interrupted by user (Ctrl+C)" : `Script exited with code ${code}`;
+    throw new Error(msg);
+  }
+  const sig = signal ?? "unknown signal";
+  throw new Error(`Script was killed by ${sig}`);
+}
+
 export async function execScript(
   cloud: string,
   agent: string,
@@ -732,15 +762,6 @@ export async function execScript(
   process.env.SPAWN_ID = spawnId;
 
   if (isWindows()) {
-    // Windows: download the pre-built JS bundle and run directly with bun
-    // (bash wrappers contain bash syntax that PowerShell cannot parse)
-    const dlResult = await asyncTryCatch(() => downloadBundle(cloud));
-    if (!dlResult.ok) {
-      const ghUrl = `https://github.com/${REPO}/releases/download/${cloud}-latest/${cloud}.js`;
-      reportDownloadError(ghUrl, dlResult.error);
-      return false;
-    }
-
     const env: Record<string, string | undefined> = {
       ...process.env,
     };
@@ -757,11 +778,32 @@ export async function execScript(
     }
     prepareStdinForHandoff();
 
-    const r = tryCatch(() => runBundleSync(dlResult.data, cloud, agent, env));
+    const cliDir = process.env.SPAWN_CLI_DIR;
+    const localMainResolved = cliDir ? resolveLocalProviderMain(cliDir, cloud) : "";
+    const r = localMainResolved
+      ? tryCatch(() => runBundlePathSync(localMainResolved, agent, env))
+      : await asyncTryCatch(async () => {
+          // Windows: download the pre-built JS bundle and run directly with bun
+          // (bash wrappers contain bash syntax that PowerShell cannot parse)
+          const dlResult = await asyncTryCatch(() => downloadBundle(cloud));
+          if (!dlResult.ok) {
+            const ghUrl = `https://github.com/${REPO}/releases/download/${cloud}-latest/${cloud}.js`;
+            reportDownloadError(ghUrl, dlResult.error);
+            return false;
+          }
+          runBundleSync(dlResult.data, cloud, agent, env);
+          return true;
+        });
     if (!r.ok) {
       const errMsg = getErrorMessage(r.error);
       handleUserInterrupt(errMsg, dashboardUrl);
       reportScriptFailure(errMsg, cloud, agent, authHint, prompt, dashboardUrl, spawnName);
+      return false;
+    }
+    if (localMainResolved) {
+      return true;
+    }
+    if (!r.data) {
       return false;
     }
     return true;
@@ -937,6 +979,30 @@ function resolveTrustedCliDir(cliDir: string): string {
   const resolvedCliDir = path.resolve(cliDir);
   const realCliDir = tryCatchIf(isFileError, () => fs.realpathSync(resolvedCliDir));
   return realCliDir.ok ? realCliDir.data : resolvedCliDir;
+}
+
+/**
+ * Resolve a provider local entrypoint from SPAWN_CLI_DIR safely.
+ *
+ * This keeps command routing aligned with the CloudProvider registry rather than
+ * assuming `<cloud>/main.ts` path conventions inline.
+ */
+function resolveLocalProviderMain(cliDir: string, cloud: string): string {
+  const provider = getCloudProvider(cloud);
+  if (!provider) {
+    return "";
+  }
+  const resolvedCliDir = resolveTrustedCliDir(cliDir);
+  const candidatePath = path.join(resolvedCliDir, "packages", "cli", "src", provider.localMainEntrypoint);
+  const realResult = tryCatchIf(isFileError, () => fs.realpathSync(candidatePath));
+  if (!realResult.ok) {
+    return "";
+  }
+  const prefix = resolvedCliDir.endsWith(path.sep) ? resolvedCliDir : resolvedCliDir + path.sep;
+  if (!realResult.data.startsWith(prefix)) {
+    return "";
+  }
+  return realResult.data;
 }
 
 /**
@@ -1116,6 +1182,16 @@ export async function cmdRunHeadless(agent: string, cloud: string, opts: Headles
   if (!manifest.clouds[resolvedCloud]) {
     headlessError(resolvedAgent, resolvedCloud, "UNKNOWN_CLOUD", `Unknown cloud: ${resolvedCloud}`, outputFormat, 3);
   }
+  if (!getCloudProvider(resolvedCloud)) {
+    headlessError(
+      resolvedAgent,
+      resolvedCloud,
+      "UNKNOWN_CLOUD",
+      `No CloudProvider registered for ${resolvedCloud}`,
+      outputFormat,
+      3,
+    );
+  }
 
   const matrixKey = `${resolvedCloud}/${resolvedAgent}`;
   if (manifest.matrix[matrixKey] !== "implemented") {
@@ -1152,22 +1228,7 @@ export async function cmdRunHeadless(agent: string, cloud: string, opts: Headles
   if (isWindows()) {
     // Windows: download JS bundle and run with bun (bash wrappers won't work)
     const cliDir = process.env.SPAWN_CLI_DIR;
-    let localMainResolved = "";
-
-    if (cliDir) {
-      const hasBadChars = (s: string) => s.includes("..") || s.includes("/") || s.includes("\\");
-      if (!hasBadChars(resolvedCloud) && !hasBadChars(resolvedAgent)) {
-        const resolvedCliDir = resolveTrustedCliDir(cliDir);
-        const candidatePath = path.join(resolvedCliDir, "packages", "cli", "src", resolvedCloud, "main.ts");
-        const realResult = tryCatchIf(isFileError, () => fs.realpathSync(candidatePath));
-        if (realResult.ok) {
-          const prefix = resolvedCliDir.endsWith(path.sep) ? resolvedCliDir : resolvedCliDir + path.sep;
-          if (realResult.data.startsWith(prefix)) {
-            localMainResolved = realResult.data;
-          }
-        }
-      }
-    }
+    const localMainResolved = cliDir ? resolveLocalProviderMain(cliDir, resolvedCloud) : "";
 
     if (debug) {
       console.error(`[headless] Executing ${resolvedAgent} on ${resolvedCloud} (Windows bundle mode)...`);
@@ -1348,6 +1409,10 @@ export async function cmdRun(
   validateRunSecurity(agent, cloud, prompt);
   ({ agent, cloud } = detectAndFixSwappedArgs(manifest, agent, cloud));
   validateEntities(manifest, agent, cloud);
+  const provider = getCloudProvider(cloud);
+  if (!provider) {
+    throw new Error(`No CloudProvider registered for ${cloud}`);
+  }
 
   // Both arguments were pre-supplied — treat as implicit selection so the
   // funnel has the same shape regardless of entry point.
@@ -1425,7 +1490,7 @@ export async function cmdRun(
   }
 
   const agentName = manifest.agents[agent].name;
-  const cloudName = manifest.clouds[cloud].name;
+  const cloudName = provider.label;
   const suffix = prompt ? " with prompt..." : "...";
   p.log.step(`Launching ${pc.bold(agentName)} on ${pc.bold(cloudName)}${suffix}`, CLACK_LOG_OPTS);
   captureEvent("picker_completed");

@@ -24,7 +24,7 @@ export const HomeAgentPick = memo(function HomeAgentPickComp({ agents }: { agent
   return (
     <section className={styles["band"]} aria-labelledby="pick-title">
       <div className={styles["sectionHead"]}>
-        <span className={styles["sectionHead__index"]} aria-hidden>
+        <span className={styles["sectionHead__index"]} aria-hidden="true">
           1
         </span>
         <h2 id="pick-title" className={styles["sectionHead__title"]}>
@@ -54,10 +54,10 @@ export const HomeAgentPick = memo(function HomeAgentPickComp({ agents }: { agent
 
       <ul className={styles["agentGrid"]}>
         {filtered.map((a) => {
-          const isMoreRecipes = a.slug === "__more_recipes";
-          const muted = !a.available && !isMoreRecipes;
+          const clickable = a.chatVerified && a.available;
+          const muted = !clickable;
 
-          const cardClass = `${styles["agentCard"]} ${a.highlight ? styles["agentCard--hot"] : ""} ${muted ? styles["agentCard--muted"] : ""}`.trim();
+          const cardClass = `${styles["agentCard"]} ${a.highlight ? styles["agentCard--hot"] : ""} ${muted ? styles["agentCard--disabled"] : ""}`.trim();
 
           const inner = (
             <>
@@ -92,19 +92,15 @@ export const HomeAgentPick = memo(function HomeAgentPickComp({ agents }: { agent
 
           return (
             <li key={a.slug}>
-              {a.available ? (
+              {clickable ? (
                 <Link
                   href={`/cli?agent=${encodeURIComponent(a.slug)}`}
                   className={`${cardClass} ${styles["agentCard--clickable"]}`.trim()}
                 >
                   {inner}
                 </Link>
-              ) : isMoreRecipes ? (
-                <a href={GRID_SPAWN_REQUEST_AGENT_MAILTO} className={`${cardClass} ${styles["agentCard--clickable"]}`.trim()}>
-                  {inner}
-                </a>
               ) : (
-                <div className={cardClass} title="Not yet provisionable in the open-source bundle — see the CLI guide for the current matrix.">
+                <div className={cardClass} aria-disabled="true">
                   {inner}
                 </div>
               )}

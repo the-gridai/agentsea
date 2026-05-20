@@ -38,7 +38,9 @@ export default async function HomePage() {
             <h1 id="hero-title" className={styles["hero__title"]}>
               Spawn AI agents locally or on the cloud
             </h1>
-            <p className={styles["hero__tagline"]}>Any agent, on your infrastructure — wired to The Grid API</p>
+            <p className={styles["hero__tagline"]}>
+              Any agent, on your infrastructure — wired to The Grid API.
+            </p>
           </section>
 
           <HomeAgentPick agents={agents} />
@@ -47,14 +49,11 @@ export default async function HomePage() {
               Without the CLI
             </h2>
             <p className={styles["lede"]}>
-              Same flow as packaged CLIs elsewhere: fetch a bootstrap script when you don&apos;t want a global install
-              yet. (URLs are placeholders until the CDN ships.)
+              Fetch a bootstrap script when you don&apos;t want a global CLI install yet.
             </p>
             <div className={styles["withoutCliCard"]}>
               <h3 className={styles["withoutCliTitle"]}>One-liner (example)</h3>
-              <p className={styles["withoutCliText"]}>
-                OpenClaw on DigitalOcean — thin shim that delegates to the control plane bundle:
-              </p>
+              <p className={styles["withoutCliText"]}>OpenClaw on DigitalOcean:</p>
               <CopyCode label="shell" code={WITHOUT_CLI_SNIPPET} />
               <p className={styles["withoutCliHint"]}>
                 Pattern: <code className={styles["hoodInstallCard__inline"]}>{ONE_LINER_PATTERN}</code> — see the{" "}
@@ -98,9 +97,7 @@ export default async function HomePage() {
             </div>
 
             <p className={styles["hoodPipelineLead"]}>
-              <strong>On each spawn</strong>, the CLI provisions your cloud VM and installs the agent bundle from the{" "}
-              <code className={styles["hoodInstallCard__code"]}>manifest.json</code> matrix (<code>/sh/</code>
-              userdata).
+              <strong>On each spawn</strong>, the CLI provisions your cloud VM and installs the agent.
             </p>
             <ol className={styles["hoodSteps"]}>
               <li className={styles["hoodStep"]}>
@@ -165,7 +162,7 @@ export default async function HomePage() {
               <div className={styles["whyCard"]}>
                 <h3 className={styles["whyCard__h"]}>Agent-agnostic</h3>
                 <p className={styles["whyCard__p"]}>
-                  Start with OpenClaw; add more agents through recipes instead of one-off forks.
+                  Start with OpenClaw, Codex, or OpenCode, then add more agents as they become available.
                 </p>
               </div>
               <div className={styles["whyCard"]}>

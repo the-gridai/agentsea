@@ -15,7 +15,7 @@
   max-width: 72rem;
   margin: 0 auto;
   padding: pad(3) pad(6);
-  @include flex(space-between, center);
+  @include flex-sides;
   gap: pad(6);
 
   @media (min-width: 768px) {

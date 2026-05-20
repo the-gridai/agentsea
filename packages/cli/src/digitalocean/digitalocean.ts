@@ -10,7 +10,7 @@ import { getErrorMessage, isNumber, isString, toObjectArray, toRecord } from "@g
 import { isInteractiveTTY } from "../commands/shared.js";
 import { handleBillingError, isBillingError, showNonBillingError } from "../shared/billing-guidance.js";
 import { GRID_SPAWN_CLI } from "../shared/cli-invocation.js";
-import { getPackagesForTier, NODE_INSTALL_CMD, needsBun, needsNode } from "../shared/cloud-init.js";
+import { getPackagesForTier, cloudInitAptBootstrapLines, NODE_INSTALL_CMD, needsBun, needsNode } from "../shared/cloud-init.js";
 import { generateCsrfState, OAUTH_CSS } from "../shared/oauth.js";
 import { parseJsonObj } from "../shared/parse.js";
 import { getSpawnCloudConfigPath } from "../shared/paths.js";
@@ -24,7 +24,10 @@ import {
   unwrapOr,
 } from "../shared/result.js";
 import {
+  awaitRemoteProcess,
   killWithTimeout,
+  pollCloudInitComplete,
+  remoteExecStdio,
   SSH_BASE_OPTS,
   SSH_INTERACTIVE_OPTS,
   scpQuietArgs,
@@ -1190,14 +1193,11 @@ export async function promptDoRegion(): Promise<string> {
 
 function getCloudInitUserdata(tier: CloudInitTier = "full"): string {
   const packages = getPackagesForTier(tier);
-  const quotedPackages = packages.map((p) => shellQuote(p)).join(" ");
   const lines = [
     "#!/bin/bash",
     "set -e",
     "export HOME=/root",
-    "export DEBIAN_FRONTEND=noninteractive",
-    "apt-get update -y",
-    `apt-get install -y --no-install-recommends ${quotedPackages}`,
+    ...cloudInitAptBootstrapLines(packages),
   ];
   if (needsNode(tier)) {
     lines.push(`${NODE_INSTALL_CMD} || true`);
@@ -1468,7 +1468,17 @@ export async function waitForCloudInit(ip?: string, maxAttempts = 60): Promise<v
     extraSshOpts: keyOpts,
   });
 
-  // Stream cloud-init output so the user sees progress in real time
+  if (!isSpawnVerbose()) {
+    await pollCloudInitComplete({
+      host: serverIp,
+      user: "root",
+      extraSshOpts: keyOpts,
+      maxAttempts,
+    });
+    return;
+  }
+
+  // Verbose: stream cloud-init output so operators see full bootstrap logs
   logStep("Streaming cloud-init output (timeout: 5min)...");
   const remoteScript =
     "tail -f /var/log/cloud-init-output.log 2>/dev/null & TAIL_PID=$!\n" +
@@ -1590,17 +1600,13 @@ export async function runServer(cmd: string, timeoutSecs?: number, ip?: string):
       fullCmd,
     ],
     {
-      stdio: [
-        "ignore",
-        "inherit",
-        "inherit",
-      ],
+      stdio: remoteExecStdio(),
     },
   );
 
   const timeout = (timeoutSecs || 300) * 1000;
   const timer = setTimeout(() => killWithTimeout(proc), timeout);
-  const runResult = await asyncTryCatch(() => proc.exited);
+  const runResult = await asyncTryCatch(() => awaitRemoteProcess(proc));
   clearTimeout(timer);
   if (!runResult.ok) {
     throw runResult.error;
@@ -1625,15 +1631,11 @@ export async function uploadFile(localPath: string, remotePath: string, ip?: str
       `root@${serverIp}:${normalizedRemote}`,
     ],
     {
-      stdio: [
-        "ignore",
-        "inherit",
-        "inherit",
-      ],
+      stdio: remoteExecStdio(),
     },
   );
   const timer = setTimeout(() => killWithTimeout(proc), 120_000);
-  const uploadResult = await asyncTryCatch(() => proc.exited);
+  const uploadResult = await asyncTryCatch(() => awaitRemoteProcess(proc));
   clearTimeout(timer);
   if (!uploadResult.ok) {
     throw uploadResult.error;
@@ -1660,15 +1662,11 @@ export async function downloadFile(remotePath: string, localPath: string, ip?: s
       localPath,
     ],
     {
-      stdio: [
-        "ignore",
-        "inherit",
-        "inherit",
-      ],
+      stdio: remoteExecStdio(),
     },
   );
   const timer = setTimeout(() => killWithTimeout(proc), 120_000);
-  const dlResult = await asyncTryCatch(() => proc.exited);
+  const dlResult = await asyncTryCatch(() => awaitRemoteProcess(proc));
   clearTimeout(timer);
   if (!dlResult.ok) {
     throw dlResult.error;

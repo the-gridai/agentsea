@@ -1,6 +1,12 @@
 import type { Manifest } from "@grid-spawn/sdk";
 import { agentKeys, cloudKeys, matrixStatus } from "@grid-spawn/sdk";
 
+import { CHAT_VERIFIED_AGENT_SLUGS } from "./home-public-constants";
+
+const CHAT_VERIFIED_ORDER = new Map<string, number>(
+  CHAT_VERIFIED_AGENT_SLUGS.map((slug, i) => [slug, i]),
+);
+
 /** First cloud key (manifest order) with an implemented matrix cell for this agent, or null. */
 export function firstImplementedCloudForAgent(m: Manifest, agentSlug: string): string | null {
   for (const cloud of cloudKeys(m)) {
@@ -21,6 +27,7 @@ export interface HomeAgentVm {
   metricLabel: string;
   metricValue: string;
   highlight: boolean;
+  chatVerified: boolean;
   image: string | null;
   available: boolean;
 }
@@ -60,6 +67,8 @@ export function homeAgentsFromManifest(m: Manifest): HomeAgentVm[] {
     const available = implementedCells > 0;
 
     const desc = agent.tagline?.trim() || agent.description;
+    const chatVerified = CHAT_VERIFIED_ORDER.has(slug);
+
     rows.push({
       slug,
       name: agent.name,
@@ -67,22 +76,18 @@ export function homeAgentsFromManifest(m: Manifest): HomeAgentVm[] {
       publisher: agent.creator ?? "—",
       metricLabel: "GitHub stars",
       metricValue: formatStars(agent.github_stars),
-      highlight: slug === "openclaw",
+      highlight: chatVerified,
+      chatVerified,
       image: ICON_MAP[slug] ?? null,
       available,
     });
   }
 
-  rows.push({
-    slug: "__more_recipes",
-    name: "More via recipes",
-    desc: "Ship any agent with a signed recipe + OCI bundle — same provision path.",
-    publisher: "The Grid",
-    metricLabel: "Packaging",
-    metricValue: "OCI + cosign",
-    highlight: false,
-    image: null,
-    available: false,
+  rows.sort((a, b) => {
+    const aRank = CHAT_VERIFIED_ORDER.get(a.slug) ?? Number.MAX_SAFE_INTEGER;
+    const bRank = CHAT_VERIFIED_ORDER.get(b.slug) ?? Number.MAX_SAFE_INTEGER;
+    if (aRank !== bRank) return aRank - bRank;
+    return a.name.localeCompare(b.name);
   });
 
   return rows;

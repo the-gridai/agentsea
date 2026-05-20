@@ -38,13 +38,65 @@ import {
 const THEGRID_API_INFERENCE_BASE = "https://api.thegrid.ai/v1";
 /** The Grid Anthropic-compatible base used by OpenClaw to avoid OpenAI redirect host blocking. */
 const THEGRID_OPENCLAW_MESSAGES_BASE = "https://messages-beta.api.thegrid.ai/v1";
+const CODEX_LITELLM_PORT = 4141;
+const CODEX_LITELLM_BASE_URL = `http://127.0.0.1:${CODEX_LITELLM_PORT}/v1`;
+
+/** Remote shell: apt python3-venv (Debian/Ubuntu) + ~/.litellm-venv with litellm[proxy]. */
+const CODEX_LITELLM_VENV_SETUP = [
+  '_sudo=""; [ "$(id -u)" != "0" ] && _sudo="sudo"',
+  'command -v python3 >/dev/null 2>&1 || { $_sudo apt-get update -qq && $_sudo apt-get install -y -qq python3 || exit 1; }',
+  // `import venv` can succeed without ensurepip; always install the distro venv package on apt systems.
+  'if command -v apt-get >/dev/null 2>&1; then',
+  "  $_sudo apt-get update -qq",
+  '  _py_ver=$(python3 -c "import sys; print(f\\"{sys.version_info.major}.{sys.version_info.minor}\\")" 2>/dev/null || echo "3")',
+  '  if apt-cache show "python${_py_ver}-venv" >/dev/null 2>&1; then',
+  '    $_sudo apt-get install -y "python${_py_ver}-venv" || exit 1',
+  '  elif apt-cache show python3-venv >/dev/null 2>&1; then',
+  "    $_sudo apt-get install -y python3-venv || exit 1",
+  "  else",
+  '    echo "No python3-venv package available via apt" >&2; exit 1',
+  "  fi",
+  "fi",
+  'if [ -d "$HOME/.litellm-venv" ] && [ ! -x "$HOME/.litellm-venv/bin/litellm" ]; then rm -rf "$HOME/.litellm-venv"; fi',
+  'if [ ! -x "$HOME/.litellm-venv/bin/litellm" ]; then',
+  '  rm -rf "$HOME/.litellm-venv"',
+  '  python3 -m venv "$HOME/.litellm-venv" || { echo "python3 -m venv failed" >&2; exit 1; }',
+  '  "$HOME/.litellm-venv/bin/pip" install -q --upgrade pip',
+  "fi",
+  '  "$HOME/.litellm-venv/bin/pip" install -q --upgrade "litellm[proxy]>=1.85.0"',
+  'mkdir -p "$HOME/.local/bin"',
+  'ln -sf "$HOME/.litellm-venv/bin/litellm" "$HOME/.local/bin/litellm"',
+].join("\n");
+
+/** True when Codex LiteLLM proxy responds on localhost (health endpoint). */
+const CODEX_LITELLM_HEALTH_CHECK = `curl -sf "http://127.0.0.1:${CODEX_LITELLM_PORT}/health/liveliness" >/dev/null 2>&1`;
+
+/** Strips empty tools=[] before upstream chat/completions (vLLM rejects empty arrays). */
+const CODEX_LITELLM_CALLBACKS_PY = `from litellm.integrations.custom_logger import CustomLogger
+
+class DropEmptyToolsHandler(CustomLogger):
+    def _strip_empty_tools(self, data: dict) -> dict:
+        if data.get("tools") == []:
+            data.pop("tools", None)
+        if "tools" not in data and data.get("tool_choice") in ("none", "auto"):
+            data.pop("tool_choice", None)
+        return data
+
+    async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
+        return self._strip_empty_tools(data)
+
+    async def async_pre_call_deployment_hook(self, kwargs, call_type):
+        return self._strip_empty_tools(kwargs)
+
+proxy_handler_instance = DropEmptyToolsHandler()
+`;
 
 /**
  * Base URL for Anthropic SDK / Claude Code (`ANTHROPIC_BASE_URL`). The SDK appends `/v1/messages`.
- * Grid serves Messages at `https://api.thegrid.ai/api/v1/messages` — so the client base must be
- * `https://api.thegrid.ai/api` (not `…/api/v1`, which would produce `…/api/v1/v1/messages` and 403/404).
+ * Grid serves Anthropic-compatible Messages on the messages-beta host, so the client base must be
+ * `https://messages-beta.api.thegrid.ai` (not with `/v1`, which would produce `/v1/v1/messages`).
  */
-const THEGRID_ANTHROPIC_CLIENT_BASE = "https://api.thegrid.ai/api";
+const THEGRID_ANTHROPIC_CLIENT_BASE = "https://messages-beta.api.thegrid.ai";
 
 /** Default Control UI `/chat` session path (grid-spawn OpenClaw uses agent `main`). */
 const OPENCLAW_CONTROL_UI_DEFAULT_CHAT_SESSION = "agent:main:main";
@@ -107,7 +159,11 @@ async function installAgent(
   installCmd: string,
   timeoutSecs?: number,
 ): Promise<void> {
-  logStep(`Installing ${agentName}...`);
+  if (isSpawnVerbose()) {
+    logStep(`Installing ${agentName}...`);
+  } else {
+    logAlwaysStep(`Installing ${agentName}…`);
+  }
   const r = await asyncTryCatch(() =>
     withRetry(`${agentName} install`, () => wrapSshCall(runner.runServer(installCmd, timeoutSecs)), 4, 10, true),
   );
@@ -186,20 +242,26 @@ async function installClaudeCode(runner: CloudRunner): Promise<void> {
   logInfo("Claude Code agent installed successfully");
 }
 
-async function setupClaudeCodeConfig(runner: CloudRunner, apiKey: string): Promise<void> {
+async function setupClaudeCodeConfig(runner: CloudRunner, apiKey: string, modelId?: string): Promise<void> {
   logStep("Configuring Claude Code...");
 
+  const selectedModel =
+    typeof modelId === "string" && modelId.trim() && validateModelId(modelId.trim())
+      ? modelId.trim()
+      : GRID_INFERENCE_DEFAULT_MODEL_ID;
   const escapedKey = jsonEscape(apiKey);
-  // The Grid at ANTHROPIC_BASE_URL: Claude Code / Anthropic SDK may send `x-api-key` from ANTHROPIC_API_KEY
-  // and/or `Authorization: Bearer` from ANTHROPIC_AUTH_TOKEN. Set both to the platform key so inference
-  // stays on api.thegrid.ai only (never api.anthropic.com).
+  const escapedModel = jsonEscape(selectedModel);
+  // The Grid at ANTHROPIC_BASE_URL: prefer bearer auth via ANTHROPIC_AUTH_TOKEN.
+  // Keep ANTHROPIC_API_KEY empty to avoid Claude's auth conflict warning when both are populated.
   const settingsJson = `{
   "theme": "dark",
   "editor": "vim",
+  "model": ${escapedModel},
   "env": {
     "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
     "ANTHROPIC_BASE_URL": "${THEGRID_ANTHROPIC_CLIENT_BASE}",
-    "ANTHROPIC_API_KEY": ${escapedKey},
+    "ANTHROPIC_MODEL": ${escapedModel},
+    "ANTHROPIC_API_KEY": "",
     "ANTHROPIC_AUTH_TOKEN": ${escapedKey}
   },
   "permissions": {
@@ -365,17 +427,132 @@ async function setupCodexConfig(runner: CloudRunner, modelId?: string): Promise<
       ? modelId.trim()
       : VENDOR_CHAT_MODEL_DEFAULT,
   );
+  const upstreamModel = model.includes("/") ? model : `openai/${model}`;
   const config = `model = "${model}"
 model_provider = "${slot}"
 sandbox_mode = "danger-full-access"
 
 [model_providers.${slot}]
 name = "The Grid"
-base_url = "${THEGRID_API_INFERENCE_BASE}"
-env_key = "THEGRID_API_KEY"
+base_url = "${CODEX_LITELLM_BASE_URL}"
+env_key = "OPENAI_API_KEY"
 wire_api = "responses"
 `;
   await uploadConfigFile(runner, config, "$HOME/.codex/config.toml");
+
+  const litellmConfig = `model_list:
+  - model_name: "${model}"
+    litellm_params:
+      model: "${upstreamModel}"
+      api_base: "${THEGRID_API_INFERENCE_BASE}"
+      api_key: "os.environ/THEGRID_API_KEY"
+      use_chat_completions_api: true
+      drop_params: true
+
+litellm_settings:
+  drop_params: true
+  callbacks: codex_litellm_callbacks.proxy_handler_instance
+`;
+  await uploadConfigFile(runner, litellmConfig, "$HOME/.codex/litellm.yaml");
+  await uploadConfigFile(runner, CODEX_LITELLM_CALLBACKS_PY, "$HOME/.codex/codex_litellm_callbacks.py");
+
+  logStep("Installing Codex LiteLLM proxy (python3-venv + litellm)...");
+  const venvResult = await asyncTryCatch(() =>
+    runner.runServer(CODEX_LITELLM_VENV_SETUP, 300),
+  );
+  if (!venvResult.ok) {
+    throw new Error(
+      "Codex LiteLLM install failed — ensure python3-venv is available on the VM (see provisioning logs)",
+    );
+  }
+}
+
+async function startCodexLiteLlmProxy(runner: CloudRunner): Promise<void> {
+  logStep("Starting Codex local responses proxy...");
+
+  const wrapperScript = [
+    "#!/bin/bash",
+    'source "$HOME/.spawnrc" 2>/dev/null',
+    'export PATH="$HOME/.local/bin:$HOME/.litellm-venv/bin:$PATH"',
+    'export PYTHONPATH="$HOME/.codex"',
+    "export THEGRID_API_KEY",
+    `exec "$HOME/.litellm-venv/bin/litellm" --config "$HOME/.codex/litellm.yaml" --host 127.0.0.1 --port ${CODEX_LITELLM_PORT}`,
+  ].join("\n");
+
+  const unitFile = [
+    "[Unit]",
+    "Description=Codex LiteLLM proxy for The Grid",
+    "After=network.target",
+    "",
+    "[Service]",
+    "Type=simple",
+    "ExecStart=/usr/local/bin/codex-litellm-wrapper",
+    "Restart=always",
+    "RestartSec=3",
+    "User=__USER__",
+    "Environment=HOME=__HOME__",
+    "StandardOutput=append:/tmp/codex-litellm.log",
+    "StandardError=append:/tmp/codex-litellm.log",
+    "",
+    "[Install]",
+    "WantedBy=multi-user.target",
+  ].join("\n");
+
+  validateScriptTemplate(wrapperScript, "codex-litellm-wrapper");
+  validateScriptTemplate(unitFile, "codex-litellm-unit");
+
+  const wrapperB64 = Buffer.from(wrapperScript).toString("base64");
+  const unitB64 = Buffer.from(unitFile).toString("base64");
+
+  const script = [
+    "source ~/.spawnrc 2>/dev/null",
+    'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.litellm-venv/bin:$PATH"',
+    'test -n "$THEGRID_API_KEY" || { echo "THEGRID_API_KEY missing from ~/.spawnrc" >&2; exit 1; }',
+    'export THEGRID_API_KEY',
+    'test -s "$HOME/.codex/litellm.yaml" || { echo "Missing ~/.codex/litellm.yaml" >&2; exit 1; }',
+    `if ${CODEX_LITELLM_HEALTH_CHECK}; then echo "Codex proxy already running on :${CODEX_LITELLM_PORT}"; exit 0; fi`,
+    CODEX_LITELLM_VENV_SETUP,
+    'test -x "$HOME/.litellm-venv/bin/litellm" || { echo "litellm binary missing after venv setup" >&2; exit 1; }',
+    "printf '%s' '" + wrapperB64 + "' | base64 -d > /tmp/codex-litellm-wrapper.tmp",
+    "chmod +x /tmp/codex-litellm-wrapper.tmp",
+    "if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then",
+    '  _sudo=""',
+    '  [ "$(id -u)" != "0" ] && _sudo="sudo"',
+    "  $_sudo mv /tmp/codex-litellm-wrapper.tmp /usr/local/bin/codex-litellm-wrapper",
+    "  printf '%s' '" + unitB64 + "' | base64 -d > /tmp/codex-litellm.unit.tmp",
+    '  sed -i "s|__USER__|$(whoami)|;s|__HOME__|$HOME|" /tmp/codex-litellm.unit.tmp',
+    "  $_sudo mv /tmp/codex-litellm.unit.tmp /etc/systemd/system/codex-litellm.service",
+    "  $_sudo systemctl daemon-reload",
+    "  $_sudo systemctl enable codex-litellm 2>/dev/null",
+    "  $_sudo systemctl restart codex-litellm",
+    "else",
+    "  mv /tmp/codex-litellm-wrapper.tmp /usr/local/bin/codex-litellm-wrapper",
+    "  pkill -f '[l]itellm.*4141' 2>/dev/null || true",
+    "  sleep 1",
+    "  if command -v setsid >/dev/null 2>&1; then",
+    "    setsid /usr/local/bin/codex-litellm-wrapper >> /tmp/codex-litellm.log 2>&1 < /dev/null &",
+    "  else",
+    "    nohup /usr/local/bin/codex-litellm-wrapper >> /tmp/codex-litellm.log 2>&1 < /dev/null &",
+    "  fi",
+    "fi",
+    "elapsed=0; while [ $elapsed -lt 120 ]; do",
+    `  if ${CODEX_LITELLM_HEALTH_CHECK}; then echo "Codex proxy ready after $elapsed sec"; exit 0; fi`,
+    "  sleep 1; elapsed=$((elapsed + 1))",
+    "done",
+    'echo "Codex proxy failed to start within 120s" >&2',
+    "if command -v systemctl >/dev/null 2>&1; then systemctl status codex-litellm --no-pager 2>/dev/null || true; fi",
+    "tail -60 /tmp/codex-litellm.log 2>/dev/null || true",
+    "exit 1",
+  ].join("\n");
+
+  const result = await asyncTryCatch(() => runner.runServer(script, 300));
+  if (result.ok) {
+    logInfo(`Codex proxy started on :${CODEX_LITELLM_PORT}`);
+    return;
+  }
+  throw new Error(
+    `Codex LiteLLM proxy failed to start on :${CODEX_LITELLM_PORT} — check /tmp/codex-litellm.log on the VM`,
+  );
 }
 
 // ─── OpenClaw Config ─────────────────────────────────────────────────────────
@@ -485,13 +662,14 @@ async function mergeOpenClawGridInferenceProvider(
     "const cfgPath = (process.env.HOME ?? '') + '/.openclaw/openclaw.json';",
     "const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));",
     "cfg.env ||= {};",
-    `if (!cfg.env.OPENAI_BASE_URL) cfg.env.OPENAI_BASE_URL = ${inferLit};`,
+    `cfg.env.OPENAI_BASE_URL = ${inferLit};`,
     "cfg.env.THEGRID_API_KEY = apiKeyPlain;",
     "cfg.env.OPENAI_API_KEY = apiKeyPlain;",
     "cfg.models ||= {};",
-    "if (!cfg.models.mode) cfg.models.mode = 'merge';",
-    "cfg.models.providers ||= {};",
-    "cfg.models.providers[providerId] = { baseUrl: infer, apiKey: apiKeyPlain, api: 'anthropic-messages', models: [{ id: slug, name: 'The Grid (' + slug + ')' }] };",
+    "cfg.models.mode = 'merge';",
+    "cfg.models.providers = {",
+    "  [providerId]: { baseUrl: infer, apiKey: apiKeyPlain, api: 'anthropic-messages', models: [{ id: slug, name: 'The Grid (' + slug + ')' }] },",
+    "};",
     "cfg.agents ||= {}; cfg.agents.defaults ||= {}; cfg.agents.defaults.model ||= {};",
     "cfg.agents.defaults.model.primary = ocPrimary;",
     "cfg.agents.defaults.models ||= {};",
@@ -555,19 +733,19 @@ async function setupOpenclawConfig(
 
   const gatewayToken = token ?? crypto.randomUUID().replace(/-/g, "");
 
-  // OpenClaw onboarding: workspace + gateway token + custom OpenAI-compat probe (see docs.openclaw.ai/cli/onboard).
-  // Chat routing is forced afterward via mergeOpenClawGridInferenceProvider: builtin `openrouter/*` maps to
-  // third-party auth profiles — we register **only** `models.providers.thegrid` → `api.thegrid.ai` + `THEGRID_API_KEY`.
+  // OpenClaw onboarding: workspace + gateway token + custom Anthropic-compat probe (see docs.openclaw.ai/cli/onboard).
+  // Use messages-beta (not api.thegrid.ai) so OpenClaw's SSRF guard never follows api → synapse redirects.
+  // mergeOpenClawGridInferenceProvider then replaces any onboard provider stubs with models.providers.thegrid only.
   const onboardCmd =
     "source ~/.spawnrc 2>/dev/null; " +
     "export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
     "openclaw onboard --non-interactive " +
     "--auth-choice custom-api-key " +
-    `--custom-base-url ${shellQuote(THEGRID_API_INFERENCE_BASE)} ` +
+    `--custom-base-url ${shellQuote(THEGRID_OPENCLAW_MESSAGES_BASE)} ` +
     `--custom-model-id ${shellQuote(catalogModelId)} ` +
     `--custom-api-key ${shellQuote(apiKey)} ` +
     "--secret-input-mode plaintext " +
-    "--custom-compatibility openai " +
+    "--custom-compatibility anthropic " +
     "--gateway-auth token " +
     `--gateway-token ${shellQuote(gatewayToken)} ` +
     "--skip-health " +
@@ -587,7 +765,7 @@ async function setupOpenclawConfig(
         env: {
           THEGRID_API_KEY: apiKey,
           OPENAI_API_KEY: apiKey,
-          OPENAI_BASE_URL: THEGRID_API_INFERENCE_BASE,
+          OPENAI_BASE_URL: THEGRID_OPENCLAW_MESSAGES_BASE,
         },
         gateway: {
           mode: "local",
@@ -882,6 +1060,40 @@ export async function startGateway(runner: CloudRunner): Promise<void> {
 }
 
 // ─── Hermes Web Dashboard ────────────────────────────────────────────────────
+
+/**
+ * Hermes v0.14+ reads model/provider from ~/.hermes/config.yaml (not ~/.spawnrc OPENAI_*).
+ * Without this, install defaults to provider:auto → OpenRouter + claude-opus-4.6.
+ */
+async function setupHermesConfig(runner: CloudRunner, apiKey: string, modelId?: string): Promise<void> {
+  logStep("Configuring Hermes Agent for The Grid...");
+
+  const selectedModel =
+    typeof modelId === "string" && modelId.trim() && validateModelId(modelId.trim())
+      ? modelId.trim()
+      : GRID_INFERENCE_DEFAULT_MODEL_ID;
+
+  const modelYaml =
+    /^[a-zA-Z0-9._-]+$/.test(selectedModel) ? selectedModel : `"${selectedModel.replace(/"/g, '\\"')}"`;
+
+  const configYaml = [
+    "model:",
+    `  default: ${modelYaml}`,
+    "  provider: custom",
+    `  base_url: ${THEGRID_API_INFERENCE_BASE}`,
+  ].join("\n");
+
+  const hermesEnv = [
+    `OPENAI_API_KEY=${shellQuote(apiKey)}`,
+    `THEGRID_API_KEY=${shellQuote(apiKey)}`,
+  ].join("\n");
+
+  await runner.runServer("mkdir -p ~/.hermes");
+  await uploadConfigFile(runner, `${configYaml}\n`, "$HOME/.hermes/config.yaml");
+  await uploadConfigFile(runner, `${hermesEnv}\n`, "$HOME/.hermes/.env");
+  await runner.runServer("chmod 600 ~/.hermes/config.yaml ~/.hermes/.env");
+  logInfo(`Hermes Agent configured (model: ${selectedModel}, provider: custom → The Grid)`);
+}
 
 /**
  * Start the Hermes Agent web dashboard as a session-scoped background process.
@@ -1388,22 +1600,25 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
     claude: {
       name: "Claude Code",
       cloudInitTier: "minimal",
+      modelDefault: VENDOR_CHAT_MODEL_DEFAULT,
+      modelEnvVar: "ANTHROPIC_MODEL",
       preProvision: detectGithubAuth,
       install: () => installClaudeCode(runner),
       // Inference is The Grid only: ANTHROPIC_BASE_URL → Grid Anthropic client base (SDK appends /v1/messages).
       envVars: (apiKey) => [
         `THEGRID_API_KEY=${apiKey}`,
         `ANTHROPIC_BASE_URL=${THEGRID_ANTHROPIC_CLIENT_BASE}`,
+        `ANTHROPIC_MODEL=${GRID_INFERENCE_DEFAULT_MODEL_ID}`,
         `ANTHROPIC_AUTH_TOKEN=${apiKey}`,
-        `ANTHROPIC_API_KEY=${apiKey}`,
+        "ANTHROPIC_API_KEY=",
         "CLAUDE_CODE_SKIP_ONBOARDING=1",
         "CLAUDE_CODE_ENABLE_TELEMETRY=0",
       ],
-      configure: (apiKey) => setupClaudeCodeConfig(runner, apiKey),
+      configure: (apiKey, modelId) => setupClaudeCodeConfig(runner, apiKey, modelId),
       launchCmd: () =>
-        "source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH; claude",
+        'source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH; claude --model "$ANTHROPIC_MODEL"',
       promptCmd: (prompt) =>
-        `source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH; claude -p --dangerously-skip-permissions ${shellQuote(prompt)}`,
+        `source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH; claude --model "$ANTHROPIC_MODEL" -p --dangerously-skip-permissions ${shellQuote(prompt)}`,
       updateCmd:
         'export PATH="$HOME/.claude/local/bin:$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.bun/bin:$HOME/.n/bin:$PATH"; ' +
         "npm install -g @anthropic-ai/claude-code@latest 2>/dev/null || " +
@@ -1423,8 +1638,11 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         ),
       envVars: (apiKey) => [
         `THEGRID_API_KEY=${apiKey}`,
+        `OPENAI_API_KEY=${apiKey}`,
+        `OPENAI_BASE_URL=${THEGRID_API_INFERENCE_BASE}`,
       ],
       configure: (_apiKey, modelId, _enabledSteps) => setupCodexConfig(runner, modelId),
+      preLaunch: () => startCodexLiteLlmProxy(runner),
       launchCmd: () => "source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; codex",
       promptCmd: (prompt) =>
         `source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; codex exec --sandbox danger-full-access --ask-for-approval=never ${shellQuote(prompt)} < /dev/null`,
@@ -1448,7 +1666,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         envVars: (apiKey: string) => [
           `THEGRID_API_KEY=${apiKey}`,
           `OPENAI_API_KEY=${apiKey}`,
-          `OPENAI_BASE_URL=${THEGRID_API_INFERENCE_BASE}`,
+          `OPENAI_BASE_URL=${THEGRID_OPENCLAW_MESSAGES_BASE}`,
         ],
         configure: (apiKey: string, modelId?: string, enabledSteps?: Set<string>) =>
           setupOpenclawConfig(runner, apiKey, modelId || VENDOR_CHAT_MODEL_DEFAULT, dashboardToken, enabledSteps),
@@ -1511,6 +1729,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
     hermes: {
       name: "Hermes Agent",
       cloudInitTier: "minimal",
+      modelDefault: VENDOR_CHAT_MODEL_DEFAULT,
       modelEnvVar: "LLM_MODEL",
       preProvision: detectGithubAuth,
       install: () =>
@@ -1530,7 +1749,8 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         `OPENAI_API_KEY=${apiKey}`,
         "HERMES_YOLO_MODE=1",
       ],
-      configure: async (_apiKey, _modelId, enabledSteps) => {
+      configure: async (apiKey, modelId, enabledSteps) => {
+        await setupHermesConfig(runner, apiKey, modelId);
         // YOLO mode is on by default (in envVars above). If the user explicitly
         // unchecked it in setup options, remove it from .spawnrc.
         if (enabledSteps && !enabledSteps.has("yolo-mode")) {
@@ -1627,6 +1847,8 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
     cursor: {
       name: "Cursor CLI",
       cloudInitTier: "bun",
+      modelDefault: VENDOR_CHAT_MODEL_DEFAULT,
+      modelEnvVar: "GRID_MODEL_ID",
       preProvision: detectGithubAuth,
       install: () =>
         installAgent(
@@ -1640,7 +1862,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         `THEGRID_API_KEY=${apiKey}`,
         `CURSOR_API_KEY=${apiKey}`,
       ],
-      configure: () => setupCursorProxy(runner),
+      configure: (_apiKey, modelId) => setupCursorProxy(runner, modelId),
       preLaunch: () => startCursorProxy(runner),
       launchCmd: () =>
         'source ~/.spawnrc 2>/dev/null; export PATH="$HOME/.local/bin:$PATH"; agent --endpoint https://api2.cursor.sh',

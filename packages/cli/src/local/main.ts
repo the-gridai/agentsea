@@ -9,7 +9,7 @@ import type { CloudOrchestrator } from "../shared/orchestrate.js";
 import * as p from "@clack/prompts";
 import { getErrorMessage } from "@grid-spawn/sdk";
 import pkg from "../../package.json" with { type: "json" };
-import { createCloudAgents } from "../shared/agent-setup.js";
+import { createCloudAgentsFromModules } from "../shared/agent-module-registry.js";
 import { makeDockerRunner, runOrchestration } from "../shared/orchestrate.js";
 import { initTelemetry } from "../shared/telemetry.js";
 import { logWarn } from "../shared/ui.js";
@@ -47,7 +47,7 @@ async function main() {
   // agent.configure() / agent.install() closures execute inside the container
   // instead of writing config files directly to the host filesystem.
   const agent = useSandbox
-    ? createCloudAgents(makeDockerRunner(baseRunner)).resolveAgent(agentName)
+    ? createCloudAgentsFromModules(makeDockerRunner(baseRunner)).resolveAgent(agentName)
     : resolveAgent(agentName);
 
   // If sandboxed, ensure Docker is installed (auto-install if missing)
@@ -78,6 +78,10 @@ async function main() {
   const cloud: CloudOrchestrator = {
     cloudName: "local",
     cloudLabel: useSandbox ? "local (sandboxed)" : "local",
+    capabilities: {
+      localRuntime: true,
+      disableSecurityScan: true,
+    },
     skipAgentInstall: false,
     runner: useSandbox ? makeDockerRunner(baseRunner) : baseRunner,
     async authenticate() {},

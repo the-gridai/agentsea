@@ -15,13 +15,27 @@ import type { CloudRunner } from "./agent-setup.js";
 import { wrapSshCall } from "./agent-setup.js";
 import { asyncTryCatchIf, isOperationalError } from "./result.js";
 import { logInfo, logStep, logWarn } from "./ui.js";
-import { VENDOR_CHAT_MODEL_DEFAULT } from "./vendor-routing.js";
+import { GRID_INFERENCE_DEFAULT_MODEL_ID } from "./vendor-routing.js";
+
+/** Human-readable label for Cursor's model picker footer (Grid catalogue id → display name). */
+export function cursorGridModelDisplayName(modelId: string): string {
+  const id = modelId.trim();
+  if (!id) return "Agent Standard";
+  if (id === GRID_INFERENCE_DEFAULT_MODEL_ID) return "Agent Standard";
+  const tail = id.includes("/") ? id.slice(id.lastIndexOf("/") + 1) : id;
+  return tail
+    .split(/[-_.]/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
 
 // ── Protobuf helpers (used in proxy scripts) ────────────────────────────────
 
 // These are string-embedded in the proxy scripts that run on the VM.
 // They implement minimal protobuf encoding for the specific message types
 // Cursor CLI expects: AgentServerMessage, ModelDetails, etc.
+// Model id/display are read from GRID_MODEL_ID (+ optional GRID_MODEL_DISPLAY_NAME) at runtime.
 
 const PROTO_HELPERS = `
 function ev(v){const b=[];while(v>0x7f){b.push((v&0x7f)|0x80);v>>>=7;}b.push(v&0x7f);return Buffer.from(b);}
@@ -32,8 +46,16 @@ function ct(){const j=Buffer.from("{}");const t=Buffer.alloc(5+j.length);t[0]=2;
 function tdf(t){return cf(em(1,em(1,es(1,t))));}
 function tef(){return cf(em(1,em(14,Buffer.from([8,10,16,5]))));}
 function bmd(id,n){return Buffer.concat([es(1,id),es(3,id),es(4,n),es(5,n)]);}
-function bmr(){return Buffer.concat([["anthropic/claude-sonnet-4-6","Claude Sonnet 4.6"],["anthropic/claude-haiku-4-5","Claude Haiku 4.5"],["openai/gpt-5.4","GPT-5.4"],["google/gemini-3.5-pro","Gemini 3.5 Pro"],["google/gemini-3.5-flash","Gemini 3.5 Flash"]].map(([i,n])=>em(1,bmd(i,n))));}
-function bdr(){return em(1,bmd("anthropic/claude-sonnet-4-6","Claude Sonnet 4.6"));}
+function formatGridModelDisplayName(id){
+  if(!id)return"Agent Standard";
+  if(id==="agent-standard")return"Agent Standard";
+  const tail=id.includes("/")?id.slice(id.lastIndexOf("/")+1):id;
+  return tail.split(/[-_.]/).filter(Boolean).map(function(w){return w.charAt(0).toUpperCase()+w.slice(1);}).join(" ");
+}
+const GRID_MODEL_ID=process.env.GRID_MODEL_ID||"agent-standard";
+const GRID_MODEL_DISPLAY=process.env.GRID_MODEL_DISPLAY_NAME||formatGridModelDisplayName(GRID_MODEL_ID);
+function bmr(){return Buffer.concat([[GRID_MODEL_ID,GRID_MODEL_DISPLAY]].map(function(pair){return em(1,bmd(pair[0],pair[1]));}));}
+function bdr(){return em(1,bmd(GRID_MODEL_ID,GRID_MODEL_DISPLAY));}
 function xstr(buf,out){let o=0;while(o<buf.length){let t=0,s=0;while(o<buf.length){const b=buf[o++];t|=(b&0x7f)<<s;s+=7;if(!(b&0x80))break;}const wt=t&7;if(wt===0){while(o<buf.length&&buf[o++]&0x80);}else if(wt===2){let l=0,s=0;while(o<buf.length){const b=buf[o++];l|=(b&0x7f)<<s;s+=7;if(!(b&0x80))break;}const d=buf.slice(o,o+l);o+=l;const st=d.toString("utf8");if(/^[\\x20-\\x7e]+$/.test(st))out.push(st);else try{xstr(d,out);}catch(e){}}else break;}}
 `.trim();
 
@@ -175,7 +197,7 @@ async function forwardGridChatCompletion(msg, stream) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: ${JSON.stringify(VENDOR_CHAT_MODEL_DEFAULT)},
+        model: process.env.GRID_MODEL_ID || "agent-standard",
         messages: [{ role: "user", content: msg }],
         stream: true,
       }),
@@ -273,11 +295,34 @@ const CURSOR_DOMAINS = [
 // ── Deployment ──────────────────────────────────────────────────────────────
 
 /**
+ * Remote shell: materialize ~/.cursor/proxy/proxy.env from ~/.spawnrc.
+ * .spawnrc uses `export KEY='value'` lines — never grep ^KEY= (misses the export prefix).
+ */
+export function cursorProxyEnvFileScript(): string {
+  return [
+    "mkdir -p ~/.cursor/proxy",
+    "set -a",
+    ". ~/.spawnrc 2>/dev/null || true",
+    "set +a",
+    'if [ -z "${THEGRID_API_KEY:-}" ]; then echo "THEGRID_API_KEY missing from ~/.spawnrc" >&2; exit 1; fi',
+    'GRID_MODEL_ID="${GRID_MODEL_ID:-agent-standard}"',
+    'GRID_MODEL_DISPLAY_NAME="${GRID_MODEL_DISPLAY_NAME:-}"',
+    "printf 'THEGRID_API_KEY=%s\\nGRID_MODEL_ID=%s\\nGRID_MODEL_DISPLAY_NAME=%s\\n' \\",
+    '  "$THEGRID_API_KEY" "$GRID_MODEL_ID" "$GRID_MODEL_DISPLAY_NAME" > ~/.cursor/proxy/proxy.env',
+    "chmod 600 ~/.cursor/proxy/proxy.env",
+  ].join("\n");
+}
+
+/**
  * Deploy the Cursor proxy infrastructure onto the remote VM.
  * Installs Caddy, uploads proxy scripts, writes Caddyfile, configures /etc/hosts.
+ * Proxy scripts read GRID_MODEL_ID from the environment (written to ~/.spawnrc during provision).
  */
-export async function setupCursorProxy(runner: CloudRunner): Promise<void> {
+export async function setupCursorProxy(runner: CloudRunner, modelId?: string): Promise<void> {
   logStep("Deploying Cursor→The Grid proxy...");
+  if (modelId?.trim()) {
+    logInfo(`Cursor proxy model: ${modelId.trim()} (${cursorGridModelDisplayName(modelId.trim())})`);
+  }
 
   // 1. Install Caddy if not present
   const installCaddy = [
@@ -370,7 +415,7 @@ export async function startCursorProxy(runner: CloudRunner): Promise<void> {
     `ss -tln 2>/dev/null | grep -q ":${port} " || nc -z 127.0.0.1 ${port} 2>/dev/null`;
 
   const script = [
-    "source ~/.spawnrc 2>/dev/null",
+    cursorProxyEnvFileScript(),
     nodeFind,
 
     // Start unary backend
@@ -388,6 +433,7 @@ export async function startCursorProxy(runner: CloudRunner): Promise<void> {
     "RestartSec=3",
     "User=$(whoami)",
     "Environment=HOME=$HOME",
+    "EnvironmentFile=$HOME/.cursor/proxy/proxy.env",
     "Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin",
     "[Install]",
     "WantedBy=multi-user.target",
@@ -396,7 +442,7 @@ export async function startCursorProxy(runner: CloudRunner): Promise<void> {
     "    $_sudo systemctl daemon-reload",
     "    $_sudo systemctl restart cursor-proxy-unary",
     "  else",
-    "    setsid $NODE ~/.cursor/proxy/unary.mjs < /dev/null &",
+    "    set -a; . ~/.cursor/proxy/proxy.env; set +a; setsid $NODE ~/.cursor/proxy/unary.mjs < /dev/null &",
     "  fi",
     "fi",
 
@@ -415,7 +461,7 @@ export async function startCursorProxy(runner: CloudRunner): Promise<void> {
     "RestartSec=3",
     "User=$(whoami)",
     "Environment=HOME=$HOME",
-    'Environment=THEGRID_API_KEY=$(grep THEGRID_API_KEY ~/.spawnrc 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\'")',
+    "EnvironmentFile=$HOME/.cursor/proxy/proxy.env",
     "Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin",
     "[Install]",
     "WantedBy=multi-user.target",
@@ -424,7 +470,7 @@ export async function startCursorProxy(runner: CloudRunner): Promise<void> {
     "    $_sudo systemctl daemon-reload",
     "    $_sudo systemctl restart cursor-proxy-bidi",
     "  else",
-    "    setsid $NODE ~/.cursor/proxy/bidi.mjs < /dev/null &",
+    "    set -a; . ~/.cursor/proxy/proxy.env; set +a; setsid $NODE ~/.cursor/proxy/bidi.mjs < /dev/null &",
     "  fi",
     "fi",
 

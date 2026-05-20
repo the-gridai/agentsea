@@ -11,6 +11,7 @@ import { validateIdentifier, validatePrompt } from "../security.js";
 import { hasSavedTheGridKey } from "../shared/oauth.js";
 import { PkgVersionSchema, parseJsonObj } from "../shared/parse.js";
 import { getSpawnCloudConfigPath } from "../shared/paths.js";
+import { getCloudProvider } from "../shared/cloud-provider-registry.js";
 import { asyncTryCatch, tryCatch, unwrapOr } from "../shared/result.js";
 import { CLACK_LOG_OPTS } from "../shared/ui.js";
 
@@ -586,8 +587,10 @@ export async function preflightCredentialCheck(manifest: Manifest, cloud: string
     return;
   }
 
-  // Interactive DigitalOcean runs use the guided readiness checklist for credentials and THEGRID_API_KEY.
-  if (cloud === "digitalocean" && isInteractiveTTY()) {
+  const provider = getCloudProvider(cloud);
+  const useProviderReadinessGate = !!provider?.capabilities?.skipInteractivePreflightCredentialCheck;
+  // Interactive providers with their own readiness gates should skip duplicate warnings.
+  if (useProviderReadinessGate && isInteractiveTTY()) {
     return;
   }
 

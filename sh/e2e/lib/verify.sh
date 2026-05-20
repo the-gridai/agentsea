@@ -172,10 +172,64 @@ input_test_claude() {
   fi
 }
 
+_codex_ensure_proxy() {
+  local app="$1"
+  log_step "Ensuring Codex LiteLLM proxy is running on :4141..."
+  cloud_exec "${app}" "source ~/.spawnrc 2>/dev/null; \
+    export PATH=\$HOME/.local/bin:\$HOME/.bun/bin:\$HOME/.litellm-venv/bin:/usr/local/bin:\$PATH; \
+    export THEGRID_API_KEY; \
+    _codex_proxy_up() { curl -sf 'http://127.0.0.1:4141/health/liveliness' >/dev/null 2>&1; }; \
+    if _codex_proxy_up; then echo 'Codex proxy already running'; exit 0; fi; \
+    test -s \"\$HOME/.codex/litellm.yaml\" || { echo 'Missing ~/.codex/litellm.yaml'; exit 1; }; \
+    _sudo=\"\"; [ \"\$(id -u)\" != \"0\" ] && _sudo=\"sudo\"; \
+    if command -v apt-get >/dev/null 2>&1; then \
+      \$_sudo apt-get update -qq; \
+      _py_ver=\$(python3 -c \"import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')\" 2>/dev/null || echo 3); \
+      if apt-cache show \"python\${_py_ver}-venv\" >/dev/null 2>&1; then \
+        \$_sudo apt-get install -y \"python\${_py_ver}-venv\" || exit 1; \
+      elif apt-cache show python3-venv >/dev/null 2>&1; then \
+        \$_sudo apt-get install -y python3-venv || exit 1; \
+      else \
+        echo 'No python3-venv package available via apt' >&2; exit 1; \
+      fi; \
+    fi; \
+    if [ -d \"\$HOME/.litellm-venv\" ] && [ ! -x \"\$HOME/.litellm-venv/bin/litellm\" ]; then rm -rf \"\$HOME/.litellm-venv\"; fi; \
+    if [ ! -x \"\$HOME/.litellm-venv/bin/litellm\" ]; then \
+      rm -rf \"\$HOME/.litellm-venv\"; \
+      python3 -m venv \"\$HOME/.litellm-venv\" || exit 1; \
+      \"\$HOME/.litellm-venv/bin/pip\" install -q --upgrade pip; \
+    fi; \
+    \"\$HOME/.litellm-venv/bin/pip\" install -q --upgrade 'litellm[proxy]>=1.85.0'; \
+    mkdir -p \"\$HOME/.local/bin\"; \
+    ln -sf \"\$HOME/.litellm-venv/bin/litellm\" \"\$HOME/.local/bin/litellm\"; \
+    if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ] && [ -x /usr/local/bin/codex-litellm-wrapper ]; then \
+      \$_sudo systemctl restart codex-litellm; \
+    elif [ -x /usr/local/bin/codex-litellm-wrapper ]; then \
+      pkill -f '[l]itellm.*4141' 2>/dev/null || true; sleep 1; \
+      if command -v setsid >/dev/null 2>&1; then \
+        setsid /usr/local/bin/codex-litellm-wrapper >> /tmp/codex-litellm.log 2>&1 < /dev/null & \
+      else \
+        nohup /usr/local/bin/codex-litellm-wrapper >> /tmp/codex-litellm.log 2>&1 < /dev/null & \
+      fi; \
+    else \
+      echo 'codex-litellm-wrapper missing — spawn via grid-spawn codex first' >&2; exit 1; \
+    fi; \
+    elapsed=0; while [ \$elapsed -lt 120 ]; do \
+      if _codex_proxy_up; then echo 'Codex proxy started'; exit 0; fi; \
+      sleep 1; elapsed=\$((elapsed + 1)); \
+    done; \
+    echo 'Codex proxy failed to start after 120s'; tail -40 /tmp/codex-litellm.log 2>/dev/null; exit 1" >/dev/null 2>&1
+  if [ $? -ne 0 ]; then
+    log_err "Codex LiteLLM proxy failed to start"
+    return 1
+  fi
+}
+
 input_test_codex() {
   local app="$1"
 
   _validate_timeout || return 1
+  _codex_ensure_proxy "${app}" || return 1
 
   log_step "Running input test for codex..."
   # Base64-encode the prompt and stage it to a remote temp file.
@@ -683,6 +737,14 @@ verify_codex() {
     failures=$((failures + 1))
   fi
 
+  log_step "Checking codex LiteLLM bridge config..."
+  if cloud_exec "${app}" "grep -q use_chat_completions_api ~/.codex/litellm.yaml && grep -q 'drop_params: true' ~/.codex/litellm.yaml && grep -q codex_litellm_callbacks ~/.codex/litellm.yaml && test -f ~/.codex/codex_litellm_callbacks.py" >/dev/null 2>&1; then
+    log_ok "~/.codex/litellm.yaml enables responses→chat bridge with empty-tools callback"
+  else
+    log_err "~/.codex/litellm.yaml missing bridge config or codex_litellm_callbacks.py"
+    failures=$((failures + 1))
+  fi
+
   return "${failures}"
 }
 
@@ -849,6 +911,15 @@ verify_cursor() {
     log_ok "THEGRID_API_KEY present in .spawnrc"
   else
     log_err "THEGRID_API_KEY not found in .spawnrc"
+    failures=$((failures + 1))
+  fi
+
+  # Env check: GRID_MODEL_ID (The Grid catalogue model for proxy + inference)
+  log_step "Checking cursor env (GRID_MODEL_ID)..."
+  if cloud_exec "${app}" "grep -q GRID_MODEL_ID ~/.spawnrc" >/dev/null 2>&1; then
+    log_ok "GRID_MODEL_ID present in .spawnrc"
+  else
+    log_err "GRID_MODEL_ID not found in .spawnrc"
     failures=$((failures + 1))
   fi
 

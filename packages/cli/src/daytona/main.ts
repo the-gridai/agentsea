@@ -39,6 +39,10 @@ async function main() {
   const cloud: CloudOrchestrator = {
     cloudName: "daytona",
     cloudLabel: "Daytona",
+    capabilities: {
+      providerManagedAutoUpdate: true,
+      disableSecurityScan: true,
+    },
     runner: {
       runServer,
       uploadFile,

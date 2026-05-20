@@ -1,14 +1,24 @@
-/** Public Grid Spawn CDN / API origin — override with NEXT_PUBLIC_GRID_SPAWN_PUBLIC_ORIGIN (include scheme, no trailing slash). */
+/** Set in production via `NEXT_PUBLIC_GRID_SPAWN_PUBLIC_ORIGIN` (scheme required, no trailing slash). */
+export const GRID_SPAWN_PUBLIC_ORIGIN_ENV_VAR = "NEXT_PUBLIC_GRID_SPAWN_PUBLIC_ORIGIN";
+
+/** Obvious placeholder when the CDN origin env var is unset (must not look like a live product URL). */
+export const GRID_SPAWN_PUBLIC_ORIGIN_UNSET = "https://next-public-grid-spawn-public-origin-not-set.invalid";
+
 function spawnPublicOrigin(): string {
   const raw =
     typeof process !== "undefined" && process.env.NEXT_PUBLIC_GRID_SPAWN_PUBLIC_ORIGIN
       ? process.env.NEXT_PUBLIC_GRID_SPAWN_PUBLIC_ORIGIN.trim()
       : "";
-  const base = (raw || "https://spawn.thegrid.ai").replace(/\/+$/, "");
+  if (!raw) {
+    return GRID_SPAWN_PUBLIC_ORIGIN_UNSET;
+  }
+  const base = raw.replace(/\/+$/, "");
   return base.startsWith("http") ? base : `https://${base}`;
 }
 
 export const GRID_SPAWN_PUBLIC_ORIGIN = spawnPublicOrigin();
+
+export const isGridSpawnCdnConfigured = GRID_SPAWN_PUBLIC_ORIGIN !== GRID_SPAWN_PUBLIC_ORIGIN_UNSET;
 
 export const GRID_SPAWN_INSTALL_URL = `${GRID_SPAWN_PUBLIC_ORIGIN}/install.sh`;
 
@@ -30,3 +40,8 @@ export const THEGRID_API_KEY_ENV_VAR = "THEGRID_API_KEY";
 
 /** Where users create Grid API keys in the dashboard (adjust path when canonical). */
 export const THEGRID_API_KEYS_DASHBOARD_ORIGIN = "https://app.thegrid.ai";
+
+/** Agents with end-to-end Grid chat verified on DigitalOcean (provision → configure → LLM). */
+export const CHAT_VERIFIED_AGENT_SLUGS = ["claude", "cursor", "openclaw", "codex", "opencode"] as const;
+
+export type ChatVerifiedAgentSlug = (typeof CHAT_VERIFIED_AGENT_SLUGS)[number];

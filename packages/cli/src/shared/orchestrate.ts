@@ -183,6 +183,7 @@ export function makeDockerRunner(hostRunner: CloudRunner): CloudRunner {
 export interface CloudOrchestrator {
   cloudName: string;
   cloudLabel: string;
+  capabilities?: CloudOrchestratorCapabilities;
   runner: CloudRunner;
   /** When true, skip tarball + agent install (e.g. booting from a pre-baked snapshot). */
   skipAgentInstall?: boolean;
@@ -206,6 +207,14 @@ export interface CloudOrchestrator {
   getSignedPreviewUrl?(remotePort: number, urlSuffix?: string, expiresInSeconds?: number): Promise<string>;
   /** Install a provider-native auto-update mechanism when the shared systemd timer does not apply. */
   setupAutoUpdate?(agentName: string, updateCmd: string): Promise<void>;
+}
+
+export interface CloudOrchestratorCapabilities {
+  localRuntime?: boolean;
+  skipParallelAccountReadyCheck?: boolean;
+  providerManagedAutoUpdate?: boolean;
+  disableSecurityScan?: boolean;
+  connectionDropExitCodes?: number[];
 }
 
 /**
@@ -232,6 +241,31 @@ function wrapWithRestartLoop(cmd: string): string {
     "fi",
     'exit "${_spawn_exit:-0}"',
   ].join("\n");
+}
+
+function isLocalRuntime(cloud: CloudOrchestrator): boolean {
+  return cloud.capabilities?.localRuntime ?? cloud.cloudName === "local";
+}
+
+function skipParallelAccountReadyCheck(cloud: CloudOrchestrator): boolean {
+  return cloud.capabilities?.skipParallelAccountReadyCheck ?? cloud.cloudName === "digitalocean";
+}
+
+function providerManagedAutoUpdate(cloud: CloudOrchestrator): boolean {
+  return cloud.capabilities?.providerManagedAutoUpdate ?? cloud.cloudName === "daytona";
+}
+
+function securityScanDisabled(cloud: CloudOrchestrator): boolean {
+  const fromCapabilities = cloud.capabilities?.disableSecurityScan;
+  if (fromCapabilities !== undefined) {
+    return fromCapabilities;
+  }
+  return isLocalRuntime(cloud) || cloud.cloudName === "daytona";
+}
+
+function isConnectionDropCode(cloud: CloudOrchestrator, code: number): boolean {
+  const extraCodes = cloud.capabilities?.connectionDropExitCodes ?? [];
+  return code === 255 || extraCodes.includes(code);
 }
 
 // ── Recursive spawn helpers ──────────────────────────────────────────────────
@@ -525,11 +559,7 @@ export async function runOrchestration(
     const fastMode = process.env.SPAWN_FAST === "1" || betaFeatures.has("parallel");
     const useTarball = fastMode || betaFeatures.has("tarball");
 
-    if (
-      cloud.cloudName !== "local" &&
-      (useTarball || cloud.skipAgentInstall) &&
-      (agent.cloudInitTier === "minimal" || !agent.cloudInitTier)
-    ) {
+    if ((useTarball || cloud.skipAgentInstall) && !isLocalRuntime(cloud) && (agent.cloudInitTier === "minimal" || !agent.cloudInitTier)) {
       cloud.skipCloudInit = true;
     }
 
@@ -543,7 +573,7 @@ export async function runOrchestration(
 
     const serverName = await cloud.getServerName();
 
-    if (fastMode && cloud.cloudName !== "local") {
+    if (fastMode && !isLocalRuntime(cloud)) {
       const keepAlive = setInterval(() => {}, 60_000);
 
       const serverBootPromise = (async () => {
@@ -570,7 +600,7 @@ export async function runOrchestration(
       const [bootResult, apiKeyResult] = await Promise.allSettled([
         serverBootPromise,
         resolveApiKey(agentName, cloud.cloudName),
-        cloud.cloudName === "digitalocean"
+        skipParallelAccountReadyCheck(cloud)
           ? Promise.resolve({
               ok: true as const,
             })
@@ -674,7 +704,7 @@ export async function runOrchestration(
       });
       await runPostInstallPhase(cloud, agent, agentName, apiKey, modelId, spawnId, envSoft, options);
     } else {
-      if (cloud.checkAccountReady && cloud.cloudName !== "digitalocean") {
+      if (cloud.checkAccountReady && !skipParallelAccountReadyCheck(cloud)) {
         const r = await asyncTryCatch(() => cloud.checkAccountReady!());
         if (!r.ok) {
           logWarn("Account readiness check failed — proceeding anyway");
@@ -751,7 +781,7 @@ export async function runOrchestration(
           provision_status: "in_progress",
         });
         let installedFromTarball = false;
-        if (cloud.cloudName !== "local" && !agent.skipTarball && useTarball) {
+        if (!isLocalRuntime(cloud) && !agent.skipTarball && useTarball) {
           const tarball = options?.tryTarball ?? tryTarballInstall;
           installedFromTarball = await tarball(cloud.runner, agentName);
         }
@@ -828,8 +858,8 @@ export async function resumeOrchestrationFromRecord(
 
   await cloud.authenticate();
 
-  const { createCloudAgents } = await import("./agent-setup.js");
-  const { resolveAgent } = createCloudAgents(cloud.runner);
+  const { createCloudAgentsFromModules } = await import("./agent-module-registry.js");
+  const { resolveAgent } = createCloudAgentsFromModules(cloud.runner);
   const agent = resolveAgent(record.agent);
 
   const resolveApiKey = options?.getApiKey ?? getOrPromptApiKey;
@@ -930,7 +960,7 @@ export async function injectEnvVarsToRunner(runner: CloudRunner, envContent: str
 }
 
 async function injectEnvVars(cloud: CloudOrchestrator, envContent: string, softFailures: string[]): Promise<void> {
-  const isLocalWindows = cloud.cloudName === "local" && isWindows();
+  const isLocalWindows = isLocalRuntime(cloud) && isWindows();
   if (isLocalWindows) {
     logStep("Setting up environment variables...");
     const envB64 = Buffer.from(envContent).toString("base64");
@@ -972,7 +1002,7 @@ export async function runPostInstallPhase(
   let spawnMdConfig: import("./spawn-md.js").SpawnMdConfig | null = null;
   let repoCloned = false;
   const repoArg = process.env.SPAWN_REPO;
-  if (repoArg && cloud.cloudName !== "local") {
+  if (repoArg && !isLocalRuntime(cloud)) {
     const cloneUrl = normalizeRepoUrl(repoArg);
     if (!cloneUrl) {
       logWarn(`Invalid --repo value: ${repoArg} — skipping repo clone`);
@@ -1037,8 +1067,8 @@ export async function runPostInstallPhase(
   }
 
   // Auto-update service
-  if (cloud.cloudName !== "local" && agent.updateCmd && (!enabledSteps || enabledSteps.has("auto-update"))) {
-    if (cloud.cloudName === "daytona") {
+  if (!isLocalRuntime(cloud) && agent.updateCmd && (!enabledSteps || enabledSteps.has("auto-update"))) {
+    if (providerManagedAutoUpdate(cloud)) {
       // Daytona reconnects need to know whether they should recreate the provider-native
       // background updater after a sandbox stop/start cycle.
       saveMetadata(
@@ -1053,7 +1083,7 @@ export async function runPostInstallPhase(
     } else {
       await setupAutoUpdate(cloud.runner, agentName, agent.updateCmd);
     }
-  } else if (cloud.cloudName === "daytona" && agent.updateCmd) {
+  } else if (providerManagedAutoUpdate(cloud) && agent.updateCmd) {
     // Persist the disabled state too so reconnect paths can distinguish "not configured"
     // from "configured earlier but the sandbox session was lost".
     saveMetadata(
@@ -1065,11 +1095,7 @@ export async function runPostInstallPhase(
   }
 
   // Security scan cron
-  if (
-    cloud.cloudName !== "local" &&
-    cloud.cloudName !== "daytona" &&
-    (!enabledSteps || enabledSteps.has("security-scan"))
-  ) {
+  if (!securityScanDisabled(cloud) && (!enabledSteps || enabledSteps.has("security-scan"))) {
     await setupSecurityScan(cloud.runner);
   }
 
@@ -1078,7 +1104,7 @@ export async function runPostInstallPhase(
   // run when no explicit steps are selected (!enabledSteps) AND the beta flag is set.
   const betaFeaturesPost = new Set((process.env.SPAWN_BETA ?? "").split(",").filter(Boolean));
   if (
-    cloud.cloudName !== "local" &&
+    !isLocalRuntime(cloud) &&
     betaFeaturesPost.has("recursive") &&
     (!enabledSteps || enabledSteps.has("spawn"))
   ) {
@@ -1089,7 +1115,7 @@ export async function runPostInstallPhase(
 
   // Skill installation (--beta skills)
   const selectedSkillsEnv = process.env.SPAWN_SELECTED_SKILLS;
-  if (selectedSkillsEnv && cloud.cloudName !== "local") {
+  if (selectedSkillsEnv && !isLocalRuntime(cloud)) {
     const skillIds = selectedSkillsEnv.split(",").filter(Boolean);
     if (skillIds.length > 0) {
       const { loadManifest } = await import("../manifest.js");
@@ -1200,7 +1226,7 @@ export async function runPostInstallPhase(
         logWarn("Web dashboard preview failed — use the TUI instead");
         soft.push("dashboard_preview");
       }
-    } else if (cloud.cloudName === "local") {
+    } else if (isLocalRuntime(cloud)) {
       if (agent.tunnel.browserUrl) {
         const url = agent.tunnel.browserUrl(agent.tunnel.remotePort);
         if (url) {
@@ -1305,7 +1331,7 @@ export async function runPostInstallPhase(
       );
       tunnelHandle.stop();
     }
-    if (cloud.cloudName !== "local") {
+    if (!isLocalRuntime(cloud)) {
       await pullChildHistory(cloud.runner, spawnId);
     }
     process.exit(0);
@@ -1322,13 +1348,13 @@ export async function runPostInstallPhase(
 
   prepareStdinForHandoff();
 
-  const sessionCmd = cloud.cloudName === "local" ? launchCmd : wrapWithRestartLoop(launchCmd);
+  const sessionCmd = isLocalRuntime(cloud) ? launchCmd : wrapWithRestartLoop(launchCmd);
 
   // Auto-reconnect on connection drops. Ctrl+C (exit 0 or 130) exits immediately.
   // Only applies to remote clouds — local sessions don't have connection drops.
   // SSH exits 255 on connection loss; Sprite CLI exits 1 on "connection closed".
-  const maxReconnects = cloud.cloudName === "local" ? 0 : 5;
-  const isConnectionDrop = (code: number): boolean => code === 255 || (cloud.cloudName === "sprite" && code === 1);
+  const maxReconnects = isLocalRuntime(cloud) ? 0 : 5;
+  const isConnectionDrop = (code: number): boolean => isConnectionDropCode(cloud, code);
   let exitCode = 0;
 
   for (let attempt = 0; attempt <= maxReconnects; attempt++) {
@@ -1358,7 +1384,7 @@ export async function runPostInstallPhase(
   // Pull child's spawn history back to the parent for `spawn tree`.
   // Fire-and-forget — never delay exit for a convenience feature.
   // process.exit() below kills any in-flight SSH calls.
-  if (cloud.cloudName !== "local") {
+  if (!isLocalRuntime(cloud)) {
     pullChildHistory(cloud.runner, spawnId).catch(() => {});
   }
 

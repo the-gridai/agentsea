@@ -22,8 +22,8 @@ export const VENDOR_CHAT_MODEL_DEFAULT = GRID_INFERENCE_DEFAULT_MODEL_ID;
 
 /**
  * OpenClaw built-in namespaces like **`openrouter/*`** map to bundled provider auth profiles, not Grid.
- * We register **`models.providers.thegrid`** (`OPENCLAW_GRID_PROVIDER_ID`) targeting **only** `api.thegrid.ai`
- * so Control UI/chat use **`THEGRID_API_KEY`** — no OPENROUTER_* keys.
+ * We register **`models.providers.thegrid`** (`OPENCLAW_GRID_PROVIDER_ID`) targeting **only**
+ * `messages-beta.api.thegrid.ai` (Anthropic Messages) so OpenClaw never hits api → synapse redirects.
  */
 export const OPENCLAW_GRID_PROVIDER_ID = "thegrid";
 

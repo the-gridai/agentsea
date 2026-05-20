@@ -8,7 +8,8 @@ import pc from "picocolors";
 import { getActiveServers } from "../history.js";
 import { loadManifest } from "../manifest.js";
 import { validateConnectionIP, validateIdentifier, validateServerIdentifier, validateUsername } from "../security.js";
-import { createCloudAgents, setupAutoUpdate, wrapSshCall } from "../shared/agent-setup.js";
+import { setupAutoUpdate, wrapSshCall } from "../shared/agent-setup.js";
+import { createCloudAgentsFromModules } from "../shared/agent-module-registry.js";
 import { generateEnvConfig } from "../shared/agents.js";
 import { loadSavedTheGridApiKey } from "../shared/oauth.js";
 import { injectEnvVarsToRunner } from "../shared/orchestrate.js";
@@ -177,7 +178,7 @@ export async function fixSpawn(record: SpawnRecord, manifest: Manifest | null, o
     : makeSshRunner(conn.ip, conn.user, keyOpts);
 
   // Resolve the agent config with full install/configure/preLaunch functions
-  const { resolveAgent } = createCloudAgents(runner);
+  const { resolveAgent } = createCloudAgentsFromModules(runner);
   const agentResult = tryCatch(() => resolveAgent(record.agent));
   if (!agentResult.ok) {
     p.log.error(`Unknown agent: ${pc.bold(record.agent)}`);

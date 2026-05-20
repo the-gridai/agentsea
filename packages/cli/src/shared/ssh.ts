@@ -5,7 +5,7 @@ import { connect } from "node:net";
 import { normalize } from "node:path/posix";
 import { asyncTryCatch, tryCatch } from "./result.js";
 import { isWslLinux } from "./shell.js";
-import { logAlwaysStep, logError, logInfo, logStep, logStepDone, logStepInline } from "./ui.js";
+import { logAlwaysStep, logError, logInfo, logStep, logStepDone, logStepInline, logWarn } from "./ui.js";
 import { isSpawnVerbose } from "./verbosity.js";
 
 // ─── Shared SSH Options ──────────────────────────────────────────────────────
@@ -42,6 +42,116 @@ export const SSH_BASE_OPTS: string[] = [
 /** Extra argv after `scp` — hide progress meter when not `--verbose` / `SPAWN_VERBOSE`. */
 export function scpQuietArgs(): string[] {
   return isSpawnVerbose() ? [] : ["-q"];
+}
+
+export type RemoteExecStdio = ["ignore", "inherit", "inherit"] | ["ignore", "pipe", "pipe"];
+
+/** SSH/scp stdio: inherit when verbose, pipe (silent) otherwise. */
+export function remoteExecStdio(): RemoteExecStdio {
+  return isSpawnVerbose() ? ["ignore", "inherit", "inherit"] : ["ignore", "pipe", "pipe"];
+}
+
+type RemoteProcess = {
+  stdout: ReadableStream | null | undefined;
+  stderr: ReadableStream | null | undefined;
+  exited: Promise<number | undefined>;
+};
+
+/** Await a remote SSH/scp child; drain pipes when not verbose. */
+export async function awaitRemoteProcess(proc: RemoteProcess): Promise<number> {
+  if (isSpawnVerbose()) {
+    return (await proc.exited) ?? 1;
+  }
+  const [stdout, stderr] = await Promise.all([
+    proc.stdout ? new Response(proc.stdout).text() : Promise.resolve(""),
+    proc.stderr ? new Response(proc.stderr).text() : Promise.resolve(""),
+  ]);
+  const exitCode = (await proc.exited) ?? 1;
+  if (exitCode !== 0) {
+    const detail = stderr.trim() || stdout.trim();
+    if (detail) {
+      logDebugRemoteFailure(detail);
+    }
+  }
+  return exitCode;
+}
+
+function logDebugRemoteFailure(text: string): void {
+  if (process.env.SPAWN_DEBUG === "1") {
+    process.stderr.write(`\x1b[2m[debug] remote:\n${text}\x1b[0m\n`);
+    return;
+  }
+  const lines = text.split("\n").filter(Boolean);
+  const tail = lines.slice(-6).join("\n");
+  if (tail) {
+    logWarn(`Remote setup failed — last output:\n${tail}`);
+  }
+}
+
+/**
+ * Poll until `/root/.cloud-init-complete` exists. Quiet by default; inline progress only when verbose.
+ */
+export async function pollCloudInitComplete(opts: {
+  host: string;
+  user?: string;
+  extraSshOpts: string[];
+  maxAttempts?: number;
+}): Promise<void> {
+  const { host, user = "root", extraSshOpts, maxAttempts = 60 } = opts;
+
+  if (isSpawnVerbose()) {
+    logStep("Waiting for cloud-init to complete...");
+  } else {
+    logAlwaysStep("Finishing server bootstrap…");
+  }
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const pollResult = await asyncTryCatch(async () => {
+      const proc = Bun.spawn(
+        [
+          "ssh",
+          ...SSH_BASE_OPTS,
+          ...extraSshOpts,
+          `${user}@${host}`,
+          "test -f /root/.cloud-init-complete && echo done",
+        ],
+        {
+          stdio: remoteExecStdio(),
+        },
+      );
+      const timer = setTimeout(() => killWithTimeout(proc), 30_000);
+      const pipeResult = await asyncTryCatch(async () => {
+        if (isSpawnVerbose()) {
+          const exitCode = (await proc.exited) ?? 1;
+          return { stdout: exitCode === 0 ? "done" : "", exitCode };
+        }
+        const [stdout] = await Promise.all([
+          new Response(proc.stdout!).text(),
+          new Response(proc.stderr!).text(),
+        ]);
+        const exitCode = (await proc.exited) ?? 1;
+        return { stdout, exitCode };
+      });
+      clearTimeout(timer);
+      if (!pipeResult.ok) {
+        throw pipeResult.error;
+      }
+      return pipeResult.data;
+    });
+
+    if (pollResult.ok && pollResult.data.exitCode === 0 && pollResult.data.stdout.includes("done")) {
+      logStepDone();
+      logInfo("Cloud-init complete");
+      return;
+    }
+    if (attempt >= maxAttempts) {
+      logStepDone();
+      logWarn("Cloud-init marker not found, continuing anyway...");
+      return;
+    }
+    logStepInline(`Cloud-init in progress (${attempt}/${maxAttempts})`);
+    await sleep(5000);
+  }
 }
 
 /**

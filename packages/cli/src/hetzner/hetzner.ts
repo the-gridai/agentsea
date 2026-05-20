@@ -13,7 +13,10 @@ import { parseJsonObj } from "../shared/parse.js";
 import { getSpawnCloudConfigPath } from "../shared/paths.js";
 import { asyncTryCatch, asyncTryCatchIf, isNetworkError, unwrapOr } from "../shared/result.js";
 import {
+  awaitRemoteProcess,
   killWithTimeout,
+  pollCloudInitComplete,
+  remoteExecStdio,
   SSH_BASE_OPTS,
   SSH_INTERACTIVE_OPTS,
   scpQuietArgs,
@@ -729,60 +732,12 @@ export async function waitForCloudInit(ip?: string, maxAttempts = 60): Promise<v
     extraSshOpts: keyOpts,
   });
 
-  logStep("Waiting for cloud-init to complete...");
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const pollResult = await asyncTryCatch(async () => {
-      const proc = Bun.spawn(
-        [
-          "ssh",
-          ...SSH_BASE_OPTS,
-          ...keyOpts,
-          `root@${serverIp}`,
-          "test -f /root/.cloud-init-complete && echo done",
-        ],
-        {
-          stdio: [
-            "ignore",
-            "pipe",
-            "pipe",
-          ],
-        },
-      );
-      // Per-process timeout: if the network drops during cloud-init polling,
-      // `await proc.exited` blocks forever. Kill after 30s so the retry loop
-      // can continue and the user isn't left with a hung CLI.
-      const timer = setTimeout(() => killWithTimeout(proc), 30_000);
-      // Drain both pipes before awaiting exit to prevent pipe buffer deadlock
-      const pipeResult = await asyncTryCatch(async () => {
-        const [stdout] = await Promise.all([
-          new Response(proc.stdout).text(),
-          new Response(proc.stderr).text(),
-        ]);
-        const exitCode = await proc.exited;
-        return {
-          stdout,
-          exitCode,
-        };
-      });
-      clearTimeout(timer);
-      if (!pipeResult.ok) {
-        throw pipeResult.error;
-      }
-      return pipeResult.data;
-    });
-    if (pollResult.ok && pollResult.data.exitCode === 0 && pollResult.data.stdout.includes("done")) {
-      logStepDone();
-      logInfo("Cloud-init complete");
-      return;
-    }
-    if (attempt >= maxAttempts) {
-      logStepDone();
-      logWarn("Cloud-init marker not found, continuing anyway...");
-      return;
-    }
-    logStepInline(`Cloud-init in progress (${attempt}/${maxAttempts})`);
-    await sleep(5000);
-  }
+  await pollCloudInitComplete({
+    host: serverIp,
+    user: "root",
+    extraSshOpts: keyOpts,
+    maxAttempts,
+  });
 }
 
 export async function runServer(cmd: string, timeoutSecs?: number, ip?: string): Promise<void> {
@@ -802,39 +757,21 @@ export async function runServer(cmd: string, timeoutSecs?: number, ip?: string):
       fullCmd,
     ],
     {
-      stdio: [
-        "ignore",
-        "pipe",
-        "pipe",
-      ],
+      stdio: remoteExecStdio(),
     },
   );
 
   const timeout = (timeoutSecs || 300) * 1000;
   const timer = setTimeout(() => killWithTimeout(proc), timeout);
-  // Drain both pipes to prevent buffer deadlocks, then await exit
   const runResult = await asyncTryCatch(async () => {
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    const exitCode = await proc.exited;
-    return {
-      stdout,
-      stderr,
-      exitCode,
-    };
+    const exitCode = await awaitRemoteProcess(proc);
+    return { exitCode };
   });
   clearTimeout(timer);
   if (!runResult.ok) {
     throw runResult.error;
   }
   if (runResult.data.exitCode !== 0) {
-    // Show captured stderr on failure for debugging
-    const stderr = runResult.data.stderr.trim();
-    if (stderr) {
-      logDebug(stderr);
-    }
     throw new Error(`run_server failed (exit ${runResult.data.exitCode}): ${cmd}`);
   }
 }

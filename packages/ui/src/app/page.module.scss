@@ -70,35 +70,34 @@
 }
 
 .sectionHead {
-  @include flex(flex-start, flex-start);
-  gap: pad(4);
+  @include flex(center, flex-start);
+  gap: pad(3);
+  padding-bottom: pad(4);
   margin-bottom: pad(8);
+  border-bottom: 2px solid c(stroke-2);
 }
 
 .sectionHead__index {
   flex-shrink: 0;
   @include flex-center;
-  width: 2.75rem;
-  height: 2.75rem;
+  width: 2.25rem;
+  height: 2.25rem;
   border-radius: br(m);
   border: 1px solid c(stroke-2);
   background: c(base-2);
   @include font(700);
-  @include text(text-l);
+  @include text(text-m);
   color: c(text-1);
   line-height: 1;
 }
 
 .sectionHead__title {
   margin: 0;
-  padding-bottom: pad(1);
   @include font(700);
   font-size: clamp(1.5rem, 3vw, 2rem);
+  line-height: 1.2;
   letter-spacing: -0.02em;
   color: c(text-1);
-  border-bottom: 2px solid c(stroke-2);
-  flex: 1;
-  min-width: 0;
 }
 
 .h2 {
@@ -186,12 +185,13 @@
   background: color-mix(in srgb, c(base-2) 88%, c(base-1));
 }
 
-.agentCard--muted:not(.agentCard--hot) {
+.agentCard--disabled:not(.agentCard--hot) {
   opacity: 0.42;
   filter: saturate(0.35);
+  cursor: not-allowed;
 }
 
-.agentCard--muted:not(.agentCard--hot):hover {
+.agentCard--disabled:not(.agentCard--hot):hover {
   border-color: c(stroke-2);
   box-shadow: none;
 }

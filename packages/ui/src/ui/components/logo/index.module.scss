@@ -24,20 +24,19 @@
     @include text(text-l, bold);
     letter-spacing: -0.01em;
     color: c(text);
-    @include flex(baseline);
-    @include gap(0.25);
+    line-height: 1;
+    white-space: nowrap;
   }
   &--s &__word {
     @include text(text-m, bold);
+    line-height: 1;
   }
   &--l &__word {
     @include text(display, bold);
     font-size: 1.25rem;
+    line-height: 1;
   }
 
-  &__word-grid {
-    color: c(text);
-  }
   &__word-spawn {
     color: c(text-highlight);
   }
