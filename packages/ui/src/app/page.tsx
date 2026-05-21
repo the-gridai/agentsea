@@ -6,11 +6,12 @@ import { HomeLaunchFlow } from "./home-launch-flow";
 import {
   GRID_SPAWN_INSTALL_URL,
   GRID_SPAWN_OPENCLAW_DO_ONELINER,
-  GRID_SPAWN_PUBLIC_ORIGIN,
+  isGridSpawnCdnConfigured,
   THE_GRID_EXTERNAL_URL,
 } from "./home-public-constants";
 import { homeAgentCloudAvailability, homeAgentsFromManifest, homeCloudOptionsFromManifest } from "./landing-from-manifest";
 import { SiteHeader } from "./site-header";
+import { SpawnCopyBlock } from "./spawn-copy-block";
 import styles from "./page.module.scss";
 
 import { loadManifest } from "@grid-spawn/sdk/node";
@@ -24,8 +25,6 @@ const CURL_PIPE_SNIPPET = `bash <(curl -fsSL ${GRID_SPAWN_INSTALL_URL})`;
 const INSTALL_SNIPPET = `curl -fsSL ${GRID_SPAWN_INSTALL_URL} | bash`;
 
 const WITHOUT_CLI_SNIPPET = `bash <(curl -fsSL ${GRID_SPAWN_OPENCLAW_DO_ONELINER})`;
-
-const ONE_LINER_PATTERN = `${GRID_SPAWN_PUBLIC_ORIGIN}/<cloud>/<agent>.sh`;
 
 export default async function HomePage() {
   const manifest = await loadManifest(false);
@@ -53,26 +52,17 @@ export default async function HomePage() {
               agentCloudAvailability={agentCloudAvailability}
             />
           </Suspense>
-          <section className={styles["band"]} aria-labelledby="without-cli-title">
-            <h2 id="without-cli-title" className={styles["h2"]}>
-              Without the CLI
-            </h2>
-            <p className={styles["lede"]}>
-              Fetch a bootstrap script when you don&apos;t want a global CLI install yet.
-            </p>
-            <div className={styles["withoutCliCard"]}>
-              <h3 className={styles["withoutCliTitle"]}>One-liner (example)</h3>
-              <p className={styles["withoutCliText"]}>OpenClaw on DigitalOcean:</p>
-              <CopyCode label="shell" code={WITHOUT_CLI_SNIPPET} />
-              <p className={styles["withoutCliHint"]}>
-                Pattern: <code className={styles["hoodInstallCard__inline"]}>{ONE_LINER_PATTERN}</code> — see the{" "}
-                <Link href="/cli" className={styles["inlineLink"]}>
-                  CLI guide
-                </Link>{" "}
-                for auth and tokens.
-              </p>
-            </div>
-          </section>
+          {isGridSpawnCdnConfigured && (
+            <section className={styles["band"]} aria-labelledby="without-cli-title">
+              <h2 id="without-cli-title" className={styles["h2"]}>
+                Without the CLI
+              </h2>
+              <p className={styles["lede"]}>One curl command. No global install.</p>
+              <div className={styles["withoutCliCopy"]}>
+                <SpawnCopyBlock code={WITHOUT_CLI_SNIPPET} />
+              </div>
+            </section>
+          )}
 
           <section className={styles["band"]} aria-labelledby="hood-title">
             <h2 id="hood-title" className={styles["h2"]}>

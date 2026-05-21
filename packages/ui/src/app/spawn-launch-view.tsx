@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { memo, useCallback, useState } from "react";
+import { memo } from "react";
 
 import { LocalMachineLogo } from "./cloud-logos";
 import {
@@ -12,6 +12,7 @@ import {
   LINODE_LOGO_PATH,
   THE_GRID_EXTERNAL_URL,
 } from "./home-public-constants";
+import { SpawnCopyBlock } from "./spawn-copy-block";
 import styles from "./spawn-launch-view.module.scss";
 
 export type SpawnLaunchViewProps = {
@@ -107,7 +108,6 @@ export const SpawnLaunchView = memo(function SpawnLaunchViewComp({
   cloudSlug,
   cloudName,
 }: SpawnLaunchViewProps) {
-  const [copied, setCopied] = useState(false);
   const spawnSnippet = buildSpawnSnippet(agentSlug, cloudSlug);
   const steps = hoodSteps(cloudSlug);
 
@@ -116,13 +116,6 @@ export const SpawnLaunchView = memo(function SpawnLaunchViewComp({
   const cliRefSnippet = `grid-spawn                              # Interactive picker
 grid-spawn ls                            # List your spawns
 grid-spawn matrix                        # Agent x cloud matrix`;
-
-  const copyAll = useCallback(() => {
-    void navigator.clipboard.writeText(spawnSnippet.trim()).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    });
-  }, [spawnSnippet]);
 
   return (
     <div className={styles["page"]}>
@@ -179,17 +172,7 @@ grid-spawn matrix                        # Agent x cloud matrix`;
           </h2>
         </div>
 
-        <div className={styles["spawnBlock"]}>
-          <div className={styles["spawnBlock__shell"]}>
-            <span className={styles["spawnBlock__lang"]}>shell</span>
-            <pre className={styles["spawnBlock__pre"]}>
-              <code>{spawnSnippet}</code>
-            </pre>
-          </div>
-          <button type="button" className={styles["spawnBlock__copy"]} onClick={copyAll}>
-            {copied ? "Copied" : "Copy"}
-          </button>
-        </div>
+        <SpawnCopyBlock code={spawnSnippet} />
 
         <p className={styles["spawnFoot"]}>
           <Link href="/" className={styles["spawnFoot__link"]}>
@@ -221,13 +204,14 @@ grid-spawn matrix                        # Agent x cloud matrix`;
 
         <div className={styles["hoodCodeSection"]}>
           <div className={styles["hoodCodeGrid"]}>
-            <CopyMini label="shell" title="CLI reference" code={cliRefSnippet} />
-            <CopyMini
-              label="shell"
-              title="Without the CLI"
-              code={withoutCliSnippet}
-              caption="One-liner bootstrap script"
-            />
+            <div className={styles["hoodCodeCard"]}>
+              <h3 className={styles["hoodCodeCard__title"]}>CLI reference</h3>
+              <SpawnCopyBlock code={cliRefSnippet} />
+            </div>
+            <div className={styles["hoodCodeCard"]}>
+              <h3 className={styles["hoodCodeCard__title"]}>Without the CLI</h3>
+              <SpawnCopyBlock code={withoutCliSnippet} />
+            </div>
           </div>
         </div>
       </section>
@@ -257,45 +241,6 @@ grid-spawn matrix                        # Agent x cloud matrix`;
           The Grid
         </a>
       </footer>
-    </div>
-  );
-});
-
-const CopyMini = memo(function CopyMiniComp({
-  label,
-  title,
-  code,
-  caption,
-}: {
-  label: string;
-  title: string;
-  code: string;
-  caption?: string;
-}) {
-  const [done, setDone] = useState(false);
-
-  const copy = useCallback(() => {
-    void navigator.clipboard.writeText(code.trim()).then(() => {
-      setDone(true);
-      window.setTimeout(() => setDone(false), 2000);
-    });
-  }, [code]);
-
-  return (
-    <div className={styles["miniBlock"]}>
-      <h3 className={styles["miniBlock__title"]}>{title}</h3>
-      {caption && <p className={styles["miniBlock__caption"]}>{caption}</p>}
-      <div className={styles["miniBlock__inner"]}>
-        <div className={styles["miniBlock__toolbar"]}>
-          <span className={styles["miniBlock__lang"]}>{label}</span>
-          <button type="button" className={styles["miniBlock__copy"]} onClick={copy}>
-            {done ? "Copied" : "Copy"}
-          </button>
-        </div>
-        <pre className={styles["miniBlock__pre"]}>
-          <code>{code}</code>
-        </pre>
-      </div>
     </div>
   );
 });

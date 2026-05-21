@@ -729,32 +729,7 @@
   margin: pad(4) 0 0;
 }
 
-/* ─── Without the CLI ─── */
-.withoutCliCard {
-  margin: pad(6) 0 0;
-  @include padding(5, 6);
-  border-radius: br(m);
-  border: 1px solid c(stroke-2);
-  background: c(base-2);
-}
-
-.withoutCliTitle {
-  margin: 0 0 pad(2);
-  @include font(600);
-  @include text(text-m);
-  color: c(text-1);
-}
-
-.withoutCliText {
-  margin: 0 0 pad(4);
-  @include text(text-s);
-  color: c(text-2);
-  line-height: 1.55;
-}
-
-.withoutCliHint {
-  margin: pad(3) 0 0;
-  @include text(text-xs);
-  color: c(text-3);
-  line-height: 1.5;
+/* --- Without the CLI --- */
+.withoutCliCopy {
+  max-width: 40rem;
 }

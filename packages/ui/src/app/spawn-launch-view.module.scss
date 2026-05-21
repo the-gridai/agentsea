@@ -134,66 +134,6 @@
   letter-spacing: -0.02em;
 }
 
-.spawnBlock {
-  @include flex(stretch, flex-start, column);
-  gap: pad(4);
-}
-
-.spawnBlock__shell {
-  border-radius: br(m);
-  border: 1px solid c(stroke-2);
-  background: c(base-2);
-  overflow: hidden;
-}
-
-.spawnBlock__lang {
-  display: block;
-  @include padding(2, 4);
-  border-bottom: 1px solid c(stroke-2);
-  background: c(base-3);
-  @include text(mono-s);
-  color: c(text-3);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.spawnBlock__pre {
-  margin: 0;
-  @include padding(4, 5);
-  overflow-x: auto;
-  @include text(mono-s);
-  color: c(text-1);
-  line-height: 1.6;
-}
-
-.spawnBlock__pre code {
-  white-space: pre;
-  font-family: inherit;
-}
-
-.spawnBlock__copy {
-  appearance: none;
-  width: 100%;
-  @include padding(4, 6);
-  border-radius: br(m);
-  border: 1px solid c(stroke-1);
-  background: c(text-1);
-  color: c(background);
-  @include font(600);
-  @include text(text-m);
-  cursor: pointer;
-  transition: opacity 0.15s ease;
-
-  &:hover {
-    opacity: 0.92;
-  }
-
-  &:focus-visible {
-    outline: 2px solid rgb(var(--highlight));
-    outline-offset: 2px;
-  }
-}
-
 .spawnFoot {
   margin: pad(6) 0 0;
   @include text(text-s);
@@ -298,77 +238,15 @@
   @media (min-width: 768px) {
     grid-template-columns: 1fr 1fr;
     gap: pad(6);
-    align-items: stretch;
+    align-items: start;
   }
 }
 
-.miniBlock {
-  @include flex(stretch, flex-start, column);
-}
-
-.miniBlock__title {
-  margin: 0 0 pad(2);
+.hoodCodeCard__title {
+  margin: 0 0 pad(3);
   @include font(600);
   @include text(text-s);
   color: c(text-1);
-}
-
-.miniBlock__caption {
-  margin: 0 0 pad(3);
-  @include text(text-xs);
-  color: c(text-3);
-  line-height: 1.45;
-}
-
-.miniBlock__inner {
-  border-radius: br(m);
-  border: 1px solid c(stroke-2);
-  background: c(base-2);
-  overflow: hidden;
-}
-
-.miniBlock__toolbar {
-  @include flex(center, space-between);
-  @include padding(2, 4);
-  border-bottom: 1px solid c(stroke-2);
-  background: c(base-3);
-}
-
-.miniBlock__lang {
-  @include text(mono-s);
-  color: c(text-3);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.miniBlock__copy {
-  @include text(text-xs);
-  @include font(500);
-  padding: pad(1) pad(2);
-  border: 1px solid c(stroke-2);
-  border-radius: br(s);
-  background: c(base-2);
-  color: c(text-2);
-  cursor: pointer;
-
-  &:hover {
-    color: c(text-1);
-    border-color: c(stroke-1);
-  }
-}
-
-.miniBlock__pre {
-  margin: 0;
-  @include padding(3, 4);
-  overflow-x: auto;
-  @include text(mono-s);
-  color: c(text-1);
-  line-height: 1.55;
-}
-
-.miniBlock__pre code {
-  white-space: pre;
-  font-family: inherit;
 }
 
 /* --- Why --- */

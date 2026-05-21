@@ -1,0 +1,61 @@
+@import "src/styles/index";
+
+.block {
+  @include flex(stretch, flex-start, column);
+  gap: pad(4);
+}
+
+.shell {
+  border-radius: br(m);
+  border: 1px solid c(stroke-2);
+  background: c(base-2);
+  overflow: hidden;
+}
+
+.lang {
+  display: block;
+  @include padding(2, 4);
+  border-bottom: 1px solid c(stroke-2);
+  background: c(base-3);
+  @include text(mono-s);
+  color: c(text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pre {
+  margin: 0;
+  @include padding(4, 5);
+  overflow-x: auto;
+  @include text(mono-s);
+  color: c(text-1);
+  line-height: 1.6;
+}
+
+.pre code {
+  white-space: pre;
+  font-family: inherit;
+}
+
+.copy {
+  appearance: none;
+  width: 100%;
+  @include padding(4, 6);
+  border-radius: br(m);
+  border: 1px solid c(stroke-1);
+  background: c(text-1);
+  color: c(background);
+  @include font(600);
+  @include text(text-m);
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+
+  &:hover {
+    opacity: 0.92;
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgb(var(--highlight));
+    outline-offset: 2px;
+  }
+}
