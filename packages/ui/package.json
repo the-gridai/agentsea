@@ -7,10 +7,11 @@
     "clean": "rm -rf .next .next-dev",
     "dev": "next dev --port 3011",
     "dev:clean": "npm run clean && next dev --port 3011",
-    "build": "next build",
+    "build": "npm run sync:cdn-public && next build",
     "start": "next start --port 3011",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "sync:cdn-public": "bash scripts/sync-cdn-public.sh"
   },
   "dependencies": {
     "@grid-spawn/sdk": "*",

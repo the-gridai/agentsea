@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    { "source": "/install.sh", "destination": "/sh/cli/install.sh" }
+  ],
+  "headers": [
+    {
+      "source": "/(manifest\.json|sh/(.+\\.sh|.+\\.ps1)|assets/.+)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=60, stale-while-revalidate=300"
+        }
+      ]
+    }
+  ]
+}
