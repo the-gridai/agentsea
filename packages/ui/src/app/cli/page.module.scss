@@ -34,11 +34,82 @@
 }
 
 .fallback__link {
-  color: rgb(var(--highlight));
+  color: rgb(var(--text-highlight));
   text-decoration: none;
-  @include font(600);
+  @include font(500);
 
   &:hover {
     text-decoration: underline;
   }
+}
+
+/* --- CLI reference (shown when no agent+cloud selected) --- */
+.reference {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: pad(10) pad(6) pad(16);
+
+  @media (min-width: 768px) {
+    padding: pad(12) pad(10) pad(20);
+  }
+}
+
+.referenceHero {
+  margin: 0 0 pad(10);
+  text-align: left;
+}
+
+.referenceHero__title {
+  @include font(700);
+  font-size: clamp(2rem, 6vw, 3rem);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  color: c(text-1);
+  margin: 0 0 pad(4);
+}
+
+.referenceHero__p {
+  @include text(text-m);
+  color: c(text-2);
+  line-height: 1.55;
+  margin: 0;
+  max-width: 40rem;
+}
+
+.referenceSection {
+  margin: 0 0 pad(10);
+  padding-top: pad(8);
+  border-top: 1px solid c(stroke-2);
+
+  &:first-of-type {
+    padding-top: 0;
+    border-top: 0;
+  }
+}
+
+.referenceSection__h {
+  @include font(700);
+  font-size: clamp(1.25rem, 2.5vw, 1.5rem);
+  letter-spacing: -0.01em;
+  color: c(text-1);
+  margin: 0 0 pad(3);
+}
+
+.referenceSection__p {
+  @include text(text-s);
+  color: c(text-2);
+  line-height: 1.55;
+  margin: 0 0 pad(4);
+  max-width: 40rem;
+}
+
+.inlineCode {
+  @include text(mono-s);
+  padding: 0.12em 0.35em;
+  border-radius: br(s);
+  background: c(base-3);
+  border: 1px solid c(stroke-2);
+  color: c(text-1);
 }

@@ -94,8 +94,10 @@ export interface HomeAgentVm {
   name: string;
   desc: string;
   publisher: string;
-  metricLabel: string;
-  metricValue: string;
+  /** Label for the per-card metric, or null when no metric is shown. */
+  metricLabel: string | null;
+  /** Value for the per-card metric, or null when no metric is shown. */
+  metricValue: string | null;
   highlight: boolean;
   chatVerified: boolean;
   image: string | null;
@@ -115,8 +117,8 @@ const ICON_MAP: Record<string, string> = {
   t3code: "t3code.png",
 };
 
-function formatStars(n: number | undefined): string {
-  if (n == null || Number.isNaN(n)) return "—";
+function formatStars(n: number | undefined): string | null {
+  if (n == null || Number.isNaN(n)) return null;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M★`;
   if (n >= 1_000) return `${Math.round(n / 1_000)}k★`;
   return `${n}★`;
@@ -139,13 +141,15 @@ export function homeAgentsFromManifest(m: Manifest): HomeAgentVm[] {
     const desc = agent.tagline?.trim() || agent.description;
     const chatVerified = CHAT_VERIFIED_ORDER.has(slug);
 
+    const stars = formatStars(agent.github_stars);
+
     rows.push({
       slug,
       name: agent.name,
       desc,
       publisher: agent.creator ?? "—",
-      metricLabel: "GitHub stars",
-      metricValue: formatStars(agent.github_stars),
+      metricLabel: stars ? "GitHub stars" : null,
+      metricValue: stars,
       highlight: chatVerified,
       chatVerified,
       image: ICON_MAP[slug] ?? null,

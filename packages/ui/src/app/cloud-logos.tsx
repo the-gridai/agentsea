@@ -1,4 +1,70 @@
+import Image from "next/image";
 import { memo } from "react";
+
+import { DIGITALOCEAN_LOGO_PATH, LINODE_LOGO_PATH } from "./home-public-constants";
+
+/**
+ * Single source for cloud provider logos. Both the homepage Step 2 picker
+ * and the /cli summary pickRow render the same set of cloud slugs; this
+ * function lets them share the same switch instead of duplicating it.
+ */
+export function CloudLogo({
+  slug,
+  icon,
+  size,
+  imgClassName,
+  svgClassName,
+}: {
+  slug: string;
+  icon?: string | null;
+  size: number;
+  imgClassName?: string;
+  svgClassName?: string;
+}) {
+  if (slug === "local") {
+    return <LocalMachineLogo className={svgClassName} />;
+  }
+  if (slug === "digitalocean") {
+    return (
+      <Image
+        src={DIGITALOCEAN_LOGO_PATH}
+        alt=""
+        width={size}
+        height={size}
+        className={imgClassName}
+        sizes={`${size}px`}
+      />
+    );
+  }
+  if (slug === "linode") {
+    return (
+      <Image
+        src={LINODE_LOGO_PATH}
+        alt=""
+        width={size}
+        height={size}
+        className={imgClassName}
+        sizes={`${size}px`}
+      />
+    );
+  }
+  if (icon) {
+    // Remote manifest icon — keep unoptimized because Next can't optimize
+    // arbitrary external hosts without `remotePatterns` config.
+    return (
+      <Image
+        src={icon}
+        alt=""
+        width={size}
+        height={size}
+        className={imgClassName}
+        sizes={`${size}px`}
+        unoptimized
+      />
+    );
+  }
+  return <LocalMachineLogo className={svgClassName} />;
+}
 
 /** Laptop icon for local machine provider cards. */
 export const LocalMachineLogo = memo(function LocalMachineLogoComp({ className }: { className?: string }) {

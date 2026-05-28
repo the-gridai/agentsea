@@ -3,28 +3,54 @@
 .page {
   box-sizing: border-box;
   width: 100%;
-  max-width: 52rem;
+  max-width: 72rem;
   margin: 0 auto;
-  padding: pad(6) pad(6) pad(12);
+  padding: 0 pad(6) pad(12);
 
   @media (min-width: 768px) {
-    padding: pad(8) pad(8) pad(16);
+    padding: 0 pad(10) pad(16);
   }
 }
 
-/* ??? Hero + pick summary ??? */
+/* --- Top nav (Back to picker) --- */
+.topNav {
+  padding: pad(6) 0 0;
+  @include text(text-s);
+}
+
+.topNav__back {
+  display: inline-block;
+  color: c(text-2);
+  text-decoration: none;
+  padding: pad(2) 0;
+  transition: color 0.15s ease;
+
+  &:hover {
+    color: rgb(var(--text-highlight));
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgb(var(--text-highlight));
+    outline-offset: 2px;
+    border-radius: br(s);
+  }
+}
+
+/* --- Hero + pick summary --- */
 .hero {
   text-align: center;
-  padding: pad(8) 0 pad(10);
+  padding: pad(6) 0 pad(10);
+  max-width: 48rem;
+  margin: 0 auto;
 }
 
 .hero__title {
   @include font(700);
-  font-size: clamp(2.5rem, 8vw, 4rem);
-  line-height: 1.05;
-  letter-spacing: -0.04em;
+  font-size: clamp(1.5rem, 4vw, 2.25rem);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
   color: c(text-1);
-  margin: 0 0 pad(10);
+  margin: 0 0 pad(6);
 }
 
 .pickRow {
@@ -101,7 +127,7 @@
   line-height: 1.25;
 }
 
-/* ??? Step 3: Spawn ??? */
+/* --- Step 3: Spawn --- */
 .band {
   padding: pad(10) 0;
   border-top: 1px solid c(stroke-2);
@@ -142,7 +168,7 @@
 }
 
 .spawnFoot__link {
-  color: rgb(var(--highlight));
+  color: rgb(var(--text-highlight));
   text-decoration: none;
 
   &:hover {
@@ -293,6 +319,6 @@
   text-decoration: none;
 
   &:hover {
-    color: rgb(var(--highlight));
+    color: rgb(var(--text-highlight));
   }
 }

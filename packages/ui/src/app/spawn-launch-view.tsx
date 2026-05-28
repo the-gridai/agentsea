@@ -4,15 +4,14 @@ import Image from "next/image";
 import Link from "next/link";
 import { memo } from "react";
 
-import { LocalMachineLogo } from "./cloud-logos";
+import { CloudLogo, LocalMachineLogo } from "./cloud-logos";
 import {
-  DIGITALOCEAN_LOGO_PATH,
   GRID_SPAWN_INSTALL_URL,
   GRID_SPAWN_PUBLIC_ORIGIN,
-  LINODE_LOGO_PATH,
   THE_GRID_EXTERNAL_URL,
 } from "./home-public-constants";
 import { SpawnCopyBlock } from "./spawn-copy-block";
+import { WHY_GRID_SPAWN_CARDS } from "./why-grid-spawn-cards";
 import styles from "./spawn-launch-view.module.scss";
 
 export type SpawnLaunchViewProps = {
@@ -24,27 +23,14 @@ export type SpawnLaunchViewProps = {
 };
 
 function cloudSummaryLogo(cloudSlug: string) {
-  if (cloudSlug === "local") {
-    return <LocalMachineLogo className={styles["pickCard__logoSvg"]} />;
-  }
-  if (cloudSlug === "digitalocean") {
-    return (
-      <Image
-        src={DIGITALOCEAN_LOGO_PATH}
-        alt=""
-        width={40}
-        height={40}
-        className={styles["pickCard__img"]}
-        unoptimized
-      />
-    );
-  }
-  if (cloudSlug === "linode") {
-    return (
-      <Image src={LINODE_LOGO_PATH} alt="" width={40} height={40} className={styles["pickCard__img"]} unoptimized />
-    );
-  }
-  return <LocalMachineLogo className={styles["pickCard__logoSvg"]} />;
+  return (
+    <CloudLogo
+      slug={cloudSlug}
+      size={40}
+      imgClassName={styles["pickCard__img"]}
+      svgClassName={styles["pickCard__logoSvg"]}
+    />
+  );
 }
 
 function buildSpawnSnippet(agentSlug: string, cloudSlug: string): string {
@@ -119,11 +105,16 @@ grid-spawn matrix                        # Agent x cloud matrix`;
 
   return (
     <div className={styles["page"]}>
+      <nav className={styles["topNav"]} aria-label="Launch flow">
+        <Link href="/" className={styles["topNav__back"]}>
+          &larr; Back to agent / cloud picker
+        </Link>
+      </nav>
+
       <section className={styles["hero"]} aria-labelledby="spawn-title">
         <h1 id="spawn-title" className={styles["hero__title"]}>
-          Grid Spawn
+          Launch {agentName} on {cloudName}
         </h1>
-
         <div className={styles["pickRow"]}>
           <div className={styles["pickCard"]}>
             <div className={styles["pickCard__logo"]} aria-hidden>
@@ -134,7 +125,6 @@ grid-spawn matrix                        # Agent x cloud matrix`;
                   width={40}
                   height={40}
                   className={styles["pickCard__img"]}
-                  unoptimized
                 />
               ) : (
                 <LocalMachineLogo className={styles["pickCard__logoSvg"]} />
@@ -221,18 +211,12 @@ grid-spawn matrix                        # Agent x cloud matrix`;
           Why Grid Spawn?
         </h2>
         <div className={styles["whyGrid"]}>
-          <div className={styles["whyCard"]}>
-            <h3 className={styles["whyCard__h"]}>Agent-agnostic</h3>
-            <p className={styles["whyCard__p"]}>
-              Switch between Claude, OpenClaw, Codex, and more with a single command. No lock-in.
-            </p>
-          </div>
-          <div className={styles["whyCard"]}>
-            <h3 className={styles["whyCard__h"]}>Bring your own cloud</h3>
-            <p className={styles["whyCard__p"]}>
-              Your provider account, your keys. We orchestrate; you own the bill and the data plane.
-            </p>
-          </div>
+          {WHY_GRID_SPAWN_CARDS.slice(0, 2).map((c) => (
+            <div key={c.title} className={styles["whyCard"]}>
+              <h3 className={styles["whyCard__h"]}>{c.title}</h3>
+              <p className={styles["whyCard__p"]}>{c.body}</p>
+            </div>
+          ))}
         </div>
       </section>
 

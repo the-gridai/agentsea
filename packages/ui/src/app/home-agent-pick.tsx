@@ -49,13 +49,16 @@ export const HomeAgentPick = memo(function HomeAgentPickComp({
           id="agent-search"
           type="search"
           className={styles["searchInput"]}
-          placeholder="Search agents…"
+          placeholder="by name, publisher, or description"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           autoComplete="off"
+          enterKeyHint="search"
+          inputMode="search"
+          aria-describedby={q.trim() ? "agent-search-meta" : undefined}
         />
         {q.trim() && (
-          <p className={styles["searchMeta"]} role="status">
+          <p id="agent-search-meta" className={styles["searchMeta"]} aria-live="polite">
             {filtered.length} match{filtered.length === 1 ? "" : "es"}
           </p>
         )}
@@ -66,6 +69,13 @@ export const HomeAgentPick = memo(function HomeAgentPickComp({
           const selectable = a.chatVerified && a.available;
           const muted = !selectable;
           const selected = selectedAgentSlug === a.slug;
+
+          let disabledReason: string | null = null;
+          if (!a.available) {
+            disabledReason = "Coming soon";
+          } else if (!a.chatVerified) {
+            disabledReason = "In testing";
+          }
 
           const cardClass = [
             styles["agentCard"],
@@ -89,21 +99,29 @@ export const HomeAgentPick = memo(function HomeAgentPickComp({
                       height={44}
                       className={styles["agentCard__img"]}
                       sizes="44px"
-                      unoptimized
                     />
                   ) : (
                     <GridRecipesLogo className={styles["agentCard__logoSvg"]} />
                   )}
                 </div>
-                <h3 className={styles["agentCard__name"]}>{a.name}</h3>
+                <div className={styles["agentCard__head"]}>
+                  <h3 className={styles["agentCard__name"]}>{a.name}</h3>
+                  {disabledReason && (
+                    <span className={styles["agentCard__badge"]}>{disabledReason}</span>
+                  )}
+                </div>
               </div>
-              <p className={styles["agentCard__desc"]}>{a.desc}</p>
+              <p className={styles["agentCard__desc"]} title={muted ? a.desc : undefined}>
+                {a.desc}
+              </p>
               <div className={styles["agentCard__footer"]}>
                 <p className={styles["agentCard__publisher"]}>{a.publisher}</p>
-                <div className={styles["agentCard__metric"]}>
-                  <span className={styles["agentCard__metricLabel"]}>{a.metricLabel}</span>
-                  <span className={styles["agentCard__metricValue"]}>{a.metricValue}</span>
-                </div>
+                {a.metricLabel && a.metricValue && (
+                  <div className={styles["agentCard__metric"]}>
+                    <span className={styles["agentCard__metricLabel"]}>{a.metricLabel}</span>
+                    <span className={styles["agentCard__metricValue"]}>{a.metricValue}</span>
+                  </div>
+                )}
               </div>
             </>
           );
