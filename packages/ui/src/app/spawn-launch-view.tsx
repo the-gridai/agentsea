@@ -196,11 +196,11 @@ grid-spawn matrix                        # Agent x cloud matrix`;
           <div className={styles["hoodCodeGrid"]}>
             <div className={styles["hoodCodeCard"]}>
               <h3 className={styles["hoodCodeCard__title"]}>CLI reference</h3>
-              <SpawnCopyBlock code={cliRefSnippet} />
+              <SpawnCopyBlock code={cliRefSnippet} stretch />
             </div>
             <div className={styles["hoodCodeCard"]}>
               <h3 className={styles["hoodCodeCard__title"]}>Without the CLI</h3>
-              <SpawnCopyBlock code={withoutCliSnippet} />
+              <SpawnCopyBlock code={withoutCliSnippet} stretch />
             </div>
           </div>
         </div>

@@ -3,6 +3,15 @@
 .block {
   @include flex(stretch, flex-start, column);
   gap: pad(4);
+  min-width: 0;
+}
+
+.block--stretch {
+  height: 100%;
+}
+
+.block--stretch .shell {
+  flex: 1;
 }
 
 .shell {
@@ -26,6 +35,7 @@
 .pre {
   margin: 0;
   @include padding(4, 5);
+  max-width: 100%;
   overflow-x: auto;
   @include text(mono-s);
   color: c(text-1);

@@ -260,12 +260,24 @@
 .hoodCodeGrid {
   display: grid;
   gap: pad(5);
+  min-width: 0;
 
   @media (min-width: 768px) {
     grid-template-columns: 1fr 1fr;
     gap: pad(6);
-    align-items: start;
+    align-items: stretch;
   }
+}
+
+.hoodCodeCard {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.hoodCodeCard > :last-child {
+  flex: 1;
+  min-height: 0;
 }
 
 .hoodCodeCard__title {

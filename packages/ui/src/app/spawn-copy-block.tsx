@@ -7,11 +7,13 @@ import styles from "./spawn-copy-block.module.scss";
 
 export type SpawnCopyBlockProps = {
   code: string;
+  className?: string;
+  stretch?: boolean;
 };
 
 type CopyState = "idle" | "copied" | "failed";
 
-export const SpawnCopyBlock = memo(function SpawnCopyBlockComp({ code }: SpawnCopyBlockProps) {
+export const SpawnCopyBlock = memo(function SpawnCopyBlockComp({ code, className, stretch }: SpawnCopyBlockProps) {
   const [state, setState] = useState<CopyState>("idle");
   const timeoutRef = useRef<number | null>(null);
 
@@ -35,9 +37,12 @@ export const SpawnCopyBlock = memo(function SpawnCopyBlockComp({ code }: SpawnCo
   }, [code]);
 
   const buttonLabel = state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : "Copy";
+  const blockClassName = [styles["block"], stretch ? styles["block--stretch"] : "", className ?? ""]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <div className={styles["block"]}>
+    <div className={blockClassName}>
       <div className={styles["shell"]}>
         <span className={styles["lang"]}>shell</span>
         <pre className={styles["pre"]}>
