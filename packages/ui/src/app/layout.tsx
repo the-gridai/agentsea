@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { DM_Mono, DM_Sans } from "next/font/google";
 import type { ReactNode } from "react";
 
@@ -22,6 +22,19 @@ export const metadata: Metadata = {
   title: "Grid Spawn — AI agents on any cloud | The Grid",
   description:
     "Pick an agent, pick a cloud, one CLI. Provision VMs, Grid API key, browser terminal — Grid Spawn for The Grid.",
+  icons: {
+    icon: "/thegrid-mark.svg",
+  },
+  openGraph: {
+    title: "Grid Spawn — AI agents on any cloud",
+    description: "Pick an agent, pick a cloud, one CLI. Provision VMs wired to The Grid API.",
+    type: "website",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

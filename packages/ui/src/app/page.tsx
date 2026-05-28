@@ -2,7 +2,9 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { CopyCode } from "./copy-code";
+import { HomeAgentGridStatic } from "./home-agent-grid-static";
 import { HomeLaunchFlow } from "./home-launch-flow";
+import { WHY_GRID_SPAWN_CARDS } from "./why-grid-spawn-cards";
 import {
   GRID_SPAWN_INSTALL_URL,
   GRID_SPAWN_OPENCLAW_DO_ONELINER,
@@ -45,7 +47,7 @@ export default async function HomePage() {
             </p>
           </section>
 
-          <Suspense fallback={null}>
+          <Suspense fallback={<HomeAgentGridStatic agents={agents} />}>
             <HomeLaunchFlow
               agents={agents}
               cloudOptions={cloudOptions}
@@ -158,30 +160,12 @@ export default async function HomePage() {
               The fastest way to deploy Grid-backed agents on infrastructure you control.
             </p>
             <div className={styles["whyGrid"]}>
-              <div className={styles["whyCard"]}>
-                <h3 className={styles["whyCard__h"]}>Agent-agnostic</h3>
-                <p className={styles["whyCard__p"]}>
-                  Start with OpenClaw, Codex, or OpenCode, then add more agents as they become available.
-                </p>
-              </div>
-              <div className={styles["whyCard"]}>
-                <h3 className={styles["whyCard__h"]}>Bring your own cloud</h3>
-                <p className={styles["whyCard__p"]}>
-                  Your provider account, your keys — we orchestrate, you own the bill and the data plane.
-                </p>
-              </div>
-              <div className={styles["whyCard"]}>
-                <h3 className={styles["whyCard__h"]}>Fully sandboxed</h3>
-                <p className={styles["whyCard__p"]}>
-                  Each spawn is an isolated VM and credential boundary — no cross-talk between sessions.
-                </p>
-              </div>
-              <div className={styles["whyCard"]}>
-                <h3 className={styles["whyCard__h"]}>The Grid inference</h3>
-                <p className={styles["whyCard__p"]}>
-                  Inference routes through the Grid API (OpenAI-compatible) — budgets, keys, and usage on-platform.
-                </p>
-              </div>
+              {WHY_GRID_SPAWN_CARDS.map((c) => (
+                <div key={c.title} className={styles["whyCard"]}>
+                  <h3 className={styles["whyCard__h"]}>{c.title}</h3>
+                  <p className={styles["whyCard__p"]}>{c.body}</p>
+                </div>
+              ))}
             </div>
           </section>
 

@@ -5,7 +5,6 @@ import {
   memo,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useState,
   type PropsWithChildren,
@@ -30,11 +29,9 @@ function readStoredDark(): boolean {
 }
 
 export const ThemeProvider = memo(function ThemeProviderComp({ children }: PropsWithChildren) {
-  const [isDark, setDark] = useState<boolean>(true);
-
-  useEffect(() => {
-    setDark(readStoredDark());
-  }, []);
+  // Lazy initializer reads localStorage on first client render so we never
+  // briefly report a different theme than the inline boot script applied.
+  const [isDark, setDark] = useState<boolean>(() => readStoredDark());
 
   const toggle = useCallback(() => {
     setDark((prev) => {
@@ -50,10 +47,6 @@ export const ThemeProvider = memo(function ThemeProviderComp({ children }: Props
   }, []);
 
   const value = useMemo<ThemeCtx>(() => ({ isDark, toggle }), [isDark, toggle]);
-
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", isDark);
-  }, [isDark]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 });

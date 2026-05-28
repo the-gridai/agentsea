@@ -1,11 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { memo, type RefObject } from "react";
 
-import { LocalMachineLogo } from "./cloud-logos";
-import { DIGITALOCEAN_LOGO_PATH, LINODE_LOGO_PATH } from "./home-public-constants";
+import { CloudLogo } from "./cloud-logos";
 import type { HomeAgentVm, HomeCloudVm } from "./landing-from-manifest";
 import styles from "./page.module.scss";
 
@@ -17,52 +15,6 @@ export type HomeCloudPickProps = {
   sectionRef: RefObject<HTMLElement | null>;
   titleRef: RefObject<HTMLHeadingElement | null>;
 };
-
-function cloudLogo(slug: string, icon: string | null, className: string) {
-  if (slug === "local") {
-    return <LocalMachineLogo className={className} />;
-  }
-  if (slug === "digitalocean") {
-    return (
-      <Image
-        src={DIGITALOCEAN_LOGO_PATH}
-        alt=""
-        width={44}
-        height={44}
-        className={styles["cloudCard__img"]}
-        sizes="44px"
-        unoptimized
-      />
-    );
-  }
-  if (slug === "linode") {
-    return (
-      <Image
-        src={LINODE_LOGO_PATH}
-        alt=""
-        width={44}
-        height={44}
-        className={styles["cloudCard__img"]}
-        sizes="44px"
-        unoptimized
-      />
-    );
-  }
-  if (icon) {
-    return (
-      <Image
-        src={icon}
-        alt=""
-        width={44}
-        height={44}
-        className={styles["cloudCard__img"]}
-        sizes="44px"
-        unoptimized
-      />
-    );
-  }
-  return <LocalMachineLogo className={className} />;
-}
 
 function cliHref(agentSlug: string, cloudSlug: string): string {
   return `/cli?agent=${encodeURIComponent(agentSlug)}&cloud=${encodeURIComponent(cloudSlug)}`;
@@ -121,17 +73,22 @@ export const HomeCloudPick = memo(function HomeCloudPickComp({
             <>
               <div className={styles["cloudCard__top"]}>
                 <div className={styles["cloudCard__logo"]} aria-hidden>
-                  {cloudLogo(c.slug, c.icon, styles["cloudCard__logoSvg"] ?? "")}
+                  <CloudLogo
+                    slug={c.slug}
+                    icon={c.icon}
+                    size={44}
+                    imgClassName={styles["cloudCard__img"]}
+                    svgClassName={styles["cloudCard__logoSvg"]}
+                  />
                 </div>
                 <div className={styles["cloudCard__head"]}>
                   <h3 className={styles["cloudCard__name"]}>{c.name}</h3>
-                  {comingSoon && <span className={styles["cloudCard__badge"]}>Coming soon</span>}
+                  {disabledReason && (
+                    <span className={styles["cloudCard__badge"]}>{disabledReason}</span>
+                  )}
                 </div>
               </div>
               <p className={styles["cloudCard__desc"]}>{c.description}</p>
-              {disabledReason && !comingSoon && (
-                <p className={styles["cloudCard__reason"]}>{disabledReason}</p>
-              )}
             </>
           );
 

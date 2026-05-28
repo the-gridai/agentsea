@@ -1,22 +1,40 @@
 "use client";
 
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 
+import { writeClipboard } from "./clipboard";
 import styles from "./spawn-copy-block.module.scss";
 
 export type SpawnCopyBlockProps = {
   code: string;
 };
 
+type CopyState = "idle" | "copied" | "failed";
+
 export const SpawnCopyBlock = memo(function SpawnCopyBlockComp({ code }: SpawnCopyBlockProps) {
-  const [copied, setCopied] = useState(false);
+  const [state, setState] = useState<CopyState>("idle");
+  const timeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current != null) window.clearTimeout(timeoutRef.current);
+    };
+  }, []);
 
   const copy = useCallback(() => {
-    void navigator.clipboard.writeText(code.trim()).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    });
+    if (timeoutRef.current != null) window.clearTimeout(timeoutRef.current);
+    writeClipboard(code.trim())
+      .then(() => {
+        setState("copied");
+        timeoutRef.current = window.setTimeout(() => setState("idle"), 2000);
+      })
+      .catch(() => {
+        setState("failed");
+        timeoutRef.current = window.setTimeout(() => setState("idle"), 2500);
+      });
   }, [code]);
+
+  const buttonLabel = state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : "Copy";
 
   return (
     <div className={styles["block"]}>
@@ -26,8 +44,8 @@ export const SpawnCopyBlock = memo(function SpawnCopyBlockComp({ code }: SpawnCo
           <code>{code}</code>
         </pre>
       </div>
-      <button type="button" className={styles["copy"]} onClick={copy}>
-        {copied ? "Copied" : "Copy"}
+      <button type="button" className={styles["copy"]} onClick={copy} aria-live="polite">
+        {buttonLabel}
       </button>
     </div>
   );
