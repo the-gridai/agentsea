@@ -4,7 +4,25 @@
   ],
   "headers": [
     {
-      "source": "/(manifest\\.json|sh/(.+\\.sh|.+\\.ps1)|assets/.+)",
+      "source": "/manifest.json",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=60, stale-while-revalidate=300"
+        }
+      ]
+    },
+    {
+      "source": "/sh/:path*",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=60, stale-while-revalidate=300"
+        }
+      ]
+    },
+    {
+      "source": "/assets/:path*",
       "headers": [
         {
           "key": "Cache-Control",
