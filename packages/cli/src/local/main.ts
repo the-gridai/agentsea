@@ -22,6 +22,7 @@ import {
   interactiveSession,
   pullAndStartContainer,
   runLocal,
+  startService,
   uploadFile,
 } from "./local.js";
 
@@ -41,6 +42,7 @@ async function main() {
     runServer: runLocal,
     uploadFile: async (l: string, r: string) => uploadFile(l, r),
     downloadFile: async (r: string, l: string) => downloadFile(r, l),
+    startService,
   };
 
   // When sandboxed, recreate agents with the Docker-wrapped runner so that

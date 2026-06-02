@@ -1,6 +1,7 @@
 // local/local.ts — Core local provider: runs commands on the user's machine
 
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { closeSync, copyFileSync, mkdirSync, mkdtempSync, openSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { tryCatch } from "@agentsea/sdk";
@@ -101,6 +102,39 @@ export async function runLocalArgs(args: ReadonlyArray<string>): Promise<void> {
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
     throw new Error(`Command failed (exit ${exitCode}): ${args.join(" ")}`);
+  }
+}
+
+/**
+ * Start a long-lived background service on the local machine and return once it
+ * has been launched (not when it exits).
+ *
+ * Why this exists (and why it does NOT use `Bun.spawn` + `&`): a `setsid … &`
+ * job started inside a `Bun.spawn`-ed shell is killed (SIGTERM) when that shell
+ * is reaped, so the proxy never persists. Here we launch the service with
+ * `node:child_process.spawn(..., { detached: true })`, which puts it in its own
+ * session, and `unref()` it so it is decoupled from the CLI's event loop and
+ * survives for the session. stdout/stderr are appended to `logPath`.
+ */
+export async function startService(cmd: string, logPath: string): Promise<void> {
+  validateCommand(cmd);
+  const [shell, flag] = getLocalShell();
+  const out = openSync(logPath, "a");
+  try {
+    const child = spawn(shell, [flag, cmd], {
+      detached: true,
+      stdio: ["ignore", out, out],
+      env: process.env,
+    });
+    child.on("error", (err) => {
+      logInfo(`Background service failed to launch: ${err.message}`);
+    });
+    // Decouple from the parent so the CLI does not keep it tethered to its
+    // event loop; the process lives in its own session for the session's life.
+    child.unref();
+  } finally {
+    // The child has dup'd the fd; we can close our copy.
+    closeSync(out);
   }
 }
 
