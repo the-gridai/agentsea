@@ -52,20 +52,36 @@ const CODEX_LITELLM_BASE_URL = `http://127.0.0.1:${CODEX_LITELLM_PORT}/v1`;
 const HERMES_LITELLM_PORT = 4142;
 const HERMES_LITELLM_BASE_URL = `http://127.0.0.1:${HERMES_LITELLM_PORT}/v1`;
 
-/** Remote shell: apt python3-venv (Debian/Ubuntu) + ~/.litellm-venv with litellm[proxy]. Shared by Codex, Hermes, Junie. */
+/**
+ * Remote shell: ensure ~/.litellm-venv has litellm[proxy]. Shared by Codex,
+ * Hermes, Junie.
+ *
+ * sudo/apt is the last resort, not the default: on a fresh VM image we may need
+ * `apt-get install python3-venv`, but most machines (and all repeat runs)
+ * already have a working `python3 -m venv`. We therefore only invoke apt/sudo
+ * when `python3` genuinely cannot create a venv — which keeps local runs
+ * non-interactive (no sudo password prompt) and avoids touching the apt index
+ * (and its unrelated third-party-repo GPG warnings) when nothing is needed.
+ */
 export const LITELLM_VENV_SETUP = [
   '_sudo=""; [ "$(id -u)" != "0" ] && _sudo="sudo"',
-  'command -v python3 >/dev/null 2>&1 || { $_sudo apt-get update -qq && $_sudo apt-get install -y -qq python3 || exit 1; }',
-  // `import venv` can succeed without ensurepip; always install the distro venv package on apt systems.
-  'if command -v apt-get >/dev/null 2>&1; then',
-  "  $_sudo apt-get update -qq",
-  '  _py_ver=$(python3 -c "import sys; print(f\\"{sys.version_info.major}.{sys.version_info.minor}\\")" 2>/dev/null || echo "3")',
-  '  if apt-cache show "python${_py_ver}-venv" >/dev/null 2>&1; then',
-  '    $_sudo apt-get install -y "python${_py_ver}-venv" || exit 1',
-  '  elif apt-cache show python3-venv >/dev/null 2>&1; then',
-  "    $_sudo apt-get install -y python3-venv || exit 1",
+  // Only reach for apt/sudo if Python can't stand up a venv (incl. ensurepip)
+  // on its own. This is the only step that needs root, so guarding it is what
+  // removes the sudo prompt on typical local machines.
+  'if ! python3 -c "import venv, ensurepip" >/dev/null 2>&1; then',
+  "  if command -v apt-get >/dev/null 2>&1; then",
+  '    command -v python3 >/dev/null 2>&1 || { $_sudo apt-get update -qq && $_sudo apt-get install -y -qq python3 || exit 1; }',
+  "    $_sudo apt-get update -qq || true",
+  '    _py_ver=$(python3 -c "import sys; print(f\\"{sys.version_info.major}.{sys.version_info.minor}\\")" 2>/dev/null || echo "3")',
+  '    if apt-cache show "python${_py_ver}-venv" >/dev/null 2>&1; then',
+  '      $_sudo apt-get install -y "python${_py_ver}-venv" || exit 1',
+  "    elif apt-cache show python3-venv >/dev/null 2>&1; then",
+  "      $_sudo apt-get install -y python3-venv || exit 1",
+  "    else",
+  '      echo "No python3-venv package available via apt" >&2; exit 1',
+  "    fi",
   "  else",
-  '    echo "No python3-venv package available via apt" >&2; exit 1',
+  '    echo "python3 cannot create a venv and apt-get is unavailable" >&2; exit 1',
   "  fi",
   "fi",
   'if [ -d "$HOME/.litellm-venv" ] && [ ! -x "$HOME/.litellm-venv/bin/litellm" ]; then rm -rf "$HOME/.litellm-venv"; fi',
@@ -74,7 +90,8 @@ export const LITELLM_VENV_SETUP = [
   '  python3 -m venv "$HOME/.litellm-venv" || { echo "python3 -m venv failed" >&2; exit 1; }',
   '  "$HOME/.litellm-venv/bin/pip" install -q --upgrade pip',
   "fi",
-  '  "$HOME/.litellm-venv/bin/pip" install -q --upgrade "litellm[proxy]>=1.85.0"',
+  // pip runs inside the user-owned venv (no sudo); keeps litellm at >=1.85.0.
+  '"$HOME/.litellm-venv/bin/pip" install -q --upgrade "litellm[proxy]>=1.85.0" || exit 1',
   'mkdir -p "$HOME/.local/bin"',
   'ln -sf "$HOME/.litellm-venv/bin/litellm" "$HOME/.local/bin/litellm"',
 ].join("\n");
@@ -249,6 +266,24 @@ export interface CloudRunner {
   runServer(cmd: string, timeoutSecs?: number): Promise<void>;
   uploadFile(localPath: string, remotePath: string): Promise<void>;
   downloadFile(remotePath: string, localPath: string): Promise<void>;
+  /**
+   * Start a long-lived background service (e.g. a LiteLLM proxy) and return once
+   * it has been launched — NOT when it exits.
+   *
+   * Local mode only. On a VM, long-lived proxies are supervised by systemd (or a
+   * background SSH process that outlives the connection), so SSH/VM runners leave
+   * this undefined and use the in-script systemd/`setsid` path via `runServer`.
+   *
+   * Local mode cannot use that pattern: a `setsid … &` job started inside a
+   * `Bun.spawn`-ed shell is torn down (SIGTERM) when that shell process is
+   * reaped, so the proxy never persists. Implementations must launch the service
+   * as a process detached from the ephemeral command shell (its own session,
+   * stdio redirected to `logPath`) so it survives for the CLI session.
+   *
+   * @param cmd      Shell command that execs the service (e.g. `exec "$HOME/.local/bin/hermes-litellm-wrapper"`).
+   * @param logPath  Absolute path to append the service's stdout/stderr to.
+   */
+  startService?(cmd: string, logPath: string): Promise<void>;
 }
 
 // ─── Script template validation ────────────────────────────────────────────
@@ -655,17 +690,38 @@ async function startCodexLiteLlmProxy(runner: CloudRunner): Promise<void> {
   const wrapperB64 = Buffer.from(wrapperScript).toString("base64");
   const unitB64 = Buffer.from(unitFile).toString("base64");
 
-  const script = [
+  const checkLines = [
     "source ~/.spawnrc 2>/dev/null",
     'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.litellm-venv/bin:$PATH"',
     'test -n "$THEGRID_API_KEY" || { echo "THEGRID_API_KEY missing from ~/.spawnrc" >&2; exit 1; }',
     'export THEGRID_API_KEY',
     'test -s "$HOME/.codex/litellm.yaml" || { echo "Missing ~/.codex/litellm.yaml" >&2; exit 1; }',
-    `if ${CODEX_LITELLM_HEALTH_CHECK}; then echo "Codex proxy already running on :${CODEX_LITELLM_PORT}"; exit 0; fi`,
+  ];
+  const venvWrapperLines = [
     LITELLM_VENV_SETUP,
     'test -x "$HOME/.litellm-venv/bin/litellm" || { echo "litellm binary missing after venv setup" >&2; exit 1; }',
     "printf '%s' '" + wrapperB64 + "' | base64 -d > /tmp/codex-litellm-wrapper.tmp",
     "chmod +x /tmp/codex-litellm-wrapper.tmp",
+  ];
+
+  // Local mode: launch detached via runner.startService instead of the
+  // in-shell `setsid … &`, which Bun tears down (see startLiteLlmProxyLocally).
+  if (runner.startService) {
+    await startLiteLlmProxyLocally(runner, {
+      name: "Codex",
+      port: CODEX_LITELLM_PORT,
+      binName: "codex-litellm-wrapper",
+      logPath: "/tmp/codex-litellm.log",
+      healthCheck: CODEX_LITELLM_HEALTH_CHECK,
+      prepLines: [...checkLines, ...venvWrapperLines],
+    });
+    return;
+  }
+
+  const script = [
+    ...checkLines,
+    `if ${CODEX_LITELLM_HEALTH_CHECK}; then echo "Codex proxy already running on :${CODEX_LITELLM_PORT}"; exit 0; fi`,
+    ...venvWrapperLines,
     "if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then",
     '  _sudo=""',
     '  [ "$(id -u)" != "0" ] && _sudo="sudo"',
@@ -677,13 +733,17 @@ async function startCodexLiteLlmProxy(runner: CloudRunner): Promise<void> {
     "  $_sudo systemctl enable codex-litellm 2>/dev/null",
     "  $_sudo systemctl restart codex-litellm",
     "else",
-    "  mv /tmp/codex-litellm-wrapper.tmp /usr/local/bin/codex-litellm-wrapper",
+    // No systemd (e.g. macOS local runs): /usr/local/bin is not user-writable
+    // and we have no sudo here, so install the wrapper into the user-owned
+    // ~/.local/bin (already on PATH above) instead.
+    '  mkdir -p "$HOME/.local/bin"',
+    '  mv /tmp/codex-litellm-wrapper.tmp "$HOME/.local/bin/codex-litellm-wrapper"',
     "  pkill -f '[l]itellm.*4141' 2>/dev/null || true",
     "  sleep 1",
     "  if command -v setsid >/dev/null 2>&1; then",
-    "    setsid /usr/local/bin/codex-litellm-wrapper >> /tmp/codex-litellm.log 2>&1 < /dev/null &",
+    '    setsid "$HOME/.local/bin/codex-litellm-wrapper" >> /tmp/codex-litellm.log 2>&1 < /dev/null &',
     "  else",
-    "    nohup /usr/local/bin/codex-litellm-wrapper >> /tmp/codex-litellm.log 2>&1 < /dev/null &",
+    '    nohup "$HOME/.local/bin/codex-litellm-wrapper" >> /tmp/codex-litellm.log 2>&1 < /dev/null &',
     "  fi",
     "fi",
     "elapsed=0; while [ $elapsed -lt 120 ]; do",
@@ -1339,6 +1399,76 @@ async function setupPiConfig(runner: CloudRunner, _apiKey: string, modelId?: str
   logInfo(`Pi configured (provider: ${OPENCLAW_GRID_PROVIDER_ID}, model: ${selectedModel})`);
 }
 
+/**
+ * Local-mode launch for a LiteLLM-style proxy.
+ *
+ * Installs the wrapper into ~/.local/bin, launches it via runner.startService
+ * (a process detached from the ephemeral command shell — see CloudRunner.
+ * startService), then polls its health endpoint from a plain foreground shell.
+ *
+ * This replaces the `setsid … &` fire-and-forget used on VMs: inside the local
+ * runner's `Bun.spawn`-ed shell, a backgrounded job is killed (SIGTERM) when the
+ * shell is reaped, so the proxy would never persist. Only used when
+ * `runner.startService` is defined (local mode); VM/SSH runners keep the
+ * systemd/`setsid` path.
+ */
+export async function startLiteLlmProxyLocally(
+  runner: CloudRunner,
+  opts: {
+    name: string;
+    port: number;
+    binName: string;
+    logPath: string;
+    healthCheck: string;
+    prepLines: string[];
+  },
+): Promise<void> {
+  const { name, port, binName, logPath, healthCheck, prepLines } = opts;
+  if (!runner.startService) {
+    throw new Error("startLiteLlmProxyLocally requires a runner with startService");
+  }
+
+  const prep = [
+    ...prepLines,
+    'mkdir -p "$HOME/.local/bin"',
+    `mv /tmp/${binName}.tmp "$HOME/.local/bin/${binName}"`,
+    // Clear any proxy left over from a previous session before relaunching.
+    //
+    // CRITICAL: kill by listening socket, NOT `pkill -f <pattern>`. runLocal
+    // executes this via `bash -c "<entire script>"`, so the whole script — which
+    // mentions "litellm" and the port — is in the shell's own argv. A
+    // `pkill -f '…litellm…<port>…'` therefore matches and SIGTERMs THIS shell
+    // (exit 143), which is exactly why local setup kept dying. lsof/fuser match
+    // by socket, never by command line.
+    `_oldpid=$(lsof -ti tcp:${port} 2>/dev/null); [ -z "$_oldpid" ] && _oldpid=$(fuser ${port}/tcp 2>/dev/null); [ -n "$_oldpid" ] && kill $_oldpid 2>/dev/null || true`,
+    "sleep 1",
+  ].join("\n");
+
+  const prepResult = await asyncTryCatch(() => runner.runServer(prep, 300));
+  if (!prepResult.ok) {
+    throw new Error(`${name} LiteLLM proxy setup failed — check ${logPath}`);
+  }
+
+  await runner.startService(`exec "$HOME/.local/bin/${binName}"`, logPath);
+
+  const poll = [
+    "elapsed=0; while [ $elapsed -lt 120 ]; do",
+    `  if ${healthCheck}; then echo "${name} proxy ready after $elapsed sec"; exit 0; fi`,
+    "  sleep 1; elapsed=$((elapsed + 1))",
+    "done",
+    `echo "${name} proxy failed to start within 120s" >&2`,
+    `tail -60 ${logPath} 2>/dev/null || true`,
+    "exit 1",
+  ].join("\n");
+
+  const pollResult = await asyncTryCatch(() => runner.runServer(poll, 130));
+  if (pollResult.ok) {
+    logInfo(`${name} proxy started on :${port}`);
+    return;
+  }
+  throw new Error(`${name} LiteLLM proxy failed to start on :${port} — check ${logPath}`);
+}
+
 async function startHermesLiteLlmProxy(runner: CloudRunner): Promise<void> {
   logStep("Starting Hermes local chat/completions proxy...");
 
@@ -1375,17 +1505,38 @@ async function startHermesLiteLlmProxy(runner: CloudRunner): Promise<void> {
   const wrapperB64 = Buffer.from(wrapperScript).toString("base64");
   const unitB64 = Buffer.from(unitFile).toString("base64");
 
-  const script = [
+  const checkLines = [
     "source ~/.spawnrc 2>/dev/null",
     'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.litellm-venv/bin:$PATH"',
     'test -n "$THEGRID_API_KEY" || { echo "THEGRID_API_KEY missing from ~/.spawnrc" >&2; exit 1; }',
     "export THEGRID_API_KEY",
     'test -s "$HOME/.hermes/litellm.yaml" || { echo "Missing ~/.hermes/litellm.yaml" >&2; exit 1; }',
-    `if ${HERMES_LITELLM_HEALTH_CHECK}; then echo "Hermes proxy already running on :${HERMES_LITELLM_PORT}"; exit 0; fi`,
+  ];
+  const venvWrapperLines = [
     LITELLM_VENV_SETUP,
     'test -x "$HOME/.litellm-venv/bin/litellm" || { echo "litellm binary missing after venv setup" >&2; exit 1; }',
     "printf '%s' '" + wrapperB64 + "' | base64 -d > /tmp/hermes-litellm-wrapper.tmp",
     "chmod +x /tmp/hermes-litellm-wrapper.tmp",
+  ];
+
+  // Local mode: launch detached via runner.startService instead of the
+  // in-shell `setsid … &`, which Bun tears down (see startLiteLlmProxyLocally).
+  if (runner.startService) {
+    await startLiteLlmProxyLocally(runner, {
+      name: "Hermes",
+      port: HERMES_LITELLM_PORT,
+      binName: "hermes-litellm-wrapper",
+      logPath: "/tmp/hermes-litellm.log",
+      healthCheck: HERMES_LITELLM_HEALTH_CHECK,
+      prepLines: [...checkLines, ...venvWrapperLines],
+    });
+    return;
+  }
+
+  const script = [
+    ...checkLines,
+    `if ${HERMES_LITELLM_HEALTH_CHECK}; then echo "Hermes proxy already running on :${HERMES_LITELLM_PORT}"; exit 0; fi`,
+    ...venvWrapperLines,
     "if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then",
     '  _sudo=""',
     '  [ "$(id -u)" != "0" ] && _sudo="sudo"',
@@ -1397,13 +1548,17 @@ async function startHermesLiteLlmProxy(runner: CloudRunner): Promise<void> {
     "  $_sudo systemctl enable hermes-litellm 2>/dev/null",
     "  $_sudo systemctl restart hermes-litellm",
     "else",
-    "  mv /tmp/hermes-litellm-wrapper.tmp /usr/local/bin/hermes-litellm-wrapper",
+    // No systemd (e.g. macOS local runs): /usr/local/bin is not user-writable
+    // and we have no sudo here, so install the wrapper into the user-owned
+    // ~/.local/bin (already on PATH above) instead.
+    '  mkdir -p "$HOME/.local/bin"',
+    '  mv /tmp/hermes-litellm-wrapper.tmp "$HOME/.local/bin/hermes-litellm-wrapper"',
     "  pkill -f '[l]itellm.*4142' 2>/dev/null || true",
     "  sleep 1",
     "  if command -v setsid >/dev/null 2>&1; then",
-    "    setsid /usr/local/bin/hermes-litellm-wrapper >> /tmp/hermes-litellm.log 2>&1 < /dev/null &",
+    '    setsid "$HOME/.local/bin/hermes-litellm-wrapper" >> /tmp/hermes-litellm.log 2>&1 < /dev/null &',
     "  else",
-    "    nohup /usr/local/bin/hermes-litellm-wrapper >> /tmp/hermes-litellm.log 2>&1 < /dev/null &",
+    '    nohup "$HOME/.local/bin/hermes-litellm-wrapper" >> /tmp/hermes-litellm.log 2>&1 < /dev/null &',
     "  fi",
     "fi",
     "elapsed=0; while [ $elapsed -lt 120 ]; do",
