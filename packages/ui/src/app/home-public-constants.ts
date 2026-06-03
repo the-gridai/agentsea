@@ -6,10 +6,8 @@ export const AGENTSEA_PUBLIC_ORIGIN_UNSET = "https://next-public-agentsea-public
 
 function agentSeaPublicOrigin(): string {
   const raw =
-    typeof process !== "undefined" &&
-    (process.env.NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN || process.env.NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN)
-      ? (process.env.NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN ?? process.env.NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN ?? "")
-          .trim()
+    typeof process !== "undefined" && process.env.NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN
+      ? process.env.NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN.trim()
       : "";
   if (!raw) {
     return AGENTSEA_PUBLIC_ORIGIN_UNSET;

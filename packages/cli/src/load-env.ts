@@ -15,11 +15,7 @@ import { dirname, join } from "node:path";
 import { config } from "dotenv";
 
 function envDiagEnabled(): boolean {
-  return (
-    process.env.AGENTSEA_DEBUG === "1" ||
-    process.env.AGENTSEA_DEBUG_ENV === "1" ||
-    process.env.AGENTSEA_DEBUG_ENV === "1"
-  );
+  return process.env.AGENTSEA_DEBUG === "1" || process.env.AGENTSEA_DEBUG_ENV === "1";
 }
 
 function logEnvDiag(message: string): void {
@@ -35,7 +31,7 @@ function tryLoad(path: string): void {
 }
 
 function rootOverride(): string | undefined {
-  return process.env.AGENTSEA_ROOT?.trim() || process.env.AGENTSEA_ROOT?.trim() || undefined;
+  return process.env.AGENTSEA_ROOT?.trim() || undefined;
 }
 
 /** Exported for tests — runs the same resolution rules as CLI startup. */

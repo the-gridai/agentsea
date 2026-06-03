@@ -31,7 +31,6 @@ export async function verifyTheGridApiKey(apiKey: string): Promise<boolean> {
   }
   if (
     process.env.AGENTSEA_SKIP_API_VALIDATION ||
-    process.env.AGENTSEA_SKIP_API_VALIDATION ||
     process.env.BUN_ENV === "test" ||
     process.env.NODE_ENV === "test"
   ) {

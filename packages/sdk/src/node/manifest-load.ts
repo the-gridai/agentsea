@@ -169,11 +169,11 @@ function readManifestAt(localPath: string): Manifest | null {
 }
 
 function manifestEnvOverride(): string | undefined {
-  return process.env.AGENTSEA_MANIFEST?.trim() || process.env.AGENTSEA_MANIFEST?.trim() || undefined;
+  return process.env.AGENTSEA_MANIFEST?.trim() || undefined;
 }
 
 function rootEnvOverride(): string | undefined {
-  return process.env.AGENTSEA_ROOT?.trim() || process.env.AGENTSEA_ROOT?.trim() || undefined;
+  return process.env.AGENTSEA_ROOT?.trim() || undefined;
 }
 
 function tryLoadLocalManifest(): Manifest | null {
