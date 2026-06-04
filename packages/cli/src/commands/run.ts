@@ -225,34 +225,42 @@ export function showDryRunPreview(manifest: Manifest, agent: string, cloud: stri
 async function downloadScriptWithFallback(primaryUrl: string, fallbackUrl: string): Promise<string> {
   logStep("Downloading agentsea script...");
 
-  const r = await asyncTryCatch(async () => {
+  // Try the primary CDN. A connection-level failure (DNS/unreachable host) THROWS
+  // instead of returning a response, so we must fall back to GitHub raw on both a
+  // thrown error and a non-OK status — otherwise an unreachable CDN is fatal even
+  // when GitHub (which served the manifest) is reachable.
+  const primary = await asyncTryCatch(async () => {
     const res = await fetch(primaryUrl, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT),
     });
-    if (res.ok) {
-      const text = await res.text();
-      logInfo("Script downloaded");
-      return text;
+    if (!res.ok) {
+      throw new Error(`primary returned HTTP ${res.status}`);
     }
+    return await res.text();
+  });
+  if (primary.ok) {
+    logInfo("Script downloaded");
+    return primary.data;
+  }
 
-    // Fallback to GitHub raw
-    logStep("Trying fallback source...");
+  // Fallback to GitHub raw.
+  logStep("Trying fallback source...");
+  const r = await asyncTryCatch(async () => {
     const ghRes = await fetch(fallbackUrl, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT),
     });
     if (!ghRes.ok) {
       logError("Download failed");
-      reportDownloadFailure(res.status, ghRes.status);
+      reportDownloadFailure(ghRes.status, ghRes.status);
       process.exit(1);
     }
-    const text = await ghRes.text();
-    logInfo("Script downloaded (fallback)");
-    return text;
+    return await ghRes.text();
   });
   if (!r.ok) {
     logError("Download failed");
     throw r.error;
   }
+  logInfo("Script downloaded (fallback)");
   return r.data;
 }
 
@@ -1286,28 +1294,35 @@ export async function cmdRunHeadless(agent: string, cloud: string, opts: Headles
       const url = `https://spawn.thegrid.ai/${resolvedCloud}/${resolvedAgent}.sh`;
       const ghUrl = `${RAW_BASE}/sh/${resolvedCloud}/${resolvedAgent}.sh`;
 
-      const fetchResult = await asyncTryCatch(async () => {
+      // Primary CDN fetch throws on a connection-level failure (DNS/unreachable),
+      // so fall back to GitHub raw on both a thrown error and a non-OK status.
+      const primaryResult = await asyncTryCatch(async () => {
         const res = await fetch(url, {
           signal: AbortSignal.timeout(FETCH_TIMEOUT),
         });
-        if (res.ok) {
-          return res.text();
+        if (!res.ok) {
+          throw new Error(`primary returned HTTP ${res.status}`);
         }
-        const ghRes = await fetch(ghUrl, {
-          signal: AbortSignal.timeout(FETCH_TIMEOUT),
-        });
-        if (!ghRes.ok) {
-          headlessError(
-            resolvedAgent,
-            resolvedCloud,
-            "DOWNLOAD_ERROR",
-            `Script not found (HTTP ${res.status} primary, ${ghRes.status} fallback)`,
-            outputFormat,
-            2,
-          );
-        }
-        return ghRes.text();
+        return res.text();
       });
+      const fetchResult = primaryResult.ok
+        ? primaryResult
+        : await asyncTryCatch(async () => {
+            const ghRes = await fetch(ghUrl, {
+              signal: AbortSignal.timeout(FETCH_TIMEOUT),
+            });
+            if (!ghRes.ok) {
+              headlessError(
+                resolvedAgent,
+                resolvedCloud,
+                "DOWNLOAD_ERROR",
+                `Script not found (HTTP ${ghRes.status} fallback)`,
+                outputFormat,
+                2,
+              );
+            }
+            return ghRes.text();
+          });
       if (!fetchResult.ok) {
         headlessError(
           resolvedAgent,

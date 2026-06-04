@@ -204,6 +204,34 @@ describe("cmdRun happy-path pipeline", () => {
       expect(scriptFetches[0].url).toContain("spawn.thegrid.ai");
       expect(scriptFetches[1].url).toContain("raw.githubusercontent.com");
     });
+
+    it("should fall back to GitHub when the primary URL throws a connection error", async () => {
+      // Regression: an unreachable CDN (DNS/connection error) makes fetch THROW
+      // rather than return a non-OK status. The fallback must still be attempted.
+      global.fetch = mock(async (url: string | URL | Request) => {
+        const urlStr = isString(url) ? url : url instanceof URL ? url.href : url.url;
+        fetchCalls.push({ url: urlStr });
+        if (urlStr.includes("manifest.json")) {
+          return new Response(JSON.stringify(mockManifest));
+        }
+        if (urlStr.includes("spawn.thegrid.ai")) {
+          throw new TypeError("fetch failed: getaddrinfo ENOTFOUND spawn.thegrid.ai");
+        }
+        if (urlStr.includes("raw.githubusercontent.com")) {
+          return new Response(VALID_SCRIPT, { status: 200 });
+        }
+        return new Response("not found", { status: 404 });
+      }) as unknown as typeof global.fetch;
+      await loadManifest(true);
+
+      await cmdRun("claude", "sprite");
+
+      const scriptFetches = fetchCalls.filter((c) => !c.url.includes("manifest.json"));
+      expect(scriptFetches.length).toBe(2);
+      expect(scriptFetches[0].url).toContain("spawn.thegrid.ai");
+      expect(scriptFetches[1].url).toContain("raw.githubusercontent.com");
+      expect(processExitSpy).not.toHaveBeenCalled();
+    });
   });
 
   // ── History recording ─────────────────────────────────────────────────────
