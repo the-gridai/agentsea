@@ -24,7 +24,7 @@ _run_with_restart() {
     # In headless mode (E2E / --headless), skip the restart loop entirely.
     # Restarting in headless mode creates duplicate droplets, exhausting the
     # account's droplet quota and causing all subsequent agents to fail.
-    if [ "${SPAWN_HEADLESS:-}" = "1" ]; then
+    if [ "${AGENTSEA_HEADLESS:-}" = "1" ]; then
         "$@"
         return $?
     fi
@@ -44,18 +44,18 @@ _run_with_restart() {
 
         # SIGTERM (143) or SIGKILL (137) — attempt restart
         if [ "$exit_code" -eq 143 ] || [ "$exit_code" -eq 137 ]; then
-            printf '\033[0;33m[spawn/%s] Agent process terminated (exit %s). The droplet is likely still running.\033[0m\n' \
+            printf '\033[0;33m[agentsea/%s] Agent process terminated (exit %s). The droplet is likely still running.\033[0m\n' \
                 "$_AGENT_NAME" "$exit_code" >&2
-            printf '\033[0;33m[spawn/%s] Check your DigitalOcean dashboard: https://cloud.digitalocean.com/droplets\033[0m\n' \
+            printf '\033[0;33m[agentsea/%s] Check your DigitalOcean dashboard: https://cloud.digitalocean.com/droplets\033[0m\n' \
                 "$_AGENT_NAME" >&2
             if [ "$attempt" -lt "$_MAX_RETRIES" ]; then
-                printf '\033[0;33m[spawn/%s] Restarting (attempt %s/%s, backoff %ss)...\033[0m\n' \
+                printf '\033[0;33m[agentsea/%s] Restarting (attempt %s/%s, backoff %ss)...\033[0m\n' \
                     "$_AGENT_NAME" "$((attempt + 1))" "$_MAX_RETRIES" "$backoff" >&2
                 sleep "$backoff"
                 backoff=$((backoff * 2))
                 continue
             else
-                printf '\033[0;31m[spawn/%s] Max restart attempts reached (%s). Giving up.\033[0m\n' \
+                printf '\033[0;31m[agentsea/%s] Max restart attempts reached (%s). Giving up.\033[0m\n' \
                     "$_AGENT_NAME" "$_MAX_RETRIES" >&2
                 return "$exit_code"
             fi
@@ -68,9 +68,9 @@ _run_with_restart() {
 
 _ensure_bun
 
-# SPAWN_CLI_DIR override — force local source (used by e2e tests)
-if [[ -n "${SPAWN_CLI_DIR:-}" && -f "$SPAWN_CLI_DIR/packages/cli/src/digitalocean/main.ts" ]]; then
-    _run_with_restart bun run "$SPAWN_CLI_DIR/packages/cli/src/digitalocean/main.ts" "$_AGENT_NAME" "$@"
+# AGENTSEA_CLI_DIR override — force local source (used by e2e tests)
+if [[ -n "${AGENTSEA_CLI_DIR:-}" && -f "$AGENTSEA_CLI_DIR/packages/cli/src/digitalocean/main.ts" ]]; then
+    _run_with_restart bun run "$AGENTSEA_CLI_DIR/packages/cli/src/digitalocean/main.ts" "$_AGENT_NAME" "$@"
     exit $?
 fi
 

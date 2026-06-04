@@ -1,5 +1,5 @@
 import pc from "picocolors";
-import { REPO, SPAWN_CDN } from "../manifest.js";
+import { REPO, AGENTSEA_CDN } from "../manifest.js";
 
 function getHelpUsageSection(): string {
   return `${pc.bold("USAGE")}
@@ -27,11 +27,11 @@ function getHelpUsageSection(): string {
   agentsea <cloud>                      Show available agents for cloud
   agentsea list                         Browse and rerun previous spawns (aliases: ls, history)
   agentsea list <filter>                Filter history by agent or cloud name
-  agentsea list -a <agent>              Filter spawn history by agent (or --agent)
-  agentsea list -c <cloud>              Filter spawn history by cloud (or --cloud)
+  agentsea list -a <agent>              Filter agentsea history by agent (or --agent)
+  agentsea list -c <cloud>              Filter agentsea history by cloud (or --cloud)
   agentsea list --flat                  Show flat list (disable tree view)
   agentsea list --json                  Output history as JSON
-  agentsea list --clear                 Clear all spawn history (requires --yes non-interactively)
+  agentsea list --clear                 Clear all agentsea history (requires --yes non-interactively)
   agentsea delete                       Delete a previously spawned server (aliases: rm, destroy, kill)
   agentsea delete -a <agent>            Filter servers by agent
   agentsea delete -c <cloud>            Filter servers by cloud
@@ -41,23 +41,23 @@ function getHelpUsageSection(): string {
   agentsea status -c <cloud>            Filter status by cloud (or --cloud)
   agentsea status --prune               Remove gone servers from history
   agentsea fix                          Full VM recovery (credentials, install, config, daemons)
-  agentsea fix <spawn-id>               Fix a specific spawn by name or ID
-  agentsea resume                       Continue provisioning an incomplete/failed spawn (SSH clouds)
-  agentsea resume <spawn-id>            Resume a specific incomplete spawn
+  agentsea fix <agentsea-id>               Fix a specific agentsea by name or ID
+  agentsea resume                       Continue provisioning an incomplete/failed agentsea (SSH clouds)
+  agentsea resume <agentsea-id>            Resume a specific incomplete agentsea
   agentsea resume --recover             Import crash-safe checkpoints from ~/.config/agentsea/runs/
   agentsea cleanup digitalocean         Remove stale DO droplets tagged by AgentSea (see --dry-run)
   agentsea cleanup --dry-run            List droplets that would be removed (default cloud: digitalocean)
   agentsea link <ip>                    Register an existing VM by IP (alias: reconnect)
   agentsea link <ip> --agent <agent>    Specify the agent running on the VM
   agentsea link <ip> --cloud <cloud>    Specify the cloud provider
-  agentsea export                       Export a claude spawn to a github repo (re-spawn via --repo)
-  agentsea export <name>                Export a specific spawn by name or ID
-  agentsea last                         Instantly rerun the most recent spawn (alias: rerun)
+  agentsea export                       Export a claude agentsea to a github repo (re-agentsea via --repo)
+  agentsea export <name>                Export a specific agentsea by name or ID
+  agentsea last                         Instantly rerun the most recent agentsea (alias: rerun)
   agentsea matrix                       Full availability matrix (alias: m)
   agentsea agents                       List all agents with descriptions
   agentsea clouds                       List all cloud providers
-  agentsea tree                         Show recursive spawn tree (parent/child relationships)
-  agentsea tree --json                  Output spawn tree as JSON
+  agentsea tree                         Show recursive agentsea tree (parent/child relationships)
+  agentsea tree --json                  Output agentsea tree as JSON
   agentsea history export               Dump history as JSON to stdout
   agentsea feedback "message"            Send feedback to the AgentSea team
   agentsea uninstall                    Uninstall agentsea CLI and optionally remove data
@@ -94,7 +94,7 @@ function getHelpExamplesSection(): string {
   agentsea hetzner                      ${pc.dim("# Show which agents run on Hetzner")}
   agentsea list                         ${pc.dim("# Browse history and pick one to rerun")}
   agentsea list codex                   ${pc.dim("# Filter history by agent name")}
-  agentsea last                         ${pc.dim("# Instantly rerun the most recent spawn")}
+  agentsea last                         ${pc.dim("# Instantly rerun the most recent agentsea")}
   agentsea matrix                       ${pc.dim("# See the full agent x cloud matrix")}`;
 }
 
@@ -112,7 +112,7 @@ function getHelpAuthSection(): string {
 
 function getHelpInstallSection(): string {
   return `${pc.bold("INSTALL")}
-  curl -fsSL ${SPAWN_CDN}/cli/install.sh | bash`;
+  curl -fsSL ${AGENTSEA_CDN}/cli/install.sh | bash`;
 }
 
 function getHelpTroubleshootingSection(): string {
@@ -120,29 +120,29 @@ function getHelpTroubleshootingSection(): string {
   ${pc.dim("*")} Script not found: Run ${pc.cyan("agentsea matrix")} to verify the combination exists
   ${pc.dim("*")} Missing credentials: Run ${pc.cyan("agentsea <cloud>")} to see setup instructions
   ${pc.dim("*")} Update issues: Try ${pc.cyan("agentsea update")} or reinstall manually
-  ${pc.dim("*")} Garbled unicode: Set ${pc.cyan("SPAWN_NO_UNICODE=1")} for ASCII-only output
-  ${pc.dim("*")} Missing unicode over SSH: Set ${pc.cyan("SPAWN_UNICODE=1")} to force unicode on
-  ${pc.dim("*")} OpenClaw dashboard on WSL shows "origin not allowed": the CLI opens ${pc.cyan("http://127.0.0.1:…")} in Windows so the origin matches the gateway; if that fails, use the logged ${pc.cyan("http://172.x…")} URL and set ${pc.cyan("SPAWN_WSL_OPEN_BROWSER_LAN_IP=1")} if needed (you may need matching gateway.controlUi.allowedOrigins for the LAN host).
-  ${pc.dim("*")} Slow startup: Set ${pc.cyan("SPAWN_NO_UPDATE_CHECK=1")} to skip auto-update`;
+  ${pc.dim("*")} Garbled unicode: Set ${pc.cyan("AGENTSEA_NO_UNICODE=1")} for ASCII-only output
+  ${pc.dim("*")} Missing unicode over SSH: Set ${pc.cyan("AGENTSEA_UNICODE=1")} to force unicode on
+  ${pc.dim("*")} OpenClaw dashboard on WSL shows "origin not allowed": the CLI opens ${pc.cyan("http://127.0.0.1:…")} in Windows so the origin matches the gateway; if that fails, use the logged ${pc.cyan("http://172.x…")} URL and set ${pc.cyan("AGENTSEA_WSL_OPEN_BROWSER_LAN_IP=1")} if needed (you may need matching gateway.controlUi.allowedOrigins for the LAN host).
+  ${pc.dim("*")} Slow startup: Set ${pc.cyan("AGENTSEA_NO_UPDATE_CHECK=1")} to skip auto-update`;
 }
 
 function getHelpEnvVarsSection(): string {
   return `${pc.bold("ENVIRONMENT VARIABLES")}
   ${pc.cyan("THEGRID_API_KEY")}        The Grid consumption API key (not trading; all agents require this)
   ${pc.cyan("MODEL_ID")}                  Override agent's default LLM model (or use --model flag; skips catalogue picker)
-  ${pc.cyan("SPAWN_SKIP_MODEL_PROMPT=1")} Skip interactive model picker (${pc.cyan("--headless")} already implies no prompts)
-  ${pc.cyan("SPAWN_NO_UPDATE_CHECK=1")}   Skip auto-update check on startup
-  ${pc.cyan("SPAWN_NO_UNICODE=1")}        Force ASCII output (no unicode symbols)
-  ${pc.cyan("SPAWN_UNICODE=1")}           Force Unicode output (override auto-detection)
-  ${pc.cyan("SPAWN_HOME")}                Override spawn data directory (default: ~/.spawn)
-  ${pc.cyan("SPAWN_DEBUG=1")}             Show debug output (unicode detection, etc.)
-  ${pc.cyan("SPAWN_VERBOSE=1")}           Verbose provisioning logs (same effect as ${pc.cyan("--verbose")})
-  ${pc.cyan("SPAWN_ENABLED_STEPS")}       Comma-separated setup steps (set by --steps/--config)
-  ${pc.cyan("SPAWN_SETUP_PROMPT=1")}     Show setup multiselect on direct \`agent cloud\` runs (or use --setup-prompt)
-  ${pc.cyan("SPAWN_PROMPT_FOR_NAME=1")}  Ask for spawn name even on direct runs (default is an auto-generated name)
+  ${pc.cyan("AGENTSEA_SKIP_MODEL_PROMPT=1")} Skip interactive model picker (${pc.cyan("--headless")} already implies no prompts)
+  ${pc.cyan("AGENTSEA_NO_UPDATE_CHECK=1")}   Skip auto-update check on startup
+  ${pc.cyan("AGENTSEA_NO_UNICODE=1")}        Force ASCII output (no unicode symbols)
+  ${pc.cyan("AGENTSEA_UNICODE=1")}           Force Unicode output (override auto-detection)
+  ${pc.cyan("AGENTSEA_HOME")}                Override agentsea data directory (default: ~/.config/agentsea)
+  ${pc.cyan("AGENTSEA_DEBUG=1")}             Show debug output (unicode detection, etc.)
+  ${pc.cyan("AGENTSEA_VERBOSE=1")}           Verbose provisioning logs (same effect as ${pc.cyan("--verbose")})
+  ${pc.cyan("AGENTSEA_ENABLED_STEPS")}       Comma-separated setup steps (set by --steps/--config)
+  ${pc.cyan("AGENTSEA_SETUP_PROMPT=1")}     Show setup multiselect on direct \`agent cloud\` runs (or use --setup-prompt)
+  ${pc.cyan("AGENTSEA_PROMPT_FOR_NAME=1")}  Ask for agentsea name even on direct runs (default is an auto-generated name)
   ${pc.cyan("TELEGRAM_BOT_TOKEN")}       Telegram bot token for non-interactive setup
-  ${pc.cyan("SPAWN_HEADLESS=1")}          Set automatically in --headless mode (for scripts)
-  ${pc.cyan("SPAWN_CUSTOM=1")}           Set automatically in --custom mode (show size/region pickers)`;
+  ${pc.cyan("AGENTSEA_HEADLESS=1")}          Set automatically in --headless mode (for scripts)
+  ${pc.cyan("AGENTSEA_CUSTOM=1")}           Set automatically in --custom mode (show size/region pickers)`;
 }
 
 function getHelpFooterSection(): string {

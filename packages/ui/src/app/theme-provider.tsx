@@ -17,7 +17,7 @@ interface ThemeCtx {
 
 const Ctx = createContext<ThemeCtx | null>(null);
 const THEME_KEY = "agentsea-theme";
-const LEGACY_THEME_KEY = "grid-spawn-theme";
+const LEGACY_THEME_KEY = "grid-agentsea-theme";
 
 function readStoredDark(): boolean {
   if (typeof window === "undefined") {

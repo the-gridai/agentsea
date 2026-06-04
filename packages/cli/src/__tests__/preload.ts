@@ -30,7 +30,7 @@ function cleanupStrayTestFiles(): void {
 
 cleanupStrayTestFiles();
 
-const TEST_HOME = mkdtempSync(join(tmpdir(), "spawn-test-home-"));
+const TEST_HOME = mkdtempSync(join(tmpdir(), "agentsea-test-home-"));
 
 process.env.HOME = TEST_HOME;
 process.env.XDG_CACHE_HOME = join(TEST_HOME, ".cache");
@@ -39,22 +39,22 @@ process.env.XDG_DATA_HOME = join(TEST_HOME, ".local", "share");
 
 os.homedir = () => TEST_HOME;
 
-process.env.SPAWN_HOME = join(TEST_HOME, ".spawn");
+process.env.AGENTSEA_HOME = join(TEST_HOME, ".agentsea");
 
 /** Sandbox repo root — no manifest.json unless a test writes one */
 const SANDBOX_GRID_ROOT = join(TEST_HOME, "agentsea-root");
 mkdirSync(SANDBOX_GRID_ROOT, {
   recursive: true,
 });
-process.env.GRID_SPAWN_ROOT = SANDBOX_GRID_ROOT;
-delete process.env.GRID_SPAWN_MANIFEST;
+process.env.AGENTSEA_ROOT = SANDBOX_GRID_ROOT;
+delete process.env.AGENTSEA_MANIFEST;
 
 process.env.THEGRID_API_KEY ??= "test-thegrid-api-key";
 
 /** cwd isolation — prevents resolveBundledShRepoRoot from finding the real repo via walk-up */
 process.chdir(SANDBOX_GRID_ROOT);
 
-mkdirSync(join(TEST_HOME, ".spawn"), {
+mkdirSync(join(TEST_HOME, ".agentsea"), {
   recursive: true,
 });
 mkdirSync(join(TEST_HOME, ".cache"), {

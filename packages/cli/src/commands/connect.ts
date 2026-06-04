@@ -15,7 +15,7 @@ import {
 } from "../security.js";
 import { getHistoryPath } from "../shared/paths.js";
 import { asyncTryCatchIf, isOperationalError, tryCatch } from "../shared/result.js";
-import { SSH_BASE_OPTS, SSH_INTERACTIVE_OPTS, spawnInteractive, startSshTunnel } from "../shared/ssh.js";
+import { SSH_BASE_OPTS, SSH_INTERACTIVE_OPTS, agentseaInteractive, startSshTunnel } from "../shared/ssh.js";
 import { ensureSshKeys, getSshKeyOpts } from "../shared/ssh-keys.js";
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
 import {
@@ -75,7 +75,7 @@ async function openAgentTunnelBrowser(
 }
 
 /**
- * Check the remote VM for security alerts written by the spawn-security-scan cron.
+ * Check the remote VM for security alerts written by the agentsea-security-scan cron.
  * If alerts exist, display them as warnings before launching the agent.
  * Silently skips if the alerts file doesn't exist (scan not installed) or SSH fails.
  */
@@ -88,7 +88,7 @@ async function checkSecurityAlerts(ip: string, user: string, keyOpts: string[]):
         ...keyOpts,
         `${user}@${ip}`,
         "--",
-        "cat /var/log/spawn-security-alerts.log 2>/dev/null || true",
+        "cat /var/log/agentsea-security-alerts.log 2>/dev/null || true",
       ],
       {
         stdout: "pipe",
@@ -126,7 +126,7 @@ async function runInteractiveCommand(
   manualCmd: string,
 ): Promise<void> {
   const r = tryCatch(() =>
-    spawnInteractive([
+    agentseaInteractive([
       cmd,
       ...args,
     ]),
@@ -186,7 +186,7 @@ export async function cmdConnect(connection: VMConnection, agentKey?: string): P
   });
   if (!connectValidation.ok) {
     p.log.error(`Security validation failed: ${getErrorMessage(connectValidation.error)}`);
-    p.log.info("Your spawn history file may be corrupted or tampered with.");
+    p.log.info("Your agentsea history file may be corrupted or tampered with.");
     p.log.info(`Location: ${getHistoryPath()}`);
     p.log.info(`To fix: edit the file and remove the invalid entry, or run '${AGENTSEA_CLI} list --clear'`);
     process.exit(1);
@@ -266,7 +266,7 @@ export async function cmdEnterAgent(
   });
   if (!enterValidation.ok) {
     p.log.error(`Security validation failed: ${getErrorMessage(enterValidation.error)}`);
-    p.log.info("Your spawn history file may be corrupted or tampered with.");
+    p.log.info("Your agentsea history file may be corrupted or tampered with.");
     p.log.info(`Location: ${getHistoryPath()}`);
     p.log.info(`To fix: edit the file and remove the invalid entry, or run '${AGENTSEA_CLI} list --clear'`);
     process.exit(1);
@@ -274,12 +274,12 @@ export async function cmdEnterAgent(
 
   const agentDef = manifest?.agents?.[agentKey];
 
-  // Prefer the launch command stored at spawn time (captures dynamic state),
+  // Prefer the launch command stored at agentsea time (captures dynamic state),
   // fall back to manifest definition, then to agent key as last resort
   const storedCmd = connection.launch_cmd;
   let remoteCmd: string;
   if (storedCmd) {
-    // Stored command already includes source ~/.spawnrc, PATH setup, etc.
+    // Stored command already includes source ~/.agentsearc, PATH setup, etc.
     remoteCmd = storedCmd;
   } else {
     const launchCmd = agentDef?.launch ?? agentKey;
@@ -290,9 +290,9 @@ export async function cmdEnterAgent(
     if (preLaunch) {
       validatePreLaunchCmd(preLaunch);
     }
-    validateLaunchCmd(`source ~/.spawnrc 2>/dev/null; ${launchCmd}`);
+    validateLaunchCmd(`source ~/.agentsearc 2>/dev/null; ${launchCmd}`);
     const parts = [
-      "source ~/.spawnrc 2>/dev/null",
+      "source ~/.agentsearc 2>/dev/null",
     ];
     if (preLaunch) {
       parts.push(preLaunch);
@@ -351,7 +351,7 @@ export async function cmdEnterAgent(
     return;
   }
 
-  // Re-establish SSH tunnel for web dashboard if tunnel metadata was persisted at spawn time
+  // Re-establish SSH tunnel for web dashboard if tunnel metadata was persisted at agentsea time
   let tunnelHandle: SshTunnelHandle | undefined;
   let t3PairingWatcher: { stop: () => void } | undefined;
   const tunnelPort = connection.metadata?.tunnel_remote_port;
@@ -366,7 +366,7 @@ export async function cmdEnterAgent(
     });
     if (!tunnelValidation.ok) {
       p.log.error(`Security validation failed: ${getErrorMessage(tunnelValidation.error)}`);
-      p.log.info("Your spawn history file may be corrupted or tampered with.");
+      p.log.info("Your agentsea history file may be corrupted or tampered with.");
       p.log.info(`Location: ${getHistoryPath()}`);
       p.log.info(`To fix: edit the file and remove the invalid entry, or run '${AGENTSEA_CLI} list --clear'`);
       process.exit(1);
@@ -405,7 +405,7 @@ export async function cmdEnterAgent(
   p.log.step(`Entering ${pc.bold(agentName)} on ${pc.bold(connection.ip)}...`);
   const tunnelPortExport =
     tunnelHandle && agentKey === "t3code"
-      ? `export SPAWN_TUNNEL_LOCAL_PORT=${tunnelHandle.localPort}; `
+      ? `export AGENTSEA_TUNNEL_LOCAL_PORT=${tunnelHandle.localPort}; `
       : "";
   const quotedRemoteCmd = shellQuote(`${tunnelPortExport}${remoteCmd}`);
   await runInteractiveCommand(
@@ -470,7 +470,7 @@ export async function cmdOpenDashboard(connection: VMConnection, agentKey?: stri
   });
   if (!tunnelValidation.ok) {
     p.log.error(`Security validation failed: ${getErrorMessage(tunnelValidation.error)}`);
-    p.log.info("Your spawn history file may be corrupted or tampered with.");
+    p.log.info("Your agentsea history file may be corrupted or tampered with.");
     p.log.info(`Location: ${getHistoryPath()}`);
     p.log.info(`To fix: edit the file and remove the invalid entry, or run '${AGENTSEA_CLI} list --clear'`);
     return;

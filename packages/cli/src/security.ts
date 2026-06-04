@@ -1,5 +1,5 @@
 /**
- * Security validation utilities for spawn CLI
+ * Security validation utilities for agentsea CLI
  * SECURITY-CRITICAL: These functions protect against injection attacks
  */
 
@@ -203,7 +203,7 @@ export function validateConnectionIP(ip: string): void {
       throw new Error(
         `Invalid connection IP address: "${ip}"\n\n` +
           "IPv4 addresses must have octets in the range 0-255.\n\n" +
-          "Your spawn history file may be corrupted or tampered with.\n" +
+          "Your agentsea history file may be corrupted or tampered with.\n" +
           `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
       );
     }
@@ -223,7 +223,7 @@ export function validateConnectionIP(ip: string): void {
   throw new Error(
     `Invalid connection IP address: "${ip}"\n\n` +
       `Expected a valid IPv4 or IPv6 address, hostname, or one of: ${CONNECTION_SENTINELS.join(", ")}\n\n` +
-      "Your spawn history file may be corrupted or tampered with.\n" +
+      "Your agentsea history file may be corrupted or tampered with.\n" +
       `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
   );
 }
@@ -246,7 +246,7 @@ export function validateUsername(username: string): void {
   if (username.length > 32) {
     throw new Error(
       `Username is too long: "${username}" (${username.length} characters, maximum is 32)\n\n` +
-        "Your spawn history file may be corrupted or tampered with.\n" +
+        "Your agentsea history file may be corrupted or tampered with.\n" +
         `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
     );
   }
@@ -259,7 +259,7 @@ export function validateUsername(username: string): void {
         "  • Contain only lowercase letters, digits, underscores, hyphens\n" +
         "  • Optionally end with $ (for system accounts)\n\n" +
         "Examples of valid usernames: root, ubuntu, user-123, _system\n\n" +
-        "Your spawn history file may be corrupted or tampered with.\n" +
+        "Your agentsea history file may be corrupted or tampered with.\n" +
         `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
     );
   }
@@ -283,7 +283,7 @@ export function validateServerIdentifier(id: string): void {
   if (id.length > 128) {
     throw new Error(
       `Server identifier is too long: "${id}" (${id.length} characters, maximum is 128)\n\n` +
-        "Your spawn history file may be corrupted or tampered with.\n" +
+        "Your agentsea history file may be corrupted or tampered with.\n" +
         `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
     );
   }
@@ -293,7 +293,7 @@ export function validateServerIdentifier(id: string): void {
     throw new Error(
       `Invalid server identifier: "${id}"\n\n` +
         "Server identifiers cannot contain path-like patterns (/, \\, ..)\n\n" +
-        "Your spawn history file may be corrupted or tampered with.\n" +
+        "Your agentsea history file may be corrupted or tampered with.\n" +
         `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
     );
   }
@@ -307,7 +307,7 @@ export function validateServerIdentifier(id: string): void {
         "Server identifiers can only contain:\n" +
         "  • Letters and digits (a-z, A-Z, 0-9)\n" +
         "  • Hyphens (-), underscores (_), dots (.)\n\n" +
-        "Your spawn history file may be corrupted or tampered with.\n" +
+        "Your agentsea history file may be corrupted or tampered with.\n" +
         `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
     );
   }
@@ -322,7 +322,7 @@ export function validateServerIdentifier(id: string): void {
  *
  * The allowlist approach is strictly safer than a blocklist: any segment that
  * does not match a known-good pattern is rejected, preventing injection via
- * tampered ~/.spawn/history.json even for attack patterns not on a blocklist.
+ * tampered ~/.config/agentsea/history.json even for attack patterns not on a blocklist.
  */
 
 /** Matches: source ~/.<path> [2>/dev/null] — RC file sourcing */
@@ -368,7 +368,7 @@ export function validateLaunchCmd(cmd: string): void {
   if (cmd.length > 1024) {
     throw new Error(
       `Launch command is too long (${cmd.length} characters, maximum is 1024)\n\n` +
-        "Your spawn history file may be corrupted or tampered with.\n" +
+        "Your agentsea history file may be corrupted or tampered with.\n" +
         `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
     );
   }
@@ -395,7 +395,7 @@ export function validateLaunchCmd(cmd: string): void {
           "Preamble segments may only be:\n" +
           "  • source ~/.<rc-file> [2>/dev/null]\n" +
           "  • export PATH=<path>\n\n" +
-          "Your spawn history file may be corrupted or tampered with.\n" +
+          "Your agentsea history file may be corrupted or tampered with.\n" +
           `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
       );
     }
@@ -408,7 +408,7 @@ export function validateLaunchCmd(cmd: string): void {
         `Command: "${cmd}"\n` +
         `Rejected segment: "${lastSegment}"\n\n` +
         "The final segment must be a simple binary name (e.g., 'claude', 'hermes').\n\n" +
-        "Your spawn history file may be corrupted or tampered with.\n" +
+        "Your agentsea history file may be corrupted or tampered with.\n" +
         `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
     );
   }
@@ -466,7 +466,7 @@ export function validateMetadataValue(value: string, fieldName: string): void {
   if (value.length > 128) {
     throw new Error(
       `${fieldName} is too long: "${value}" (${value.length} characters, maximum is 128)\n\n` +
-        "Your spawn history file may be corrupted or tampered with.\n" +
+        "Your agentsea history file may be corrupted or tampered with.\n" +
         `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
     );
   }
@@ -476,7 +476,7 @@ export function validateMetadataValue(value: string, fieldName: string): void {
     throw new Error(
       `Invalid ${fieldName}: "${value}"\n\n` +
         `${fieldName} can only contain letters, digits, hyphens, underscores, and dots.\n\n` +
-        "Your spawn history file may be corrupted or tampered with.\n" +
+        "Your agentsea history file may be corrupted or tampered with.\n" +
         `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
     );
   }
@@ -501,7 +501,7 @@ export function validateTunnelUrl(url: string): void {
   if (url.length > 2048) {
     throw new Error(
       `Tunnel URL template is too long (${url.length} characters, maximum is 2048)\n\n` +
-        "Your spawn history file may be corrupted or tampered with.\n" +
+        "Your agentsea history file may be corrupted or tampered with.\n" +
         `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
     );
   }
@@ -515,7 +515,7 @@ export function validateTunnelUrl(url: string): void {
       `Invalid tunnel URL template: "${url}"\n\n` +
         "Tunnel URLs must start with http://localhost: or http://127.0.0.1:\n" +
         "followed by a port number or __PORT__ placeholder.\n\n" +
-        "Your spawn history file may be corrupted or tampered with.\n" +
+        "Your agentsea history file may be corrupted or tampered with.\n" +
         `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
     );
   }
@@ -539,7 +539,7 @@ export function validateTunnelPort(port: string): void {
     throw new Error(
       `Invalid tunnel port: "${port}"\n\n` +
         "Tunnel port must be a numeric value between 1 and 65535.\n\n" +
-        "Your spawn history file may be corrupted or tampered with.\n" +
+        "Your agentsea history file may be corrupted or tampered with.\n" +
         `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
     );
   }
@@ -548,7 +548,7 @@ export function validateTunnelPort(port: string): void {
   if (num < 1 || num > 65535) {
     throw new Error(
       `Invalid tunnel port: ${num} (must be between 1 and 65535)\n\n` +
-        "Your spawn history file may be corrupted or tampered with.\n" +
+        "Your agentsea history file may be corrupted or tampered with.\n" +
         `To fix: run '${AGENTSEA_CLI} list --clear' to reset history`,
     );
   }

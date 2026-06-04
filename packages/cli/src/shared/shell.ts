@@ -1,5 +1,5 @@
 // shared/shell.ts — Platform-aware shell execution utilities
-// Enables spawn CLI to work natively on Windows (PowerShell) without requiring bash.
+// Enables agentsea CLI to work natively on Windows (PowerShell) without requiring bash.
 
 import { existsSync, readFileSync } from "node:fs";
 

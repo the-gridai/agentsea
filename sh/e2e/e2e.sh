@@ -16,12 +16,12 @@ set -eo pipefail
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Auto-set SPAWN_CLI_DIR to repo root so shell scripts use local source instead
+# Auto-set AGENTSEA_CLI_DIR to repo root so shell scripts use local source instead
 # of downloading pre-bundled .js from GitHub releases. Can be overridden by env.
-if [ -z "${SPAWN_CLI_DIR:-}" ]; then
+if [ -z "${AGENTSEA_CLI_DIR:-}" ]; then
   _repo_root="$(cd "${SCRIPT_DIR}/../.." && pwd)"
   if [ -f "${_repo_root}/packages/cli/src/index.ts" ]; then
-    export SPAWN_CLI_DIR="${_repo_root}"
+    export AGENTSEA_CLI_DIR="${_repo_root}"
   fi
   unset _repo_root
 fi
@@ -36,12 +36,12 @@ source "${SCRIPT_DIR}/lib/ai-review.sh"
 
 # ---------------------------------------------------------------------------
 # Auto-load Resend email credentials when not already set.
-# Sources /etc/spawn-key-server-auth.env (QA VM) or ~/.config/spawn/resend.env
+# Sources /etc/agentsea-key-server-auth.env (QA VM) or ~/.config/agentsea/resend.env
 # (local dev) to populate RESEND_API_KEY and KEY_REQUEST_EMAIL.
 # This ensures send_matrix_email fires on manual runs, not just QA-cycle runs.
 # ---------------------------------------------------------------------------
 if [ -z "${RESEND_API_KEY:-}" ] || [ -z "${KEY_REQUEST_EMAIL:-}" ]; then
-  for _cred_file in /etc/spawn-key-server-auth.env "${HOME}/.config/spawn/resend.env"; do
+  for _cred_file in /etc/agentsea-key-server-auth.env "${HOME}/.config/agentsea/resend.env"; do
     if [ -f "${_cred_file}" ]; then
       # shellcheck source=/dev/null  # path is dynamic
       set -a; source "${_cred_file}" 2>/dev/null; set +a
@@ -205,7 +205,7 @@ done
 
 # Soak mode: run Telegram soak test and exit (no --cloud required)
 if [ "${SOAK_MODE}" -eq 1 ]; then
-  LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/spawn-e2e.XXXXXX")
+  LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/agentsea-e2e.XXXXXX")
   export LOG_DIR
   run_soak_test "${LOG_DIR}"
   exit $?
@@ -240,7 +240,7 @@ if [ -n "${AGENTS_FROM_MANIFEST_CLOUD:-}" ]; then
     exit 1
   fi
   unset _mfc _manifest_cloud_ok
-  _repo_root="${SPAWN_CLI_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
+  _repo_root="${AGENTSEA_CLI_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
   _list_script="${_repo_root}/scripts/list-e2e-agents.mjs"
   if [ ! -f "${_list_script}" ]; then
     printf "Error: manifest agent list script not found: %s\n" "${_list_script}" >&2
@@ -320,7 +320,7 @@ run_single_agent() {
     if [ "${INTERACTIVE_MODE}" -eq 1 ]; then
       # AI-driven interactive mode: harness drives the CLI through PTY.
       # After harness exits (on "Starting agent..." marker), the install is still
-      # running on the remote VM. Run verify_agent to wait for .spawnrc before
+      # running on the remote VM. Run verify_agent to wait for .agentsearc before
       # the input test — same as headless mode.
       if interactive_provision "${agent}" "${app_name}" "${LOG_DIR}"; then
         if verify_agent "${agent}" "${app_name}"; then
@@ -599,10 +599,10 @@ send_matrix_email() {
   local duration_str="$6"
 
   # Skip email for targeted re-runs (partial agent/cloud subset).
-  # Set SPAWN_E2E_SKIP_EMAIL=1 to suppress the email (used by quality cycle
+  # Set AGENTSEA_E2E_SKIP_EMAIL=1 to suppress the email (used by quality cycle
   # when re-running only failed agents — a partial email looks like all-passed).
-  if [ "${SPAWN_E2E_SKIP_EMAIL:-0}" = "1" ]; then
-    log_info "Matrix email skipped (SPAWN_E2E_SKIP_EMAIL=1)"
+  if [ "${AGENTSEA_E2E_SKIP_EMAIL:-0}" = "1" ]; then
+    log_info "Matrix email skipped (AGENTSEA_E2E_SKIP_EMAIL=1)"
     return 0
   fi
 
@@ -689,7 +689,7 @@ const status = totalFail === "0" ? "✅ All Passed" : `❌ ${totalFail} Failed`;
 
 const html = `<!DOCTYPE html>
 <html><body style="font-family:system-ui,-apple-system,sans-serif;max-width:860px;margin:0 auto;padding:24px;color:#1e293b;">
-<h2 style="margin:0 0 4px;">${status} — Spawn E2E Matrix</h2>
+<h2 style="margin:0 0 4px;">${status} — Agentsea E2E Matrix</h2>
 <p style="margin:0 0 20px;color:#64748b;font-size:14px;">Completed ${timestamp}</p>
 <table style="border-collapse:collapse;width:100%;">
   <thead>
@@ -720,7 +720,7 @@ const res = await fetch("https://api.resend.com/emails", {
     "Authorization": `Bearer ${resendKey}`,
   },
   body: JSON.stringify({
-    from: "Spawn QA <onboarding@resend.dev>",
+    from: "Agentsea QA <onboarding@resend.dev>",
     to: [toEmail],
     subject,
     html,
@@ -791,7 +791,7 @@ final_cleanup() {
         log_warn "LOG_DIR not owned by current user, refusing deletion: ${LOG_DIR}"
       else
         case "${resolved_log_dir}" in
-          "${SAFE_TMP_ROOT}"/spawn-e2e.*)
+          "${SAFE_TMP_ROOT}"/agentsea-e2e.*)
             # Delete the original path — if it became a symlink between check
             # and here, rm -rf on a symlink just removes the link itself when
             # the target no longer matches. The double -L check above minimizes
@@ -811,7 +811,7 @@ trap final_cleanup EXIT
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-log_header "Spawn E2E Test Suite (Multi-Cloud)"
+log_header "Agentsea E2E Test Suite (Multi-Cloud)"
 log_info "Clouds: ${CLOUDS}"
 log_info "Agents: ${AGENTS_TO_TEST}"
 if [ "${SEQUENTIAL_MODE}" -eq 1 ]; then
@@ -825,7 +825,7 @@ if [ "${SKIP_INPUT_TEST}" -eq 1 ]; then
   log_info "Input tests: SKIPPED"
 fi
 if [ "${FAST_MODE}" -eq 1 ]; then
-  log_info "Fast mode: ENABLED (--fast passed to spawn)"
+  log_info "Fast mode: ENABLED (--fast passed to agentsea)"
 fi
 
 # Export FAST_MODE so provision.sh can read it
@@ -834,7 +834,7 @@ export E2E_FAST_MODE="${FAST_MODE}"
 # Create temp log directory
 TMP_ROOT="${TMPDIR:-/tmp}"
 TMP_ROOT="${TMP_ROOT%/}"
-LOG_DIR=$(mktemp -d "${TMP_ROOT}/spawn-e2e.XXXXXX")
+LOG_DIR=$(mktemp -d "${TMP_ROOT}/agentsea-e2e.XXXXXX")
 _E2E_CREATED_LOG_DIR="${LOG_DIR}"
 export LOG_DIR
 log_info "Log directory: ${LOG_DIR}"
@@ -947,7 +947,7 @@ fi
 printf "\n  Duration: %s\n" "${DURATION_STR}"
 
 # Machine-readable pass/fail list at repo root (for CI and local triage)
-_results_root="${SPAWN_CLI_DIR:-}"
+_results_root="${AGENTSEA_CLI_DIR:-}"
 if [ -z "${_results_root}" ]; then
   _results_root="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 fi

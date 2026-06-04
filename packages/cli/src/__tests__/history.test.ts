@@ -1,9 +1,9 @@
-import type { SpawnRecord } from "../history.js";
+import type { AgentseaRecord } from "../history.js";
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { filterHistory, HISTORY_SCHEMA_VERSION, loadHistory, saveSpawnRecord } from "../history.js";
+import { filterHistory, HISTORY_SCHEMA_VERSION, loadHistory, saveAgentseaRecord } from "../history.js";
 
 describe("history", () => {
   let testDir: string;
@@ -11,14 +11,14 @@ describe("history", () => {
 
   beforeEach(() => {
     // Use a directory within home directory for testing (required by security validation)
-    testDir = join(process.env.HOME ?? "", `.spawn-test-${Date.now()}-${Math.random()}`);
+    testDir = join(process.env.HOME ?? "", `.agentsea-test-${Date.now()}-${Math.random()}`);
     mkdirSync(testDir, {
       recursive: true,
     });
     originalEnv = {
       ...process.env,
     };
-    process.env.SPAWN_HOME = testDir;
+    process.env.AGENTSEA_HOME = testDir;
   });
 
   afterEach(() => {
@@ -103,7 +103,7 @@ describe("history", () => {
     });
 
     it("loads records that include optional prompt field", () => {
-      const records: SpawnRecord[] = [
+      const records: AgentseaRecord[] = [
         {
           agent: "claude",
           cloud: "sprite",
@@ -144,7 +144,7 @@ describe("history", () => {
     });
 
     it("returns empty array for v1 format with unknown version", () => {
-      const records: SpawnRecord[] = [
+      const records: AgentseaRecord[] = [
         {
           agent: "claude",
           cloud: "sprite",
@@ -179,14 +179,14 @@ describe("history", () => {
     });
   });
 
-  // ── saveSpawnRecord ─────────────────────────────────────────────────────
+  // ── saveAgentseaRecord ─────────────────────────────────────────────────────
 
-  describe("saveSpawnRecord", () => {
+  describe("saveAgentseaRecord", () => {
     it("creates directory and file when neither exist", () => {
-      const nestedDir = join(process.env.HOME ?? "", ".spawn-test", "nested", "spawn");
-      process.env.SPAWN_HOME = nestedDir;
+      const nestedDir = join(process.env.HOME ?? "", ".agentsea-test", "nested", "agentsea");
+      process.env.AGENTSEA_HOME = nestedDir;
 
-      saveSpawnRecord({
+      saveAgentseaRecord({
         agent: "claude",
         cloud: "sprite",
         timestamp: "2026-01-01T00:00:00.000Z",
@@ -199,14 +199,14 @@ describe("history", () => {
       expect(data.records[0].agent).toBe("claude");
 
       // Clean up
-      rmSync(join(process.env.HOME ?? "", ".spawn-test"), {
+      rmSync(join(process.env.HOME ?? "", ".agentsea-test"), {
         recursive: true,
         force: true,
       });
     });
 
     it("appends to existing history", () => {
-      const existing: SpawnRecord[] = [
+      const existing: AgentseaRecord[] = [
         {
           agent: "claude",
           cloud: "sprite",
@@ -215,7 +215,7 @@ describe("history", () => {
       ];
       writeFileSync(join(testDir, "history.json"), JSON.stringify(existing));
 
-      saveSpawnRecord({
+      saveAgentseaRecord({
         agent: "codex",
         cloud: "hetzner",
         timestamp: "2026-01-02T00:00:00.000Z",
@@ -229,7 +229,7 @@ describe("history", () => {
     });
 
     it("saves record with prompt field", () => {
-      saveSpawnRecord({
+      saveAgentseaRecord({
         agent: "claude",
         cloud: "sprite",
         timestamp: "2026-01-01T00:00:00.000Z",
@@ -241,7 +241,7 @@ describe("history", () => {
     });
 
     it("saves record without prompt field", () => {
-      saveSpawnRecord({
+      saveAgentseaRecord({
         agent: "claude",
         cloud: "sprite",
         timestamp: "2026-01-01T00:00:00.000Z",
@@ -252,7 +252,7 @@ describe("history", () => {
     });
 
     it("writes pretty-printed JSON with trailing newline", () => {
-      saveSpawnRecord({
+      saveAgentseaRecord({
         agent: "claude",
         cloud: "sprite",
         timestamp: "2026-01-01T00:00:00.000Z",
@@ -267,7 +267,7 @@ describe("history", () => {
 
     it("handles multiple sequential saves", () => {
       for (let i = 0; i < 5; i++) {
-        saveSpawnRecord({
+        saveAgentseaRecord({
           agent: `agent-${i}`,
           cloud: `cloud-${i}`,
           timestamp: `2026-01-0${i + 1}T00:00:00.000Z`,
@@ -282,7 +282,7 @@ describe("history", () => {
     });
 
     it("writes v1 format with version and records fields", () => {
-      saveSpawnRecord({
+      saveAgentseaRecord({
         agent: "claude",
         cloud: "sprite",
         timestamp: "2026-01-01T00:00:00.000Z",
@@ -294,7 +294,7 @@ describe("history", () => {
     });
 
     it("migrates v0 bare array to v1 format on next save", () => {
-      const existing: SpawnRecord[] = [
+      const existing: AgentseaRecord[] = [
         {
           agent: "claude",
           cloud: "sprite",
@@ -304,8 +304,8 @@ describe("history", () => {
       // Write v0 bare array
       writeFileSync(join(testDir, "history.json"), JSON.stringify(existing));
 
-      // Trigger a write via saveSpawnRecord
-      saveSpawnRecord({
+      // Trigger a write via saveAgentseaRecord
+      saveAgentseaRecord({
         agent: "codex",
         cloud: "hetzner",
         timestamp: "2026-01-02T00:00:00.000Z",
@@ -321,7 +321,7 @@ describe("history", () => {
     it("keeps all entries with no cap", () => {
       // Save 200 records — all should be retained (history has no entry limit)
       for (let i = 0; i < 200; i++) {
-        saveSpawnRecord({
+        saveAgentseaRecord({
           id: `id-${i}`,
           agent: `agent-${i}`,
           cloud: "hetzner",
@@ -335,7 +335,7 @@ describe("history", () => {
     });
 
     it("assigns id when missing", () => {
-      saveSpawnRecord({
+      saveAgentseaRecord({
         id: "",
         agent: "claude",
         cloud: "sprite",
@@ -353,7 +353,7 @@ describe("history", () => {
   // ── filterHistory ───────────────────────────────────────────────────────
 
   describe("filterHistory", () => {
-    const sampleRecords: SpawnRecord[] = [
+    const sampleRecords: AgentseaRecord[] = [
       {
         agent: "claude",
         cloud: "sprite",
@@ -462,7 +462,7 @@ describe("history", () => {
     // timestamp handling tested indirectly through loadHistory round-trip
     it("preserves ISO timestamp strings through save/load cycle", () => {
       const ts = "2026-02-11T14:30:00.000Z";
-      saveSpawnRecord({
+      saveAgentseaRecord({
         agent: "claude",
         cloud: "sprite",
         timestamp: ts,
@@ -473,7 +473,7 @@ describe("history", () => {
 
     it("preserves non-ISO timestamp strings through save/load cycle", () => {
       const ts = "not-a-date";
-      saveSpawnRecord({
+      saveAgentseaRecord({
         agent: "claude",
         cloud: "sprite",
         timestamp: ts,
@@ -494,8 +494,8 @@ describe("history", () => {
       });
       // No pid file inside — this is the broken state
 
-      // saveSpawnRecord uses withLock internally — should clean up the broken lock and succeed
-      saveSpawnRecord({
+      // saveAgentseaRecord uses withLock internally — should clean up the broken lock and succeed
+      saveAgentseaRecord({
         agent: "claude",
         cloud: "sprite",
         timestamp: new Date().toISOString(),
@@ -517,7 +517,7 @@ describe("history", () => {
       // Write a PID file with a timestamp far in the past (> 30s stale threshold)
       writeFileSync(join(lockPath, "pid"), `99999\n${Date.now() - 60_000}`);
 
-      saveSpawnRecord({
+      saveAgentseaRecord({
         agent: "codex",
         cloud: "hetzner",
         timestamp: new Date().toISOString(),

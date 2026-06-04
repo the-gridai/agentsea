@@ -1,4 +1,4 @@
-# Spawn CLI installer for Windows PowerShell
+# Agentsea CLI installer for Windows PowerShell
 #
 # Usage (PowerShell):
 #   irm https://spawn.thegrid.ai/cli/install.ps1 | iex
@@ -8,12 +8,12 @@
 #   .\install.ps1
 #
 # Override install directory:
-#   $env:SPAWN_INSTALL_DIR = "C:\Users\you\bin"; irm .../install.ps1 | iex
+#   $env:AGENTSEA_INSTALL_DIR = "C:\Users\you\bin"; irm .../install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
-$SPAWN_REPO    = "Spectral-Finance/agentsea"
-$SPAWN_RAW_BASE = "https://raw.githubusercontent.com/$SPAWN_REPO/main"
+$AGENTSEA_REPO    = "Spectral-Finance/agentsea"
+$AGENTSEA_RAW_BASE = "https://raw.githubusercontent.com/$AGENTSEA_REPO/main"
 $MIN_BUN_VERSION = [version]"1.2.0"
 
 function Write-Step  { param($msg) Write-Host "[agentsea] $msg" -ForegroundColor Cyan }
@@ -49,7 +49,7 @@ function Install-Bun {
 }
 
 function Find-InstallDir {
-    if ($env:SPAWN_INSTALL_DIR) { return $env:SPAWN_INSTALL_DIR }
+    if ($env:AGENTSEA_INSTALL_DIR) { return $env:AGENTSEA_INSTALL_DIR }
 
     # Prefer %USERPROFILE%\.local\bin (mirrors unix behaviour) or bun's global bin
     $candidates = @(
@@ -78,7 +78,7 @@ function Add-ToUserPath {
     }
 }
 
-function Install-SpawnCli {
+function Install-AgentseaCli {
     $tmpDir = Join-Path $env:TEMP ("agentsea-install-" + [System.IO.Path]::GetRandomFileName())
     New-Item -ItemType Directory -Path $tmpDir | Out-Null
 
@@ -91,7 +91,7 @@ function Install-SpawnCli {
         if ($gitAvailable) {
             $repoDir = Join-Path $tmpDir "repo"
             git clone --depth 1 --filter=blob:none --sparse `
-                "https://github.com/$SPAWN_REPO.git" $repoDir 2>$null
+                "https://github.com/$AGENTSEA_REPO.git" $repoDir 2>$null
             Push-Location $repoDir
             git sparse-checkout set packages/cli 2>$null
             Pop-Location
@@ -100,13 +100,13 @@ function Install-SpawnCli {
         } else {
             # Fallback: download individual source files
             New-Item -ItemType Directory -Path (Join-Path $cliDir "src") | Out-Null
-            $apiUrl = "https://api.github.com/repos/$SPAWN_REPO/contents/packages/cli/src"
+            $apiUrl = "https://api.github.com/repos/$AGENTSEA_REPO/contents/packages/cli/src"
             $files = (Invoke-RestMethod $apiUrl) |
                 Where-Object { $_.name -match '\.ts$' -and $_.name -notmatch '__tests__' } |
                 Select-Object -ExpandProperty name
 
             foreach ($f in @("package.json","bun.lock","tsconfig.json")) {
-                Invoke-WebRequest "$SPAWN_RAW_BASE/packages/cli/$f" -OutFile (Join-Path $cliDir $f)
+                Invoke-WebRequest "$AGENTSEA_RAW_BASE/packages/cli/$f" -OutFile (Join-Path $cliDir $f)
             }
             foreach ($f in $files) {
                 # SECURITY: block path traversal
@@ -114,7 +114,7 @@ function Install-SpawnCli {
                     Write-Err "Security: invalid filename from API: $f -- aborting."
                     exit 1
                 }
-                Invoke-WebRequest "$SPAWN_RAW_BASE/packages/cli/src/$f" -OutFile (Join-Path (Join-Path $cliDir "src") $f)
+                Invoke-WebRequest "$AGENTSEA_RAW_BASE/packages/cli/src/$f" -OutFile (Join-Path (Join-Path $cliDir "src") $f)
             }
         }
 
@@ -127,7 +127,7 @@ function Install-SpawnCli {
         if ($LASTEXITCODE -eq 0) { $buildOk = $true }
         if (-not $buildOk) {
             Write-Warn "Local build failed -- downloading pre-built binary..."
-            Invoke-WebRequest "https://github.com/$SPAWN_REPO/releases/download/cli-latest/cli.js" `
+            Invoke-WebRequest "https://github.com/$AGENTSEA_REPO/releases/download/cli-latest/cli.js" `
                 -OutFile "cli.js"
             if ((Get-Item "cli.js").Length -eq 0) {
                 Write-Err "Failed to download pre-built binary."
@@ -140,14 +140,14 @@ function Install-SpawnCli {
         $installDir = Find-InstallDir
         New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 
-        # Copy cli.js as the spawn script; create a .cmd wrapper so it's invokable from cmd.exe too
+        # Copy cli.js as the agentsea script; create a .cmd wrapper so it's invokable from cmd.exe too
         $cliJs    = Join-Path $installDir "agentsea"
         $cliCmd   = Join-Path $installDir "agentsea.cmd"
 
         Copy-Item (Join-Path $cliDir "cli.js") $cliJs -Force
 
-        # agentsea.cmd -- lets users run `spawn` from cmd.exe and PowerShell without specifying bun
-        Set-Content $cliCmd "@bun `"%~dp0spawn`" %*"
+        # agentsea.cmd -- lets users run `agentsea` from cmd.exe and PowerShell without specifying bun
+        Set-Content $cliCmd "@bun `"%~dp0agentsea`" %*"
 
         Write-Info "Installed agentsea to $installDir"
         Add-ToUserPath $installDir
@@ -191,4 +191,4 @@ if ($bunVer -lt $MIN_BUN_VERSION) {
 }
 
 Write-Step "Installing agentsea via bun..."
-Install-SpawnCli
+Install-AgentseaCli

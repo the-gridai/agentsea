@@ -13,7 +13,7 @@ import {
 } from "./home-public-constants";
 import { homeAgentCloudAvailability, homeAgentsFromManifest, homeCloudOptionsFromManifest } from "./landing-from-manifest";
 import { SiteHeader } from "./site-header";
-import { SpawnCopyBlock } from "./spawn-copy-block";
+import { AgentseaCopyBlock } from "./agentsea-copy-block";
 import styles from "./page.module.scss";
 
 import { loadManifest } from "@agentsea/sdk/node";
@@ -61,7 +61,7 @@ export default async function HomePage() {
               </h2>
               <p className={styles["lede"]}>One curl command. No global install.</p>
               <div className={styles["withoutCliCopy"]}>
-                <SpawnCopyBlock code={WITHOUT_CLI_SNIPPET} />
+                <AgentseaCopyBlock code={WITHOUT_CLI_SNIPPET} />
               </div>
             </section>
           )}

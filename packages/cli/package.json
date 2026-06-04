@@ -5,13 +5,11 @@
   "description": "agentsea CLI — cloud agent provisioning for The Grid (static manifest + your cloud accounts).",
   "type": "module",
   "bin": {
-    "agentsea": "./agentsea.cjs",
-    "grid-spawn": "./grid-spawn-shim.cjs"
+    "agentsea": "./agentsea.cjs"
   },
   "files": [
     "cli.js",
     "agentsea.cjs",
-    "grid-spawn-shim.cjs",
     "README.md"
   ],
   "scripts": {

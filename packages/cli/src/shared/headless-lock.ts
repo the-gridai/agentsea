@@ -25,9 +25,9 @@ function readLockAgeMs(lockPath: string): number | null {
   }
 }
 
-/** Single-flight guard for SPAWN_HEADLESS=1 VM creates. No-op when not headless. */
+/** Single-flight guard for AGENTSEA_HEADLESS=1 VM creates. No-op when not headless. */
 export function acquireHeadlessProvisionLock(): void {
-  if (process.env.SPAWN_HEADLESS !== "1") {
+  if (process.env.AGENTSEA_HEADLESS !== "1") {
     return;
   }
 

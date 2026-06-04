@@ -1,6 +1,6 @@
-// commands/tree.ts — `spawn tree` command: shows the full recursive spawn tree
+// commands/tree.ts — `agentsea tree` command: shows the full recursive agentsea tree
 
-import type { SpawnRecord } from "../history.js";
+import type { AgentseaRecord } from "../history.js";
 import type { Manifest } from "../manifest.js";
 
 import * as p from "@clack/prompts";
@@ -13,12 +13,12 @@ import { formatRelativeTime } from "./list.js";
 import { resolveDisplayName } from "./shared.js";
 
 interface TreeNode {
-  record: SpawnRecord;
+  record: AgentseaRecord;
   children: TreeNode[];
 }
 
 /** Build a tree from all history records using parent_id. */
-function buildFullTree(records: SpawnRecord[]): TreeNode[] {
+function buildFullTree(records: AgentseaRecord[]): TreeNode[] {
   const nodeMap = new Map<string, TreeNode>();
   const roots: TreeNode[] = [];
 
@@ -78,8 +78,8 @@ export async function cmdTree(jsonOutput?: boolean): Promise<void> {
   const records = loadHistory();
 
   if (records.length === 0) {
-    p.log.info("No spawn history found.");
-    p.log.info(`Run ${pc.cyan(`${AGENTSEA_CLI} <agent> <cloud>`)} to create your first spawn.`);
+    p.log.info("No agentsea history found.");
+    p.log.info(`Run ${pc.cyan(`${AGENTSEA_CLI} <agent> <cloud>`)} to create your first agentsea.`);
     return;
   }
 
@@ -105,8 +105,8 @@ export async function cmdTree(jsonOutput?: boolean): Promise<void> {
   const total = countNodes(roots);
   const treeCount = roots.filter((r) => r.children.length > 0).length;
   if (treeCount > 0) {
-    p.log.info(`${total} spawn(s) across ${treeCount} tree(s)`);
+    p.log.info(`${total} agentsea(s) across ${treeCount} tree(s)`);
   } else {
-    p.log.info(`${total} spawn(s), no parent-child relationships`);
+    p.log.info(`${total} agentsea(s), no parent-child relationships`);
   }
 }

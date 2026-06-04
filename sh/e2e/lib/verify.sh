@@ -7,8 +7,8 @@ set -eo pipefail
 # ---------------------------------------------------------------------------
 # Input test constants
 # ---------------------------------------------------------------------------
-INPUT_TEST_PROMPT="Reply with exactly the text SPAWN_E2E_OK and nothing else."
-INPUT_TEST_MARKER="SPAWN_E2E_OK"
+INPUT_TEST_PROMPT="Reply with exactly the text AGENTSEA_E2E_OK and nothing else."
+INPUT_TEST_MARKER="AGENTSEA_E2E_OK"
 # Transcript logging controls (enabled by default so runs are auditable).
 # INPUT_TEST_LOG_TRANSCRIPT=0 disables request/response transcript output.
 # INPUT_TEST_LOG_MAX_LINES=0 logs the full response; N logs only the first N lines.
@@ -124,7 +124,7 @@ _log_input_response() {
 # Per-agent input test functions
 #
 # Each function:
-#   1. Sources env (.spawnrc, PATH)
+#   1. Sources env (.agentsearc, PATH)
 #   2. Creates a /tmp/e2e-test git repo (agents like claude require one)
 #   3. Runs the agent non-interactively with INPUT_TEST_PROMPT
 #   4. Greps output for INPUT_TEST_MARKER
@@ -153,7 +153,7 @@ input_test_claude() {
   # --no-session-persistence: don't write session files to disk during tests
   # The prompt and timeout are read from staged temp files — no interpolation in this command.
   output=$(cloud_exec "${app}" "\
-    source ~/.spawnrc 2>/dev/null; \
+    source ~/.agentsearc 2>/dev/null; \
     export PATH=\$HOME/.claude/local/bin:\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH; \
     _TIMEOUT=\$(cat /tmp/.e2e-timeout); \
     rm -rf /tmp/e2e-test && mkdir -p /tmp/e2e-test && cd /tmp/e2e-test && git init -q; \
@@ -175,7 +175,7 @@ input_test_claude() {
 _codex_ensure_proxy() {
   local app="$1"
   log_step "Ensuring Codex LiteLLM proxy is running on :4141..."
-  cloud_exec "${app}" "source ~/.spawnrc 2>/dev/null; \
+  cloud_exec "${app}" "source ~/.agentsearc 2>/dev/null; \
     export PATH=\$HOME/.local/bin:\$HOME/.bun/bin:\$HOME/.litellm-venv/bin:/usr/local/bin:\$PATH; \
     export THEGRID_API_KEY; \
     _codex_proxy_up() { curl -sf 'http://127.0.0.1:4141/health/liveliness' >/dev/null 2>&1; }; \
@@ -212,7 +212,7 @@ _codex_ensure_proxy() {
         nohup /usr/local/bin/codex-litellm-wrapper >> /tmp/codex-litellm.log 2>&1 < /dev/null & \
       fi; \
     else \
-      echo 'codex-litellm-wrapper missing — spawn via agentsea codex first' >&2; exit 1; \
+      echo 'codex-litellm-wrapper missing — agentsea via agentsea codex first' >&2; exit 1; \
     fi; \
     elapsed=0; while [ \$elapsed -lt 120 ]; do \
       if _codex_proxy_up; then echo 'Codex proxy started'; exit 0; fi; \
@@ -243,7 +243,7 @@ input_test_codex() {
   local output
   # codex exec: CI-style run (no TUI); stdin must not be a half-open pipe — use < /dev/null.
   output=$(cloud_exec "${app}" "\
-    source ~/.spawnrc 2>/dev/null; \
+    source ~/.agentsearc 2>/dev/null; \
     export PATH=\$HOME/.npm-global/bin:\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH; \
     _TIMEOUT=\$(cat /tmp/.e2e-timeout); \
     cat /tmp/.e2e-prompt | base64 -d > /tmp/.e2e-plain-prompt; \
@@ -269,7 +269,7 @@ _openclaw_ensure_gateway() {
   # Port check is defined as a remote function — never stored as shell code in a local variable.
   # ss works on all modern Linux; /dev/tcp works on macOS/some bash.
   # Debian/Ubuntu bash is compiled WITHOUT /dev/tcp support, so ss must come first.
-  cloud_exec "${app}" "source ~/.spawnrc 2>/dev/null; source ~/.bashrc 2>/dev/null; \
+  cloud_exec "${app}" "source ~/.agentsearc 2>/dev/null; source ~/.bashrc 2>/dev/null; \
     export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:/usr/local/bin:\$PATH; \
     _check_port_18789() { ss -tln 2>/dev/null | grep -q ':18789 ' || (echo >/dev/tcp/127.0.0.1/18789) 2>/dev/null || nc -z 127.0.0.1 18789 2>/dev/null; }; \
     if _check_port_18789; then \
@@ -293,7 +293,7 @@ _openclaw_ensure_gateway() {
 _openclaw_restart_gateway() {
   local app="$1"
   log_step "Restarting openclaw gateway..."
-  cloud_exec "${app}" "source ~/.spawnrc 2>/dev/null; source ~/.bashrc 2>/dev/null; \
+  cloud_exec "${app}" "source ~/.agentsearc 2>/dev/null; source ~/.bashrc 2>/dev/null; \
     export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:/usr/local/bin:\$PATH; \
     _check_port_18789() { ss -tln 2>/dev/null | grep -q ':18789 ' || (echo >/dev/tcp/127.0.0.1/18789) 2>/dev/null || nc -z 127.0.0.1 18789 2>/dev/null; }; \
     _gw_pid=\$(lsof -ti tcp:18789 2>/dev/null || fuser 18789/tcp 2>/dev/null | tr -d ' ') && \
@@ -348,7 +348,7 @@ input_test_openclaw() {
     # payload may omit the final assistant text, while the plain-text mode emits
     # the reply body directly, which is what this marker test needs to assert.
     output=$(cloud_exec "${app}" "\
-      source ~/.spawnrc 2>/dev/null; source ~/.bashrc 2>/dev/null; \
+      source ~/.agentsearc 2>/dev/null; source ~/.bashrc 2>/dev/null; \
       export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:/usr/local/bin:\$PATH; \
       _TIMEOUT=\$(cat /tmp/.e2e-timeout); \
       _ATTEMPT=\$(cat /tmp/.e2e-attempt); \
@@ -391,10 +391,10 @@ input_test_opencode() {
   _log_input_request "opencode" "${INPUT_TEST_PROMPT}"
 
   local output
-  # Align with packages/cli promptCmd: source spawnrc + zshrc, PATH includes ~/.opencode/bin.
+  # Align with packages/cli promptCmd: source agentsearc + zshrc, PATH includes ~/.opencode/bin.
   # Non-interactive stdin like codex (half-open pipe can confuse CLIs).
   output=$(cloud_exec "${app}" "\
-    source ~/.spawnrc 2>/dev/null; \
+    source ~/.agentsearc 2>/dev/null; \
     source ~/.zshrc 2>/dev/null; \
     export PATH=\$HOME/.opencode/bin:\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH; \
     _TIMEOUT=\$(cat /tmp/.e2e-timeout); \
@@ -433,7 +433,7 @@ input_test_kilocode() {
   local output
   # Align with packages/cli promptCmd for kilocode and keep stdin non-interactive.
   output=$(cloud_exec "${app}" "\
-    source ~/.spawnrc 2>/dev/null; \
+    source ~/.agentsearc 2>/dev/null; \
     source ~/.zshrc 2>/dev/null; \
     export PATH=\$HOME/.npm-global/bin:\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH; \
     _TIMEOUT=\$(cat /tmp/.e2e-timeout); \
@@ -522,8 +522,8 @@ run_input_test() {
 #
 # Checks that apply to ALL agents:
 #   1. Remote connectivity (SSH or CLI exec)
-#   2. .spawnrc exists
-#   3. .spawnrc contains THEGRID_API_KEY
+#   2. .agentsearc exists
+#   3. .agentsearc contains THEGRID_API_KEY
 # ---------------------------------------------------------------------------
 verify_common() {
   local app="$1"
@@ -539,21 +539,21 @@ verify_common() {
     failures=$((failures + 1))
   fi
 
-  # 2. .spawnrc exists
-  log_step "Checking .spawnrc exists..."
-  if cloud_exec "${app}" "test -f ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok ".spawnrc exists"
+  # 2. .agentsearc exists
+  log_step "Checking .agentsearc exists..."
+  if cloud_exec "${app}" "test -f ~/.agentsearc" >/dev/null 2>&1; then
+    log_ok ".agentsearc exists"
   else
-    log_err ".spawnrc not found"
+    log_err ".agentsearc not found"
     failures=$((failures + 1))
   fi
 
-  # 3. .spawnrc has THEGRID_API_KEY
-  log_step "Checking THEGRID_API_KEY in .spawnrc..."
-  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok "THEGRID_API_KEY present in .spawnrc"
+  # 3. .agentsearc has THEGRID_API_KEY
+  log_step "Checking THEGRID_API_KEY in .agentsearc..."
+  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.agentsearc" >/dev/null 2>&1; then
+    log_ok "THEGRID_API_KEY present in .agentsearc"
   else
-    log_err "THEGRID_API_KEY not found in .spawnrc"
+    log_err "THEGRID_API_KEY not found in .agentsearc"
     failures=$((failures + 1))
   fi
 
@@ -589,10 +589,10 @@ verify_claude() {
 
   # Env check
   log_step "Checking claude env (The Grid / Anthropic proxy base URL)..."
-  if cloud_exec "${app}" "grep -q thegrid.ai ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok "thegrid.ai configured in .spawnrc"
+  if cloud_exec "${app}" "grep -q thegrid.ai ~/.agentsearc" >/dev/null 2>&1; then
+    log_ok "thegrid.ai configured in .agentsearc"
   else
-    log_err "thegrid.ai not found in .spawnrc"
+    log_err "thegrid.ai not found in .agentsearc"
     failures=$((failures + 1))
   fi
 
@@ -603,13 +603,13 @@ verify_openclaw() {
   local app="$1"
   local failures=0
 
-  # Binary check — source .spawnrc and .bashrc to pick up all PATH entries.
+  # Binary check — source .agentsearc and .bashrc to pick up all PATH entries.
   # On Sprite VMs, npm's global prefix may be the nvm node bin dir (writable +
   # in PATH after .bashrc), so openclaw lands there instead of ~/.npm-global/bin.
   # On GCP VMs (root user), npm installs to /usr/local/bin directly (no --prefix).
-  # Include /usr/local/bin explicitly so the check doesn't rely solely on .spawnrc.
+  # Include /usr/local/bin explicitly so the check doesn't rely solely on .agentsearc.
   log_step "Checking openclaw binary..."
-  if cloud_exec "${app}" "source ~/.spawnrc 2>/dev/null; source ~/.bashrc 2>/dev/null; export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:/usr/local/bin:\$PATH; command -v openclaw" >/dev/null 2>&1; then
+  if cloud_exec "${app}" "source ~/.agentsearc 2>/dev/null; source ~/.bashrc 2>/dev/null; export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:/usr/local/bin:\$PATH; command -v openclaw" >/dev/null 2>&1; then
     log_ok "openclaw binary found"
   else
     log_err "openclaw binary not found"
@@ -618,10 +618,10 @@ verify_openclaw() {
 
   # Env check: OpenAI-compat vars for The Grid (same pattern as Codex/Hermes)
   log_step "Checking openclaw env (OPENAI_API_KEY / OPENAI_BASE_URL for The Grid)..."
-  if cloud_exec "${app}" "grep -q OPENAI_API_KEY ~/.spawnrc && grep -q OPENAI_BASE_URL ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok "OPENAI_API_KEY / OPENAI_BASE_URL present in .spawnrc"
+  if cloud_exec "${app}" "grep -q OPENAI_API_KEY ~/.agentsearc && grep -q OPENAI_BASE_URL ~/.agentsearc" >/dev/null 2>&1; then
+    log_ok "OPENAI_API_KEY / OPENAI_BASE_URL present in .agentsearc"
   else
-    log_err "OPENAI_* Grid inference env vars not found in .spawnrc"
+    log_err "OPENAI_* Grid inference env vars not found in .agentsearc"
     failures=$((failures + 1))
   fi
 
@@ -649,7 +649,7 @@ _openclaw_verify_gateway_resilience() {
 
   # Step 1: Confirm gateway is currently running
   log_step "Gateway resilience: checking gateway is running..."
-  if ! cloud_exec "${app}" "source ~/.spawnrc 2>/dev/null; \
+  if ! cloud_exec "${app}" "source ~/.agentsearc 2>/dev/null; \
     export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:/usr/local/bin:\$PATH; \
     _check_port_18789() { ss -tln 2>/dev/null | grep -q ':18789 ' || (echo >/dev/tcp/127.0.0.1/18789) 2>/dev/null || nc -z 127.0.0.1 18789 2>/dev/null; }; \
     _check_port_18789" >/dev/null 2>&1; then
@@ -660,7 +660,7 @@ _openclaw_verify_gateway_resilience() {
 
   # Step 2: Kill the gateway with SIGKILL (simulate hard crash)
   log_step "Gateway resilience: killing gateway (SIGKILL)..."
-  cloud_exec "${app}" "source ~/.spawnrc 2>/dev/null; \
+  cloud_exec "${app}" "source ~/.agentsearc 2>/dev/null; \
     export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:/usr/local/bin:\$PATH; \
     _gw_pid=\$(lsof -ti tcp:18789 2>/dev/null || fuser 18789/tcp 2>/dev/null | tr -d ' '); \
     if [ -n \"\$_gw_pid\" ]; then kill -9 \$_gw_pid 2>/dev/null; fi" >/dev/null 2>&1 || true
@@ -685,7 +685,7 @@ _openclaw_verify_gateway_resilience() {
   # 60s gives a comfortable margin for slow/throttled VMs.
   log_step "Gateway resilience: waiting for auto-restart (up to 60s)..."
   local recovered
-  recovered=$(cloud_exec "${app}" "source ~/.spawnrc 2>/dev/null; \
+  recovered=$(cloud_exec "${app}" "source ~/.agentsearc 2>/dev/null; \
     export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:/usr/local/bin:\$PATH; \
     _check_port_18789() { ss -tln 2>/dev/null | grep -q ':18789 ' || (echo >/dev/tcp/127.0.0.1/18789) 2>/dev/null || nc -z 127.0.0.1 18789 2>/dev/null; }; \
     elapsed=0; while [ \$elapsed -lt 60 ]; do \
@@ -730,10 +730,10 @@ verify_codex() {
 
   # Env check
   log_step "Checking codex env (THEGRID_API_KEY)..."
-  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok "THEGRID_API_KEY present in .spawnrc"
+  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.agentsearc" >/dev/null 2>&1; then
+    log_ok "THEGRID_API_KEY present in .agentsearc"
   else
-    log_err "THEGRID_API_KEY not found in .spawnrc"
+    log_err "THEGRID_API_KEY not found in .agentsearc"
     failures=$((failures + 1))
   fi
 
@@ -752,8 +752,8 @@ verify_opencode() {
   local app="$1"
   local failures=0
 
-  # Grid-spawn does not upload a separate OpenCode provider file (unlike ~/.codex/config.toml).
-  # OpenCode picks up THEGRID_API_KEY from ~/.spawnrc; optional on-disk config may appear after first run.
+  # Grid-agentsea does not upload a separate OpenCode provider file (unlike ~/.codex/config.toml).
+  # OpenCode picks up THEGRID_API_KEY from ~/.agentsearc; optional on-disk config may appear after first run.
 
   # Binary check
   log_step "Checking opencode binary..."
@@ -766,17 +766,17 @@ verify_opencode() {
 
   # Env check — required for Grid-backed completions
   log_step "Checking opencode env (THEGRID_API_KEY)..."
-  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok "THEGRID_API_KEY present in .spawnrc"
+  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.agentsearc" >/dev/null 2>&1; then
+    log_ok "THEGRID_API_KEY present in .agentsearc"
   else
-    log_err "THEGRID_API_KEY not found in .spawnrc"
+    log_err "THEGRID_API_KEY not found in .agentsearc"
     failures=$((failures + 1))
   fi
 
   # If OpenCode has written config, it should reference The Grid (best-effort; optional).
   log_step "Checking optional ~/.config/opencode for thegrid.ai..."
   if cloud_exec "${app}" "[ ! -d \"\$HOME/.config/opencode\" ]" >/dev/null 2>&1; then
-    log_info "No ~/.config/opencode yet — relying on .spawnrc THEGRID_API_KEY only"
+    log_info "No ~/.config/opencode yet — relying on .agentsearc THEGRID_API_KEY only"
   else
     if cloud_exec "${app}" "grep -rq thegrid\\.ai \"\$HOME/.config/opencode\" 2>/dev/null" >/dev/null 2>&1; then
       log_ok "thegrid.ai referenced under ~/.config/opencode"
@@ -804,10 +804,10 @@ verify_kilocode() {
   # Env check: KILO_PROVIDER_TYPE (must match VENDOR_KILO_PROVIDER_TYPE_VALUE in vendor-routing.ts)
   log_step "Checking kilocode env (KILO_PROVIDER_TYPE → Grid routing)..."
   _kilo_pt="$(printf '%b' '\x6f\x70\x65\x6e\x74\x6f\x75\x74\x65\x72')"
-  if cloud_exec "${app}" "grep KILO_PROVIDER_TYPE ~/.spawnrc | grep -q ${_kilo_pt}" >/dev/null 2>&1; then
+  if cloud_exec "${app}" "grep KILO_PROVIDER_TYPE ~/.agentsearc | grep -q ${_kilo_pt}" >/dev/null 2>&1; then
     log_ok "KILO_PROVIDER_TYPE present and set for The Grid routing"
   else
-    log_err "KILO_PROVIDER_TYPE missing or not set to expected routing slot in .spawnrc"
+    log_err "KILO_PROVIDER_TYPE missing or not set to expected routing slot in .agentsearc"
     failures=$((failures + 1))
   fi
 
@@ -829,19 +829,19 @@ verify_hermes() {
 
   # Env check: THEGRID_API_KEY
   log_step "Checking hermes env (THEGRID_API_KEY)..."
-  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok "THEGRID_API_KEY present in .spawnrc"
+  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.agentsearc" >/dev/null 2>&1; then
+    log_ok "THEGRID_API_KEY present in .agentsearc"
   else
-    log_err "THEGRID_API_KEY not found in .spawnrc"
+    log_err "THEGRID_API_KEY not found in .agentsearc"
     failures=$((failures + 1))
   fi
 
   # Env check: OPENAI_BASE_URL points at The Grid API
   log_step "Checking hermes env (OPENAI_BASE_URL)..."
-  if cloud_exec "${app}" "grep OPENAI_BASE_URL ~/.spawnrc | grep -q thegrid" >/dev/null 2>&1; then
+  if cloud_exec "${app}" "grep OPENAI_BASE_URL ~/.agentsearc | grep -q thegrid" >/dev/null 2>&1; then
     log_ok "OPENAI_BASE_URL points at The Grid"
   else
-    log_err "OPENAI_BASE_URL not set to The Grid API host in .spawnrc"
+    log_err "OPENAI_BASE_URL not set to The Grid API host in .agentsearc"
     failures=$((failures + 1))
   fi
 
@@ -864,19 +864,19 @@ verify_junie() {
 
   # Env check: JUNIE_THEGRID_API_KEY
   log_step "Checking junie env (JUNIE_THEGRID_API_KEY)..."
-  if cloud_exec "${app}" "grep -q JUNIE_THEGRID_API_KEY ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok "JUNIE_THEGRID_API_KEY present in .spawnrc"
+  if cloud_exec "${app}" "grep -q JUNIE_THEGRID_API_KEY ~/.agentsearc" >/dev/null 2>&1; then
+    log_ok "JUNIE_THEGRID_API_KEY present in .agentsearc"
   else
-    log_err "JUNIE_THEGRID_API_KEY not found in .spawnrc"
+    log_err "JUNIE_THEGRID_API_KEY not found in .agentsearc"
     failures=$((failures + 1))
   fi
 
   # Env check: THEGRID_API_KEY
   log_step "Checking junie env (THEGRID_API_KEY)..."
-  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok "THEGRID_API_KEY present in .spawnrc"
+  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.agentsearc" >/dev/null 2>&1; then
+    log_ok "THEGRID_API_KEY present in .agentsearc"
   else
-    log_err "THEGRID_API_KEY not found in .spawnrc"
+    log_err "THEGRID_API_KEY not found in .agentsearc"
     failures=$((failures + 1))
   fi
 
@@ -922,28 +922,28 @@ verify_cursor() {
 
   # Env check: CURSOR_API_KEY
   log_step "Checking cursor env (CURSOR_API_KEY)..."
-  if cloud_exec "${app}" "grep -q CURSOR_API_KEY ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok "CURSOR_API_KEY present in .spawnrc"
+  if cloud_exec "${app}" "grep -q CURSOR_API_KEY ~/.agentsearc" >/dev/null 2>&1; then
+    log_ok "CURSOR_API_KEY present in .agentsearc"
   else
-    log_err "CURSOR_API_KEY not found in .spawnrc"
+    log_err "CURSOR_API_KEY not found in .agentsearc"
     failures=$((failures + 1))
   fi
 
   # Env check: THEGRID_API_KEY
   log_step "Checking cursor env (THEGRID_API_KEY)..."
-  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok "THEGRID_API_KEY present in .spawnrc"
+  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.agentsearc" >/dev/null 2>&1; then
+    log_ok "THEGRID_API_KEY present in .agentsearc"
   else
-    log_err "THEGRID_API_KEY not found in .spawnrc"
+    log_err "THEGRID_API_KEY not found in .agentsearc"
     failures=$((failures + 1))
   fi
 
   # Env check: GRID_MODEL_ID (The Grid catalogue model for proxy + inference)
   log_step "Checking cursor env (GRID_MODEL_ID)..."
-  if cloud_exec "${app}" "grep -q GRID_MODEL_ID ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok "GRID_MODEL_ID present in .spawnrc"
+  if cloud_exec "${app}" "grep -q GRID_MODEL_ID ~/.agentsearc" >/dev/null 2>&1; then
+    log_ok "GRID_MODEL_ID present in .agentsearc"
   else
-    log_err "GRID_MODEL_ID not found in .spawnrc"
+    log_err "GRID_MODEL_ID not found in .agentsearc"
     failures=$((failures + 1))
   fi
 
@@ -965,10 +965,10 @@ verify_pi() {
 
   # Env check: THEGRID_API_KEY
   log_step "Checking pi env (THEGRID_API_KEY)..."
-  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok "THEGRID_API_KEY present in .spawnrc"
+  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.agentsearc" >/dev/null 2>&1; then
+    log_ok "THEGRID_API_KEY present in .agentsearc"
   else
-    log_err "THEGRID_API_KEY not found in .spawnrc"
+    log_err "THEGRID_API_KEY not found in .agentsearc"
     failures=$((failures + 1))
   fi
 
@@ -988,7 +988,7 @@ verify_t3code() {
   local failures=0
 
   log_step "Checking t3 binary (t3code launch)..."
-  if cloud_exec "${app}" "source ~/.spawnrc 2>/dev/null; source ~/.bashrc 2>/dev/null; export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:/usr/local/bin:\$PATH; command -v t3" >/dev/null 2>&1; then
+  if cloud_exec "${app}" "source ~/.agentsearc 2>/dev/null; source ~/.bashrc 2>/dev/null; export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:/usr/local/bin:\$PATH; command -v t3" >/dev/null 2>&1; then
     log_ok "t3 binary found"
   else
     log_err "t3 binary not found"
@@ -1003,11 +1003,11 @@ verify_t3code() {
     failures=$((failures + 1))
   fi
 
-  log_step "Checking t3code env (The Grid API / OpenAI-compat in .spawnrc)..."
-  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.spawnrc && grep -q thegrid.ai ~/.spawnrc" >/dev/null 2>&1; then
-    log_ok "The Grid proxy vars present in .spawnrc"
+  log_step "Checking t3code env (The Grid API / OpenAI-compat in .agentsearc)..."
+  if cloud_exec "${app}" "grep -q THEGRID_API_KEY ~/.agentsearc && grep -q thegrid.ai ~/.agentsearc" >/dev/null 2>&1; then
+    log_ok "The Grid proxy vars present in .agentsearc"
   else
-    log_err "Expected THEGRID_API_KEY / thegrid.ai not found in .spawnrc"
+    log_err "Expected THEGRID_API_KEY / thegrid.ai not found in .agentsearc"
     failures=$((failures + 1))
   fi
 

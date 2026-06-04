@@ -1,5 +1,5 @@
 /**
- * Tests for load-env.ts resolution rules (GRID_SPAWN_ROOT vs cwd walk).
+ * Tests for load-env.ts resolution rules (AGENTSEA_ROOT vs cwd walk).
  * Uses exported loadAgentSeaDotenv — dotenv does not override existing env vars.
  */
 
@@ -14,7 +14,7 @@ describe("loadAgentSeaDotenv", () => {
 
   beforeEach(() => {
     snapshot = {
-      GRID_SPAWN_ROOT: process.env.GRID_SPAWN_ROOT,
+      AGENTSEA_ROOT: process.env.AGENTSEA_ROOT,
       LOAD_ENV_TEST_A: process.env.LOAD_ENV_TEST_A,
       LOAD_ENV_TEST_B: process.env.LOAD_ENV_TEST_B,
     };
@@ -30,11 +30,11 @@ describe("loadAgentSeaDotenv", () => {
     }
   });
 
-  it("loads .env from GRID_SPAWN_ROOT without overriding preset vars", () => {
+  it("loads .env from AGENTSEA_ROOT without overriding preset vars", () => {
     const dir = mkdtempSync(join(tmpdir(), "grid-env-root-"));
     try {
       writeFileSync(join(dir, ".env"), 'LOAD_ENV_TEST_A=from-file\nLOAD_ENV_TEST_B=also-from-file\n');
-      process.env.GRID_SPAWN_ROOT = dir;
+      process.env.AGENTSEA_ROOT = dir;
       process.env.LOAD_ENV_TEST_A = "preset";
       delete process.env.LOAD_ENV_TEST_B;
       loadAgentSeaDotenv();
@@ -48,7 +48,7 @@ describe("loadAgentSeaDotenv", () => {
     }
   });
 
-  it("walks up from cwd when GRID_SPAWN_ROOT is unset", () => {
+  it("walks up from cwd when AGENTSEA_ROOT is unset", () => {
     const repo = mkdtempSync(join(tmpdir(), "grid-env-repo-"));
     const nested = join(repo, "nested");
     mkdirSync(nested, {
@@ -57,7 +57,7 @@ describe("loadAgentSeaDotenv", () => {
     writeFileSync(join(repo, "manifest.json"), "{}");
     writeFileSync(join(repo, ".env"), "LOAD_ENV_TEST_B=walked\n");
 
-    delete process.env.GRID_SPAWN_ROOT;
+    delete process.env.AGENTSEA_ROOT;
     delete process.env.LOAD_ENV_TEST_B;
 
     const prev = process.cwd();

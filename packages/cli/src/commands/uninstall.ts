@@ -4,7 +4,7 @@ import * as p from "@clack/prompts";
 import pc from "picocolors";
 import {
   getCacheDir,
-  getSpawnDir,
+  getAgentseaDir,
   getUserHome,
   RC_MARKER_END,
   RC_MARKER_LEGACY,
@@ -22,7 +22,7 @@ const RC_FILES = [
   ".zshrc",
 ];
 
-/** Remove spawn-related PATH blocks from an RC file.
+/** Remove agentsea-related PATH blocks from an RC file.
  *  Handles both the new start/end marker format and the legacy single-comment format. */
 function cleanRcFile(rcPath: string): boolean {
   const readResult = tryCatch(() => fs.readFileSync(rcPath, "utf-8"));
@@ -56,7 +56,7 @@ function cleanRcFile(rcPath: string): boolean {
       continue;
     }
 
-    // Legacy format: "# Added by spawn installer" followed by a PATH export
+    // Legacy format: "# Added by agentsea installer" followed by a PATH export
     if (line === RC_MARKER_LEGACY) {
       const next = lines[i + 1] ?? "";
       if (next.includes(".local/bin") || next.includes(".bun/bin")) {
@@ -75,8 +75,8 @@ function cleanRcFile(rcPath: string): boolean {
   // Safety: if insideBlock is still true, the end marker is missing.
   // Abort to avoid truncating the user's shell config.
   if (insideBlock) {
-    p.log.warn(`Spawn block in ${rcPath} is missing end marker — skipping to avoid data loss.`);
-    p.log.warn(`Manually remove the line "${RC_MARKER_START}" and the spawn PATH export from ${rcPath}.`);
+    p.log.warn(`Agentsea block in ${rcPath} is missing end marker — skipping to avoid data loss.`);
+    p.log.warn(`Manually remove the line "${RC_MARKER_START}" and the agentsea PATH export from ${rcPath}.`);
     return false;
   }
 
@@ -86,8 +86,8 @@ function cleanRcFile(rcPath: string): boolean {
   return changed;
 }
 
-/** Check if a path is a symlink pointing to the spawn binary. */
-function isSpawnSymlink(linkPath: string, binaryPath: string): boolean {
+/** Check if a path is a symlink pointing to the agentsea binary. */
+function isAgentseaSymlink(linkPath: string, binaryPath: string): boolean {
   const result = tryCatch(() => fs.readlinkSync(linkPath));
   if (!result.ok) {
     return false;
@@ -96,24 +96,24 @@ function isSpawnSymlink(linkPath: string, binaryPath: string): boolean {
 }
 
 export async function cmdUninstall(): Promise<void> {
-  p.intro(pc.bold("Uninstall spawn"));
+  p.intro(pc.bold("Uninstall agentsea"));
 
   const home = getUserHome();
-  const binaryPath = path.join(home, ".local", "bin", "spawn");
-  const symlinkPath = "/usr/local/bin/spawn";
+  const binaryPath = path.join(home, ".local", "bin", "agentsea");
+  const symlinkPath = "/usr/local/bin/agentsea";
   const cacheDir = getCacheDir();
-  const spawnDir = getSpawnDir();
-  const configDir = path.join(home, ".config", "spawn");
+  const agentseaDir = getAgentseaDir();
+  const configDir = path.join(home, ".config", "agentsea");
 
   // Show what exists
   const binaryExists = fs.existsSync(binaryPath);
-  const symlinkExists = isSpawnSymlink(symlinkPath, binaryPath);
+  const symlinkExists = isAgentseaSymlink(symlinkPath, binaryPath);
   const cacheExists = fs.existsSync(cacheDir);
-  const spawnDirExists = fs.existsSync(spawnDir);
+  const agentseaDirExists = fs.existsSync(agentseaDir);
   const configDirExists = fs.existsSync(configDir);
 
-  if (!binaryExists && !symlinkExists && !cacheExists && !spawnDirExists && !configDirExists) {
-    p.log.info("Nothing to uninstall — spawn does not appear to be installed.");
+  if (!binaryExists && !symlinkExists && !cacheExists && !agentseaDirExists && !configDirExists) {
+    p.log.info("Nothing to uninstall — agentsea does not appear to be installed.");
     p.outro("Done");
     return;
   }
@@ -124,11 +124,11 @@ export async function cmdUninstall(): Promise<void> {
     label: string;
     hint: string;
   }[] = [];
-  if (spawnDirExists) {
+  if (agentseaDirExists) {
     options.push({
       value: "history",
-      label: "Remove spawn history",
-      hint: spawnDir,
+      label: "Remove agentsea history",
+      hint: agentseaDir,
     });
   }
   if (configDirExists) {
@@ -168,16 +168,16 @@ export async function cmdUninstall(): Promise<void> {
   if (cacheExists) {
     p.log.info(`  Cache:     ${cacheDir}`);
   }
-  p.log.info("  Shell RC:  spawn PATH entries");
+  p.log.info("  Shell RC:  agentsea PATH entries");
   if (removeHistory) {
-    p.log.info(`  History:   ${spawnDir}`);
+    p.log.info(`  History:   ${agentseaDir}`);
   }
   if (removeConfig) {
     p.log.info(`  Config:    ${configDir}`);
   }
 
   const confirmed = await p.confirm({
-    message: "Are you sure you want to uninstall spawn?",
+    message: "Are you sure you want to uninstall agentsea?",
     initialValue: false,
   });
   if (p.isCancel(confirmed) || !confirmed) {
@@ -230,12 +230,12 @@ export async function cmdUninstall(): Promise<void> {
   }
 
   // Optional: history
-  if (removeHistory && spawnDirExists) {
-    fs.rmSync(spawnDir, {
+  if (removeHistory && agentseaDirExists) {
+    fs.rmSync(agentseaDir, {
       recursive: true,
       force: true,
     });
-    removed.push(`History: ${spawnDir}`);
+    removed.push(`History: ${agentseaDir}`);
   }
 
   // Optional: config

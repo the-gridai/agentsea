@@ -1,13 +1,13 @@
 // Load monorepo-root `.env` before any other CLI code reads process.env.
 //
 // Resolution (in order):
-// 1. If `AGENTSEA_ROOT` (or legacy `GRID_SPAWN_ROOT`) is set: load `$ROOT/.env` when the file exists.
+// 1. If `AGENTSEA_ROOT` (or legacy `AGENTSEA_ROOT`) is set: load `$ROOT/.env` when the file exists.
 // 2. Else walk up from `process.cwd()` (max 10 segments); if a directory contains both
 //    `manifest.json` and `.env`, load that `.env`.
 //
 // Does not override variables already set in the environment (matches dotenv defaults).
 //
-// Diagnostics: set `SPAWN_DEBUG=1` or `AGENTSEA_DEBUG_ENV=1` to log which path was used
+// Diagnostics: set `AGENTSEA_DEBUG=1` or `AGENTSEA_DEBUG_ENV=1` to log which path was used
 // (paths only — never values).
 
 import { existsSync } from "node:fs";
@@ -15,11 +15,7 @@ import { dirname, join } from "node:path";
 import { config } from "dotenv";
 
 function envDiagEnabled(): boolean {
-  return (
-    process.env.SPAWN_DEBUG === "1" ||
-    process.env.AGENTSEA_DEBUG_ENV === "1" ||
-    process.env.GRID_SPAWN_DEBUG_ENV === "1"
-  );
+  return process.env.AGENTSEA_DEBUG === "1" || process.env.AGENTSEA_DEBUG_ENV === "1";
 }
 
 function logEnvDiag(message: string): void {
@@ -35,7 +31,7 @@ function tryLoad(path: string): void {
 }
 
 function rootOverride(): string | undefined {
-  return process.env.AGENTSEA_ROOT?.trim() || process.env.GRID_SPAWN_ROOT?.trim() || undefined;
+  return process.env.AGENTSEA_ROOT?.trim() || undefined;
 }
 
 /** Exported for tests — runs the same resolution rules as CLI startup. */
@@ -81,6 +77,6 @@ export function loadAgentSeaDotenv(): void {
 }
 
 /** @deprecated Use loadAgentSeaDotenv */
-export const loadGridSpawnDotenv = loadAgentSeaDotenv;
+export const loadGridAgentseaDotenv = loadAgentSeaDotenv;
 
 loadAgentSeaDotenv();

@@ -58,4 +58,4 @@ No cloud servers are created or destroyed.
 | Variable | Description |
 |----------|-------------|
 | `THEGRID_API_KEY` | The Grid platform API key (prompted via OAuth if not set) |
-| `SPAWN_PROMPT` | If set, runs the agent non-interactively with this prompt |
+| `AGENTSEA_PROMPT` | If set, runs the agent non-interactively with this prompt |

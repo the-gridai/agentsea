@@ -1,6 +1,6 @@
 // shared/install-id.ts — Stable per-machine identifier for PostHog bucketing.
 //
-// Generated lazily on first call and persisted to $SPAWN_HOME/install-id.
+// Generated lazily on first call and persisted to $AGENTSEA_HOME/install-id.
 // Used as the PostHog `distinct_id` for telemetry events and feature-flag
 // evaluation, so the same machine reliably gets the same flag variant across
 // runs (per-run session UUIDs would re-bucket every invocation).

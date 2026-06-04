@@ -19,7 +19,7 @@ import {
   getSignedPreviewBrowserUrl,
   interactiveSession,
   promptSandboxSize,
-  promptSpawnName,
+  promptAgentseaName,
   runServer,
   setupAutoUpdateSession,
   uploadFile,
@@ -49,7 +49,7 @@ async function main() {
       downloadFile,
     },
     async authenticate() {
-      await promptSpawnName();
+      await promptAgentseaName();
       await ensureDaytonaAuthenticated();
     },
     async promptSize() {

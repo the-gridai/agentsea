@@ -11,8 +11,6 @@ const repoRoot = join(__dirname, "../../");
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   distDir,
-  // Load `.env*` from monorepo root so AGENTSEA_ROOT / overrides match CLI behaviour.
-  envDir: repoRoot,
   // Pin the workspace root so Next does not climb up to the spectral parent.
   outputFileTracingRoot: repoRoot,
   experimental: {

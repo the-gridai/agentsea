@@ -14,7 +14,7 @@ export type {
 export {
   RAW_BASE,
   REPO,
-  SPAWN_CDN,
+  AGENTSEA_CDN,
   VERSION_URL,
   _resetCacheForTesting,
   agentKeys,

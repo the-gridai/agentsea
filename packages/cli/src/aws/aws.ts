@@ -12,7 +12,7 @@ import { handleBillingError, isBillingError, showNonBillingError } from "../shar
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
 import { getPackagesForTier, NODE_INSTALL_CMD, needsBun, needsNode } from "../shared/cloud-init.js";
 import { parseJsonWith } from "../shared/parse.js";
-import { getSpawnCloudConfigPath } from "../shared/paths.js";
+import { getAgentseaCloudConfigPath } from "../shared/paths.js";
 import { asyncTryCatch, isFileError, tryCatch, tryCatchIf, unwrapOr } from "../shared/result.js";
 import {
   killWithTimeout,
@@ -21,10 +21,10 @@ import {
   scpQuietArgs,
   waitForSsh as sharedWaitForSsh,
   sleep,
-  spawnInteractive,
+  agentseaInteractive,
   validateRemotePath,
 } from "../shared/ssh.js";
-import { ensureSshKeys, getSpawnKey, getSshKeyOpts, SPAWN_KEY_NAME } from "../shared/ssh-keys.js";
+import { ensureSshKeys, getAgentseaKey, getSshKeyOpts, AGENTSEA_KEY_NAME } from "../shared/ssh-keys.js";
 import {
   getServerNameFromEnv,
   jsonEscape,
@@ -35,7 +35,7 @@ import {
   logStepInline,
   logWarn,
   prompt,
-  promptSpawnNameShared,
+  promptAgentseaNameShared,
   retryOrQuit,
   sanitizeTermValue,
   selectFromList,
@@ -49,7 +49,7 @@ const DASHBOARD_URL = "https://lightsail.aws.amazon.com/";
 // ─── Credential Cache ────────────────────────────────────────────────────────
 
 export function getAwsConfigPath(): string {
-  return getSpawnCloudConfigPath("aws");
+  return getAgentseaCloudConfigPath("aws");
 }
 
 const AwsCredsSchema = v.object({
@@ -202,7 +202,7 @@ const _state: AwsState = {
   instanceName: "",
   instanceIp: "",
   selectedBundle: DEFAULT_BUNDLE.id,
-  keyPairName: "spawn-key",
+  keyPairName: "agentsea-key",
 };
 
 /** Introspect internal state (used by tests). */
@@ -529,7 +529,7 @@ export async function ensureAwsCli(): Promise<void> {
   }
 
   logWarn("AWS CLI is not installed.");
-  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
     logInfo("Skipping AWS CLI install (non-interactive mode)");
     return;
   }
@@ -551,7 +551,7 @@ export async function authenticate(): Promise<void> {
     throw new Error(`Invalid AWS region: ${region}. Must match /^[a-zA-Z0-9_-]{1,63}$/`);
   }
   _state.region = region;
-  const skipCache = process.env.SPAWN_REAUTH === "1";
+  const skipCache = process.env.AGENTSEA_REAUTH === "1";
 
   // 1. Try existing CLI with valid credentials
   if (hasAwsCli()) {
@@ -589,7 +589,7 @@ export async function authenticate(): Promise<void> {
     return;
   }
 
-  // 3. Try cached credentials from ~/.config/spawn/aws.json
+  // 3. Try cached credentials from ~/.config/agentsea/aws.json
   if (!skipCache) {
     const cached = loadCredsFromConfig();
     if (cached) {
@@ -611,10 +611,10 @@ export async function authenticate(): Promise<void> {
         ]);
         if (result.exitCode === 0) {
           _state.lightsailMode = "cli";
-          logInfo(`AWS CLI ready with credentials cached by spawn. Using region: ${cachedRegion}`);
+          logInfo(`AWS CLI ready with credentials cached by agentsea. Using region: ${cachedRegion}`);
           return;
         }
-        logWarn("Credentials cached by spawn are invalid or expired");
+        logWarn("Credentials cached by agentsea are invalid or expired");
         _state.accessKeyId = "";
         _state.secretAccessKey = "";
         delete process.env.AWS_ACCESS_KEY_ID;
@@ -629,7 +629,7 @@ export async function authenticate(): Promise<void> {
   }
 
   // 4. Interactive credential entry (retry loop — never exits unless user says no)
-  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
     logError("AWS credentials not found. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.");
     throw new Error("No AWS credentials");
   }
@@ -692,10 +692,10 @@ export async function promptRegion(): Promise<void> {
     _state.region = envRegion;
     return;
   }
-  if (process.env.SPAWN_CUSTOM !== "1") {
+  if (process.env.AGENTSEA_CUSTOM !== "1") {
     return;
   }
-  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
     return;
   }
 
@@ -719,7 +719,7 @@ export async function promptBundle(agentName?: string): Promise<void> {
   const agentDefault = agentName ? AGENT_BUNDLE_DEFAULTS[agentName] : undefined;
   const defaultId = agentDefault ?? DEFAULT_BUNDLE.id;
 
-  if (process.env.SPAWN_CUSTOM !== "1" || process.env.SPAWN_NON_INTERACTIVE === "1") {
+  if (process.env.AGENTSEA_CUSTOM !== "1" || process.env.AGENTSEA_NON_INTERACTIVE === "1") {
     _state.selectedBundle = defaultId;
     return;
   }
@@ -860,8 +860,8 @@ async function lightsailGetInstance(instanceName: string): Promise<{
 
 export async function ensureSshKey(): Promise<void> {
   // Lightsail associates one key pair per instance — always use the
-  // spawn-managed key. User's personal keys stay off the AWS account.
-  const key = getSpawnKey();
+  // agentsea-managed key. User's personal keys stay off the AWS account.
+  const key = getAgentseaKey();
 
   const pubPath = key.pubPath;
   if (!existsSync(pubPath)) {
@@ -870,9 +870,9 @@ export async function ensureSshKey(): Promise<void> {
 
   const pubKey = readFileSync(pubPath, "utf-8").trim();
   // Derive a machine-specific key name from the public key content so that
-  // different machines never collide on "spawn-key" with mismatched key material.
+  // different machines never collide on "agentsea-key" with mismatched key material.
   const keyHash = createHash("sha256").update(pubKey).digest("hex").slice(0, 8);
-  const keyName = `spawn-key-${keyHash}`;
+  const keyName = `agentsea-key-${keyHash}`;
   _state.keyPairName = keyName;
 
   if (await lightsailGetKeyPair(keyName)) {
@@ -1220,7 +1220,7 @@ export async function interactiveSession(cmd: string): Promise<number> {
   const term = sanitizeTermValue(process.env.TERM || "xterm-256color");
   const fullCmd = `export TERM='${term}' LANG='C.UTF-8' PATH="$HOME/.npm-global/bin:$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH" && exec bash -l -c ${shellQuote(cmd)}`;
   const keyOpts = getSshKeyOpts(await ensureSshKeys());
-  const exitCode = spawnInteractive([
+  const exitCode = agentseaInteractive([
     "ssh",
     ...SSH_INTERACTIVE_OPTS,
     ...keyOpts,
@@ -1240,7 +1240,7 @@ export async function interactiveSession(cmd: string): Promise<number> {
   logInfo(`  ${AGENTSEA_CLI} delete`);
   logInfo("To reconnect:");
   logInfo(`  ${AGENTSEA_CLI} last`);
-  logInfo(`  or: ssh -i ~/.ssh/${SPAWN_KEY_NAME} ${SSH_USER}@${_state.instanceIp}`);
+  logInfo(`  or: ssh -i ~/.ssh/${AGENTSEA_KEY_NAME} ${SSH_USER}@${_state.instanceIp}`);
 
   return exitCode;
 }
@@ -1251,8 +1251,8 @@ export async function getServerName(): Promise<string> {
   return getServerNameFromEnv("LIGHTSAIL_SERVER_NAME");
 }
 
-export async function promptSpawnName(): Promise<void> {
-  return promptSpawnNameShared("AWS instance");
+export async function promptAgentseaName(): Promise<void> {
+  return promptAgentseaNameShared("AWS instance");
 }
 
 // ─── Lifecycle ──────────────────────────────────────────────────────────────

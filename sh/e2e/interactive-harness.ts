@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // sh/e2e/interactive-harness.ts — AI-driven interactive E2E test for agentsea CLI
 //
-// Spawns agentsea in a real PTY (via `script` command), feeds terminal output to
+// Agentseas agentsea in a real PTY (via `script` command), feeds terminal output to
 // The Grid (OpenAI-compatible chat), and types responses like a human user would.
 //
 // Usage: bun run sh/e2e/interactive-harness.ts <agent> <cloud>
@@ -286,7 +286,7 @@ IMPORTANT: Reply with ONLY the action. No explanation, no markdown, no quotes.`;
 
 // ─── PTY via script command ─────────────────────────────────────────────
 
-function spawnPty(command: string): typeof Bun.spawn.prototype {
+function agentseaPty(command: string): typeof Bun.spawn.prototype {
   const env = {
     ...process.env,
     TERM: "xterm-256color",
@@ -321,7 +321,7 @@ async function main(): Promise<void> {
 
   // Resolve CLI entry point
   const repoRoot =
-    process.env.SPAWN_CLI_DIR ??
+    process.env.AGENTSEA_CLI_DIR ??
     new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
   const cliEntry = `${repoRoot}/packages/cli/src/index.ts`;
   const command = `bun run ${cliEntry} ${agent} ${cloud}`;
@@ -329,7 +329,7 @@ async function main(): Promise<void> {
   process.stderr.write(`[harness] Starting: agentsea ${agent} ${cloud}\n`);
   process.stderr.write(`[harness] Timeout: ${SESSION_TIMEOUT_MS / 1000}s\n`);
 
-  const proc = spawnPty(command);
+  const proc = agentseaPty(command);
   let buffer = "";
   let lastDataTime = Date.now();
   let sessionDone = false;

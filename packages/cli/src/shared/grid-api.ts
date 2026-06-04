@@ -29,7 +29,7 @@ export function gridInferenceChatCompletionsUrl(): string {
   return `${resolveGridInferenceApiBase()}/chat/completions`;
 }
 
-/** Optional `THEGRID_API_URL=ù` line for ~/.spawnrc when a local override is active. */
+/** Optional `THEGRID_API_URL=ù` line for ~/.agentsearc when a local override is active. */
 export function gridInferenceOverrideEnvLine(): string | undefined {
   const override = process.env[THEGRID_API_URL_ENV]?.trim();
   if (!override) {

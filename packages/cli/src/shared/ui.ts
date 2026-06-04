@@ -8,9 +8,9 @@ import { readFileSync } from "node:fs";
 import * as p from "@clack/prompts";
 import { isString } from "@agentsea/sdk";
 import { parseJsonObj } from "./parse.js";
-import { getSpawnCloudConfigPath } from "./paths.js";
+import { getAgentseaCloudConfigPath } from "./paths.js";
 import { asyncTryCatch, tryCatch, unwrapOr } from "./result.js";
-import { isSpawnVerbose } from "./verbosity.js";
+import { isAgentseaVerbose } from "./verbosity.js";
 import { isWslLinux } from "./shell.js";
 import { captureError, captureWarning } from "./telemetry.js";
 
@@ -19,17 +19,17 @@ const CYAN = "\x1b[0;36m";
 const DIM = "\x1b[2m";
 const NC = "\x1b[0m";
 
-/** Operational detail — hidden unless `--verbose` or `SPAWN_VERBOSE=1`. */
+/** Operational detail — hidden unless `--verbose` or `AGENTSEA_VERBOSE=1`. */
 export function logInfo(msg: string): void {
-  if (!isSpawnVerbose()) {
+  if (!isAgentseaVerbose()) {
     return;
   }
   process.stderr.write(`${GREEN}${msg}${NC}\n`);
 }
 
-/** Log a debug message to stderr (dim text). Only visible when SPAWN_DEBUG=1. */
+/** Log a debug message to stderr (dim text). Only visible when AGENTSEA_DEBUG=1. */
 export function logDebug(msg: string): void {
-  if (process.env.SPAWN_DEBUG === "1") {
+  if (process.env.AGENTSEA_DEBUG === "1") {
     process.stderr.write(`${DIM}[debug] ${msg}${NC}\n`);
   }
 }
@@ -51,7 +51,7 @@ export function logError(msg: string): void {
 
 /** Operational progress — hidden unless verbose (use {@link logAlwaysStep} for required UX). */
 export function logStep(msg: string): void {
-  if (!isSpawnVerbose()) {
+  if (!isAgentseaVerbose()) {
     return;
   }
   process.stderr.write(`${CYAN}${msg}${NC}\n`);
@@ -70,7 +70,7 @@ export function logAlwaysStep(msg: string): void {
 /** Overwrite the current line with a status message (no newline). Call logStepDone() when finished.
  *  Falls back to newline-separated output when stderr is not a TTY (e.g., piped or captured). */
 export function logStepInline(msg: string): void {
-  if (!isSpawnVerbose()) {
+  if (!isAgentseaVerbose()) {
     return;
   }
   if (process.stderr.isTTY) {
@@ -94,8 +94,8 @@ export function logStepDone(): void {
  *  Rejects if stdin closes unexpectedly (e.g., post-clack state corruption)
  *  instead of hanging forever. */
 export async function prompt(question: string): Promise<string> {
-  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
-    throw new Error("Cannot prompt: SPAWN_NON_INTERACTIVE is set");
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
+    throw new Error("Cannot prompt: AGENTSEA_NON_INTERACTIVE is set");
   }
   // Strip trailing ": " or ":" since clack adds its own formatting
   const message = question.replace(/:\s*$/, "").trim();
@@ -153,7 +153,7 @@ export async function selectFromList(items: string[], promptText: string, defaul
   });
 
   if (parsed.length === 1) {
-    if (isSpawnVerbose()) {
+    if (isAgentseaVerbose()) {
       logInfo(`Using ${promptText}: ${parsed[0].id}`);
     }
     return parsed[0].id;
@@ -253,7 +253,7 @@ function powerShellOpenUrlCommand(url: string): [string, string[]] {
 
 /** WSL-only: rewrite loopback URLs to the distro NIC IP for Windows browsers that cannot use mirrored localhost into WSL (legacy). Prefer loopback unless this is set — OpenClaw’s Control UI rejects unknown Origins otherwise. */
 function shouldRewriteLoopbackOpenUrlForWsl(): boolean {
-  return process.env.SPAWN_WSL_OPEN_BROWSER_LAN_IP === "1";
+  return process.env.AGENTSEA_WSL_OPEN_BROWSER_LAN_IP === "1";
 }
 
 /** Open a URL in the user's browser. */
@@ -281,7 +281,7 @@ export function openBrowser(url: string): void {
     ],
   ];
 
-  /** WSL: open Windows browser; default loopback URL keeps OpenClaw allowedOrigins happy (set SPAWN_WSL_OPEN_BROWSER_LAN_IP=1 if needed). */
+  /** WSL: open Windows browser; default loopback URL keeps OpenClaw allowedOrigins happy (set AGENTSEA_WSL_OPEN_BROWSER_LAN_IP=1 if needed). */
   const wslAttempts: [
     string,
     string[],
@@ -376,7 +376,7 @@ export function openBrowser(url: string): void {
  * In non-interactive mode, always throws immediately.
  */
 export async function retryOrQuit(message: string): Promise<void> {
-  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
     throw new Error("Non-interactive mode: cannot retry");
   }
   process.stderr.write("\n");
@@ -433,7 +433,7 @@ export async function withRetry<T>(
 export function loadApiToken(cloud: string): string | null {
   return unwrapOr(
     tryCatch(() => {
-      const data = parseJsonObj(readFileSync(getSpawnCloudConfigPath(cloud), "utf-8"));
+      const data = parseJsonObj(readFileSync(getAgentseaCloudConfigPath(cloud), "utf-8"));
       if (!data) {
         return null;
       }
@@ -502,7 +502,7 @@ export function validateModelId(id: string): boolean {
   return new RegExp(`^${segment}\/${segment}$`).test(t);
 }
 
-const GRID_MODEL_OTHER = "__grid_spawn_model_other__";
+const GRID_MODEL_OTHER = "__grid_agentsea_model_other__";
 
 /**
  * Let the user choose a model from The Grid catalogue.
@@ -586,7 +586,7 @@ export function dropletNameWithUuidSuffix(baseKebabInput: string): string {
   let base =
     typeof baseKebabInput === "string" && baseKebabInput.trim().length > 0 ? toKebabCase(baseKebabInput) : "";
   if (!base.length) {
-    base = "spawn";
+    base = "agentsea";
   }
 
   const maxBase = Math.max(1, 63 - 1 - uuid.length);
@@ -595,7 +595,7 @@ export function dropletNameWithUuidSuffix(baseKebabInput: string): string {
     base = base.slice(0, maxBase).replace(/-+$/u, "");
   }
   if (!base.length) {
-    base = "spawn";
+    base = "agentsea";
   }
 
   const candidate = `${base}-${uuid}`;
@@ -610,13 +610,13 @@ export function dropletNameWithUuidSuffix(baseKebabInput: string): string {
   return uuid.length >= 3 && uuid.length <= 63 && validateServerName(uuid) ? uuid : `s-${uuid.slice(0, 60)}`;
 }
 
-/** Generate a default spawn name (`spawn-<uuid>`). */
-export function defaultSpawnName(): string {
-  return dropletNameWithUuidSuffix("spawn");
+/** Generate a default agentsea name (`agentsea-<uuid>`). */
+export function defaultAgentseaName(): string {
+  return dropletNameWithUuidSuffix("agentsea");
 }
 
 /**
- * Get server name from a cloud-specific env var, falling back to SPAWN_NAME_KEBAB / defaultSpawnName.
+ * Get server name from a cloud-specific env var, falling back to AGENTSEA_NAME_KEBAB / defaultAgentseaName.
  * Every cloud module had an identical copy of this logic — now unified here.
  */
 export function getServerNameFromEnv(cloudEnvVar: string): string {
@@ -626,41 +626,41 @@ export function getServerNameFromEnv(cloudEnvVar: string): string {
       logError(`Invalid ${cloudEnvVar}: '${cloudName}'`);
       throw new Error("Invalid server name");
     }
-    if (isSpawnVerbose()) {
+    if (isAgentseaVerbose()) {
       logInfo(`Using server name from environment: ${cloudName}`);
     }
     return cloudName;
   }
 
-  const kebab = process.env.SPAWN_NAME_KEBAB || (process.env.SPAWN_NAME ? toKebabCase(process.env.SPAWN_NAME) : "");
-  return kebab || defaultSpawnName();
+  const kebab = process.env.AGENTSEA_NAME_KEBAB || (process.env.AGENTSEA_NAME ? toKebabCase(process.env.AGENTSEA_NAME) : "");
+  return kebab || defaultAgentseaName();
 }
 
 /**
- * Prompt user for a spawn name (or derive it non-interactively).
+ * Prompt user for a agentsea name (or derive it non-interactively).
  * Every cloud module had an identical copy of this logic — now unified here.
  *
  * @param cloudLabel - Display label for the prompt (e.g. "AWS instance", "Hetzner server")
  */
-export async function promptSpawnNameShared(cloudLabel: string): Promise<void> {
-  if (process.env.SPAWN_NAME_KEBAB) {
+export async function promptAgentseaNameShared(cloudLabel: string): Promise<void> {
+  if (process.env.AGENTSEA_NAME_KEBAB) {
     return;
   }
 
   let kebab: string;
-  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
-    kebab = (process.env.SPAWN_NAME ? toKebabCase(process.env.SPAWN_NAME) : "") || defaultSpawnName();
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
+    kebab = (process.env.AGENTSEA_NAME ? toKebabCase(process.env.AGENTSEA_NAME) : "") || defaultAgentseaName();
   } else {
-    const derived = process.env.SPAWN_NAME ? toKebabCase(process.env.SPAWN_NAME) : "";
-    const fallback = derived || defaultSpawnName();
+    const derived = process.env.AGENTSEA_NAME ? toKebabCase(process.env.AGENTSEA_NAME) : "";
+    const fallback = derived || defaultAgentseaName();
     process.stderr.write("\n");
     const answer = await prompt(`${cloudLabel} name [${fallback}]: `);
-    kebab = toKebabCase(answer || fallback) || defaultSpawnName();
+    kebab = toKebabCase(answer || fallback) || defaultAgentseaName();
   }
 
-  process.env.SPAWN_NAME_DISPLAY = kebab;
-  process.env.SPAWN_NAME_KEBAB = kebab;
-  if (isSpawnVerbose()) {
+  process.env.AGENTSEA_NAME_DISPLAY = kebab;
+  process.env.AGENTSEA_NAME_KEBAB = kebab;
+  if (isAgentseaVerbose()) {
     logInfo(`Using resource name: ${kebab}`);
   }
 }
@@ -712,7 +712,7 @@ export function prepareStdinForHandoff(): void {
 
   // Stop the stream from reading, but do NOT destroy it (that can close fd 0).
   // Do NOT call unref() here — it allows the event loop to exit before an
-  // async child process (spawnBash) finishes. The spawnInteractive path uses
+  // async child process (agentseaBash) finishes. The agentseaInteractive path uses
   // spawnSync so the event loop is already blocked.
   process.stdin.pause();
 }

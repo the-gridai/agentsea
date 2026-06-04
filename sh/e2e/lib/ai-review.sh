@@ -81,7 +81,7 @@ $(tail -200 "${stdout_file}" 2>/dev/null || true)
   log_step "AI reviewing ${agent} logs..."
 
   # Build the prompt
-  local system_prompt='You are a QA engineer reviewing deployment logs from an automated E2E test of "spawn" — a tool that provisions cloud VMs and installs AI coding agents.
+  local system_prompt='You are a QA engineer reviewing deployment logs from an automated E2E test of "agentsea" — a tool that provisions cloud VMs and installs AI coding agents.
 
 Your job: find issues that passed the binary tests but indicate degraded or broken behavior. Focus on:
 - HTTP errors (404, 500, timeouts) even if the step was marked non-fatal

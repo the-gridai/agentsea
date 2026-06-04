@@ -8,7 +8,7 @@ import { resolveAgent } from "./agents.js";
 import { setupAutoUpdateSessionForSandbox } from "./daytona.js";
 
 /**
- * Re-arm Daytona auto-update when the saved record says it was enabled at spawn time.
+ * Re-arm Daytona auto-update when the saved record says it was enabled at agentsea time.
  */
 export async function ensureDaytonaAutoUpdate(connection: VMConnection, agentKey: string): Promise<void> {
   if (connection.cloud !== "daytona") {

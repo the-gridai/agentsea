@@ -18,9 +18,9 @@ export const E2E_AGENT_SLUGS = [
 
 export type E2eAgentSlug = (typeof E2E_AGENT_SLUGS)[number];
 
-/** Comma/space-separated override via GRIDSPAWN_E2E_AGENTS; default = all slugs. */
+/** Comma/space-separated override via GRIDAGENTSEA_E2E_AGENTS; default = all slugs. */
 export function e2eAgentListFromEnv(): string[] {
-  const raw = process.env.GRIDSPAWN_E2E_AGENTS?.trim();
+  const raw = process.env.GRIDAGENTSEA_E2E_AGENTS?.trim();
   if (!raw) return [...E2E_AGENT_SLUGS];
   return raw.split(/[\s,]+/).filter(Boolean);
 }
@@ -35,10 +35,10 @@ export function digitalOceanToken(): string | undefined {
 }
 
 export function canRunDigitalOceanE2e(e2eScriptPath: string): { ok: boolean; reason: string } {
-  if (process.env.GRIDSPAWN_RUN_DO_E2E !== "1") {
+  if (process.env.GRIDAGENTSEA_RUN_DO_E2E !== "1") {
     return {
       ok: false,
-      reason: "Set GRIDSPAWN_RUN_DO_E2E=1 to provision real DigitalOcean VMs and run sh/e2e/e2e.sh.",
+      reason: "Set GRIDAGENTSEA_RUN_DO_E2E=1 to provision real DigitalOcean VMs and run sh/e2e/e2e.sh.",
     };
   }
   if (!process.env.THEGRID_API_KEY?.trim()) {

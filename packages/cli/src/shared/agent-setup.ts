@@ -14,7 +14,7 @@ import { setupT3Settings, T3_LAUNCH_CMD } from "./t3-config.js";
 import { getTmpDir } from "./paths.js";
 import { asyncTryCatch, asyncTryCatchIf, isOperationalError, tryCatchIf } from "./result.js";
 import { validateRemotePath } from "./ssh.js";
-import { isSpawnVerbose } from "./verbosity.js";
+import { isAgentseaVerbose } from "./verbosity.js";
 import {
   Err,
   jsonEscape,
@@ -39,8 +39,8 @@ import {
   VENDOR_KILO_PROVIDER_TYPE_VALUE,
 } from "./vendor-routing.js";
 
-/** Optional `THEGRID_API_URL=…` for ~/.spawnrc when a local override is active. */
-function spawnrcGridInferenceExtras(): string[] {
+/** Optional `THEGRID_API_URL=…` for ~/.agentsearc when a local override is active. */
+function agentsearcGridInferenceExtras(): string[] {
   const line = gridInferenceOverrideEnvLine();
   return line ? [line] : [];
 }
@@ -315,7 +315,7 @@ async function installAgent(
   installCmd: string,
   timeoutSecs?: number,
 ): Promise<void> {
-  if (isSpawnVerbose()) {
+  if (isAgentseaVerbose()) {
     logStep(`Installing ${agentName}...`);
   } else {
     logAlwaysStep(`Installing ${agentName}…`);
@@ -336,7 +336,7 @@ async function installAgent(
 export async function uploadConfigFile(runner: CloudRunner, content: string, remotePath: string): Promise<void> {
   const safePath = validateRemotePath(remotePath);
 
-  const tmpFile = join(getTmpDir(), `spawn_config_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+  const tmpFile = join(getTmpDir(), `agentsea_config_${Date.now()}_${Math.random().toString(36).slice(2)}`);
   writeFileSync(tmpFile, content, {
     mode: 0o600,
   });
@@ -347,7 +347,7 @@ export async function uploadConfigFile(runner: CloudRunner, content: string, rem
       () =>
         wrapSshCall(
           (async () => {
-            const tempRemote = `/tmp/spawn_config_${Date.now()}`;
+            const tempRemote = `/tmp/agentsea_config_${Date.now()}`;
             await runner.uploadFile(tmpFile, tempRemote);
             await runner.runServer(
               `mkdir -p $(dirname "${safePath}") && chmod 600 ${shellQuote(tempRemote)} && mv ${shellQuote(tempRemote)} "${safePath}"`,
@@ -376,7 +376,7 @@ async function installClaudeCode(runner: CloudRunner): Promise<void> {
 
   const script = [
     `export PATH="${claudePath}:$PATH"`,
-    `if [ -f ~/.bash_profile ] && grep -q 'spawn:env\\|Claude Code PATH\\|spawn:path' ~/.bash_profile 2>/dev/null; then rm -f ~/.bash_profile; fi`,
+    `if [ -f ~/.bash_profile ] && grep -q 'agentsea:env\\|Claude Code PATH\\|agentsea:path' ~/.bash_profile 2>/dev/null; then rm -f ~/.bash_profile; fi`,
     `if command -v claude >/dev/null 2>&1; then ${finalize}; exit 0; fi`,
     `echo "==> Installing Claude Code (method 1/2: curl installer)..."`,
     "curl --proto '=https' -fsSL https://claude.ai/install.sh | bash >/dev/null 2>&1 || true",
@@ -517,7 +517,7 @@ async function detectGithubAuth(): Promise<void> {
 }
 
 export async function offerGithubAuth(runner: CloudRunner, explicitlyRequested?: boolean): Promise<void> {
-  if (process.env.SPAWN_SKIP_GITHUB_AUTH) {
+  if (process.env.AGENTSEA_SKIP_GITHUB_AUTH) {
     return;
   }
   if (!githubAuthRequested && !explicitlyRequested) {
@@ -532,8 +532,8 @@ export async function offerGithubAuth(runner: CloudRunner, explicitlyRequested?:
   // heredocs are not valid inside single-quoted `bash -c '...'` strings.
   let remoteTokenPath = "";
   if (githubToken) {
-    const localTmpFile = join(getTmpDir(), `spawn_gh_token_${Date.now()}_${Math.random().toString(36).slice(2)}`);
-    remoteTokenPath = `/tmp/spawn_gh_token_${Date.now()}`;
+    const localTmpFile = join(getTmpDir(), `agentsea_gh_token_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+    remoteTokenPath = `/tmp/agentsea_gh_token_${Date.now()}`;
     writeFileSync(localTmpFile, githubToken, {
       mode: 0o600,
     });
@@ -658,7 +658,7 @@ async function startCodexLiteLlmProxy(runner: CloudRunner): Promise<void> {
 
   const wrapperScript = [
     "#!/bin/bash",
-    'source "$HOME/.spawnrc" 2>/dev/null',
+    'source "$HOME/.agentsearc" 2>/dev/null',
     'export PATH="$HOME/.local/bin:$HOME/.litellm-venv/bin:$PATH"',
     'export PYTHONPATH="$HOME/.codex"',
     "export THEGRID_API_KEY",
@@ -691,9 +691,9 @@ async function startCodexLiteLlmProxy(runner: CloudRunner): Promise<void> {
   const unitB64 = Buffer.from(unitFile).toString("base64");
 
   const checkLines = [
-    "source ~/.spawnrc 2>/dev/null",
+    "source ~/.agentsearc 2>/dev/null",
     'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.litellm-venv/bin:$PATH"',
-    'test -n "$THEGRID_API_KEY" || { echo "THEGRID_API_KEY missing from ~/.spawnrc" >&2; exit 1; }',
+    'test -n "$THEGRID_API_KEY" || { echo "THEGRID_API_KEY missing from ~/.agentsearc" >&2; exit 1; }',
     'export THEGRID_API_KEY',
     'test -s "$HOME/.codex/litellm.yaml" || { echo "Missing ~/.codex/litellm.yaml" >&2; exit 1; }',
   ];
@@ -803,7 +803,7 @@ async function waitForOpenclawBootstrap(runner: CloudRunner): Promise<void> {
   logStep("Waiting for OpenClaw bootstrap to complete...");
 
   const pollScript = [
-    "source ~/.spawnrc 2>/dev/null",
+    "source ~/.agentsearc 2>/dev/null",
     "export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH",
     "_start=$(date +%s)",
     "while true; do",
@@ -886,10 +886,10 @@ async function mergeOpenClawGridInferenceProvider(
     "import fs from 'fs';",
     `const apiKeyPlain = ${apiKeyLit};`,
     `const infer = ${inferLit};`,
-    "const providerId = process.env.SPAWN_GRID_PROVIDER_ID || 'thegrid';",
-    "const slug = process.env.SPAWN_GRID_CATALOG_MODEL;",
-    "const ocPrimary = process.env.SPAWN_GRID_PRIMARY;",
-    "if (!slug || !ocPrimary) { console.error('spawn grid-merge: missing env'); process.exit(1); }",
+    "const providerId = process.env.AGENTSEA_GRID_PROVIDER_ID || 'thegrid';",
+    "const slug = process.env.AGENTSEA_GRID_CATALOG_MODEL;",
+    "const ocPrimary = process.env.AGENTSEA_GRID_PRIMARY;",
+    "if (!slug || !ocPrimary) { console.error('agentsea grid-merge: missing env'); process.exit(1); }",
     "const cfgPath = (process.env.HOME ?? '') + '/.openclaw/openclaw.json';",
     "const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));",
     "cfg.env ||= {};",
@@ -908,13 +908,13 @@ async function mergeOpenClawGridInferenceProvider(
     "fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2)); fs.chmodSync(cfgPath, 0o600);",
   ].join(" ");
 
-  const qb = !isSpawnVerbose() ? " 2>/dev/null" : "";
+  const qb = !isAgentseaVerbose() ? " 2>/dev/null" : "";
   const merged = await asyncTryCatchIf(isOperationalError, () =>
     runner.runServer(
-      "source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
-        `export SPAWN_GRID_CATALOG_MODEL=${shellQuote(catalogModelId)}; ` +
-        `export SPAWN_GRID_PRIMARY=${shellQuote(ocPrimary)}; ` +
-        `export SPAWN_GRID_PROVIDER_ID=${shellQuote(OPENCLAW_GRID_PROVIDER_ID)}; ` +
+      "source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
+        `export AGENTSEA_GRID_CATALOG_MODEL=${shellQuote(catalogModelId)}; ` +
+        `export AGENTSEA_GRID_PRIMARY=${shellQuote(ocPrimary)}; ` +
+        `export AGENTSEA_GRID_PROVIDER_ID=${shellQuote(OPENCLAW_GRID_PROVIDER_ID)}; ` +
         `bun -e ${shellQuote(mergeScript)}${qb}`,
     ),
   );
@@ -949,7 +949,7 @@ async function setupOpenclawConfig(
   let telegramBotToken = "";
   if (enabledSteps?.has("telegram")) {
     logStep("Setting up Telegram...");
-    const envToken = process.env.TELEGRAM_BOT_TOKEN ?? process.env.SPAWN_TELEGRAM_BOT_TOKEN ?? "";
+    const envToken = process.env.TELEGRAM_BOT_TOKEN ?? process.env.AGENTSEA_TELEGRAM_BOT_TOKEN ?? "";
     if (!envToken) {
       logInfo("To get a bot token:");
       logInfo("  1. Open Telegram and search for @BotFather");
@@ -969,7 +969,7 @@ async function setupOpenclawConfig(
   // Use messages-beta (not api.thegrid.ai) so OpenClaw's SSRF guard never follows api → synapse redirects.
   // mergeOpenClawGridInferenceProvider then replaces any onboard provider stubs with models.providers.thegrid only.
   const onboardCmd =
-    "source ~/.spawnrc 2>/dev/null; " +
+    "source ~/.agentsearc 2>/dev/null; " +
     "export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
     "openclaw onboard --non-interactive " +
     "--auth-choice custom-api-key " +
@@ -982,13 +982,13 @@ async function setupOpenclawConfig(
     `--gateway-token ${shellQuote(gatewayToken)} ` +
     "--skip-health " +
     "--accept-risk";
-  const onboardQuietTail = !isSpawnVerbose() ? "> /tmp/openclaw-onboard.log 2>&1" : "";
+  const onboardQuietTail = !isAgentseaVerbose() ? "> /tmp/openclaw-onboard.log 2>&1" : "";
   const onboardResult = await asyncTryCatchIf(isOperationalError, () =>
     runner.runServer(onboardQuietTail ? `${onboardCmd} ${onboardQuietTail}` : onboardCmd, 120),
   );
   if (!onboardResult.ok) {
     logWarn("openclaw onboard failed — falling back to manual config");
-    if (!isSpawnVerbose()) {
+    if (!isAgentseaVerbose()) {
       logAlwaysStep("Tip: on the droplet, run `tail -80 /tmp/openclaw-onboard.log` for full OpenClaw setup output.");
     }
     const ocPrimary = openClawGridPrimaryModel(catalogModelId);
@@ -1056,7 +1056,7 @@ async function setupOpenclawConfig(
   //
   // Each individual config set is chained with `;` (not `&&`) so a failure
   // in one doesn't skip the rest — these are all non-fatal preferences.
-  const q = !isSpawnVerbose();
+  const q = !isAgentseaVerbose();
   const ocSfx = q ? " >/dev/null 2>&1" : "";
   const configCmds = [
     // Model primary + `models.providers.thegrid` are merged above (avoid `openrouter/*` → builtin OpenRouter auth).
@@ -1085,7 +1085,7 @@ async function setupOpenclawConfig(
 
   const batchResult = await asyncTryCatchIf(isOperationalError, () =>
     runner.runServer(
-      "source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
+      "source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
         configCmds.join("; "),
     ),
   );
@@ -1108,7 +1108,7 @@ async function setupOpenclawConfig(
   const quietBun = q ? " 2>/dev/null" : "";
   const controlUiMergeResult = await asyncTryCatchIf(isOperationalError, () =>
     runner.runServer(
-      "source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
+      "source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
         `bun -e ${shellQuote(controlUiMerge)}${quietBun}`,
     ),
   );
@@ -1144,7 +1144,7 @@ async function setupOpenclawConfig(
     ].join(" ");
     const telegramResult = await asyncTryCatchIf(isOperationalError, () =>
       runner.runServer(
-        "source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
+        "source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
           `export TELEGRAM_CONFIG=${shellQuote(telegramConfig)}; ` +
           `bun -e ${shellQuote(mergeScript)}${quietBun}`,
       ),
@@ -1211,7 +1211,7 @@ export async function startGateway(runner: CloudRunner): Promise<void> {
 
   const wrapperScript = [
     "#!/bin/bash",
-    'source "$HOME/.spawnrc" 2>/dev/null',
+    'source "$HOME/.agentsearc" 2>/dev/null',
     'export PATH="$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH"',
     "while true; do",
     "  openclaw gateway",
@@ -1253,7 +1253,7 @@ export async function startGateway(runner: CloudRunner): Promise<void> {
   }
 
   const script = [
-    "source ~/.spawnrc 2>/dev/null",
+    "source ~/.agentsearc 2>/dev/null",
     "export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH",
     "printf '%s' '" + wrapperB64 + "' | base64 -d > /tmp/openclaw-gateway-wrapper.tmp",
     "chmod +x /tmp/openclaw-gateway-wrapper.tmp",
@@ -1292,7 +1292,7 @@ export async function startGateway(runner: CloudRunner): Promise<void> {
 // ─── Hermes Web Dashboard ────────────────────────────────────────────────────
 
 /**
- * Hermes v0.14+ reads model/provider from ~/.hermes/config.yaml (not ~/.spawnrc OPENAI_*).
+ * Hermes v0.14+ reads model/provider from ~/.hermes/config.yaml (not ~/.agentsearc OPENAI_*).
  * Without this, install defaults to provider:auto → OpenRouter + claude-opus-4.6.
  */
 async function setupHermesConfig(runner: CloudRunner, apiKey: string, modelId?: string): Promise<void> {
@@ -1474,7 +1474,7 @@ async function startHermesLiteLlmProxy(runner: CloudRunner): Promise<void> {
 
   const wrapperScript = [
     "#!/bin/bash",
-    'source "$HOME/.spawnrc" 2>/dev/null',
+    'source "$HOME/.agentsearc" 2>/dev/null',
     'export PATH="$HOME/.local/bin:$HOME/.litellm-venv/bin:$PATH"',
     "export THEGRID_API_KEY",
     `exec "$HOME/.litellm-venv/bin/litellm" --config "$HOME/.hermes/litellm.yaml" --host 127.0.0.1 --port ${HERMES_LITELLM_PORT}`,
@@ -1506,9 +1506,9 @@ async function startHermesLiteLlmProxy(runner: CloudRunner): Promise<void> {
   const unitB64 = Buffer.from(unitFile).toString("base64");
 
   const checkLines = [
-    "source ~/.spawnrc 2>/dev/null",
+    "source ~/.agentsearc 2>/dev/null",
     'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.litellm-venv/bin:$PATH"',
-    'test -n "$THEGRID_API_KEY" || { echo "THEGRID_API_KEY missing from ~/.spawnrc" >&2; exit 1; }',
+    'test -n "$THEGRID_API_KEY" || { echo "THEGRID_API_KEY missing from ~/.agentsearc" >&2; exit 1; }',
     "export THEGRID_API_KEY",
     'test -s "$HOME/.hermes/litellm.yaml" || { echo "Missing ~/.hermes/litellm.yaml" >&2; exit 1; }',
   ];
@@ -1585,7 +1585,7 @@ async function startHermesLiteLlmProxy(runner: CloudRunner): Promise<void> {
  * Start the Hermes Agent web dashboard as a session-scoped background process.
  *
  * Unlike OpenClaw's gateway (long-running, supervised by systemd), the Hermes
- * dashboard only needs to live for the duration of the spawn session — the
+ * dashboard only needs to live for the duration of the agentsea session — the
  * user's TUI in the foreground, dashboard reachable via SSH tunnel in the
  * background. A simple setsid/nohup launch is sufficient; no systemd unit.
  *
@@ -1608,11 +1608,11 @@ export async function startHermesDashboard(runner: CloudRunner): Promise<void> {
   const hermesPath = 'export PATH="$HOME/.local/bin:$HOME/.hermes/hermes-agent/venv/bin:$PATH"';
 
   const script = [
-    "source ~/.spawnrc 2>/dev/null",
+    "source ~/.agentsearc 2>/dev/null",
     hermesPath,
     `if ${portCheck}; then echo "Hermes dashboard already running on :9119"; exit 0; fi`,
     "_hermes_bin=$(command -v hermes) || { echo 'hermes not found in PATH' >&2; exit 1; }",
-    // --no-open: we're on a remote VM, don't try to spawn a browser there.
+    // --no-open: we're on a remote VM, don't try to agentsea a browser there.
     // --host 127.0.0.1: loopback-only; the SSH tunnel is how the user reaches it.
     "if command -v setsid >/dev/null 2>&1; then",
     '  setsid "$_hermes_bin" dashboard --port 9119 --host 127.0.0.1 --no-open > /tmp/hermes-dashboard.log 2>&1 < /dev/null &',
@@ -1796,8 +1796,8 @@ export async function setupAutoUpdate(runner: CloudRunner, agentName: string, up
   const wrapperScript = [
     "#!/bin/bash",
     "set -eo pipefail",
-    'LOGFILE="/var/log/spawn-auto-update.log"',
-    'LOCKFILE="/var/lock/spawn-auto-update.lock"',
+    'LOGFILE="/var/log/agentsea-auto-update.log"',
+    'LOCKFILE="/var/lock/agentsea-auto-update.lock"',
     "",
     'log() { printf "[%s] %s\\n" "$(date -u +\'%Y-%m-%dT%H:%M:%SZ\')" "$*" >> "$LOGFILE"; }',
     "",
@@ -1808,7 +1808,7 @@ export async function setupAutoUpdate(runner: CloudRunner, agentName: string, up
     "  exit 0",
     "fi",
     "",
-    '[ -f "$HOME/.spawnrc" ] && source "$HOME/.spawnrc" 2>/dev/null',
+    '[ -f "$HOME/.agentsearc" ] && source "$HOME/.agentsearc" 2>/dev/null',
     'export PATH="$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.claude/local/bin:$PATH"',
     "",
     "# ── Phase 1: System package updates ──",
@@ -1821,7 +1821,7 @@ export async function setupAutoUpdate(runner: CloudRunner, agentName: string, up
     "  # We handle all updates here — running both causes lock conflicts.",
     "  if $_sudo_sys systemctl is-active --quiet unattended-upgrades 2>/dev/null; then",
     "    $_sudo_sys systemctl disable --now unattended-upgrades 2>/dev/null || true",
-    '    log "Disabled unattended-upgrades (spawn handles updates)"',
+    '    log "Disabled unattended-upgrades (agentsea handles updates)"',
     "  fi",
     "  # Wait up to 5 min for any in-progress dpkg/apt operation to finish",
     '  $_sudo_sys flock -w 300 /var/lib/dpkg/lock-frontend apt-get update -qq >> "$LOGFILE" 2>&1 || log "apt-get update failed (non-fatal)"',
@@ -1845,13 +1845,13 @@ export async function setupAutoUpdate(runner: CloudRunner, agentName: string, up
   // __USER__ and __HOME__ are sed-substituted at deploy time
   const unitFile = [
     "[Unit]",
-    `Description=Spawn auto-update for ${agentName}`,
+    `Description=Agentsea auto-update for ${agentName}`,
     "After=network-online.target",
     "Wants=network-online.target",
     "",
     "[Service]",
     "Type=oneshot",
-    "ExecStart=/usr/local/bin/spawn-auto-update",
+    "ExecStart=/usr/local/bin/agentsea-auto-update",
     "User=__USER__",
     "Environment=HOME=__HOME__",
     "TimeoutStartSec=1800",
@@ -1862,7 +1862,7 @@ export async function setupAutoUpdate(runner: CloudRunner, agentName: string, up
 
   const timerFile = [
     "[Unit]",
-    `Description=Run spawn auto-update for ${agentName} every 6 hours`,
+    `Description=Run agentsea auto-update for ${agentName} every 6 hours`,
     "",
     "[Timer]",
     "OnBootSec=15min",
@@ -1895,15 +1895,15 @@ export async function setupAutoUpdate(runner: CloudRunner, agentName: string, up
     "if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then exit 0; fi",
     '_sudo=""',
     '[ "$(id -u)" != "0" ] && _sudo="sudo"',
-    "printf '%s' '" + wrapperB64 + "' | base64 -d | $_sudo tee /usr/local/bin/spawn-auto-update > /dev/null",
-    "$_sudo chmod +x /usr/local/bin/spawn-auto-update",
-    "printf '%s' '" + unitB64 + "' | base64 -d > /tmp/spawn-auto-update.service.tmp",
-    'sed -i "s|__USER__|$(whoami)|;s|__HOME__|$HOME|" /tmp/spawn-auto-update.service.tmp',
-    "$_sudo mv /tmp/spawn-auto-update.service.tmp /etc/systemd/system/spawn-auto-update.service",
-    "printf '%s' '" + timerB64 + "' | base64 -d | $_sudo tee /etc/systemd/system/spawn-auto-update.timer > /dev/null",
+    "printf '%s' '" + wrapperB64 + "' | base64 -d | $_sudo tee /usr/local/bin/agentsea-auto-update > /dev/null",
+    "$_sudo chmod +x /usr/local/bin/agentsea-auto-update",
+    "printf '%s' '" + unitB64 + "' | base64 -d > /tmp/agentsea-auto-update.service.tmp",
+    'sed -i "s|__USER__|$(whoami)|;s|__HOME__|$HOME|" /tmp/agentsea-auto-update.service.tmp',
+    "$_sudo mv /tmp/agentsea-auto-update.service.tmp /etc/systemd/system/agentsea-auto-update.service",
+    "printf '%s' '" + timerB64 + "' | base64 -d | $_sudo tee /etc/systemd/system/agentsea-auto-update.timer > /dev/null",
     "$_sudo systemctl daemon-reload",
-    "$_sudo systemctl enable spawn-auto-update.timer 2>/dev/null",
-    "$_sudo systemctl start spawn-auto-update.timer",
+    "$_sudo systemctl enable agentsea-auto-update.timer 2>/dev/null",
+    "$_sudo systemctl start agentsea-auto-update.timer",
   ].join("\n");
 
   const result = await asyncTryCatch(() => runner.runServer(script));
@@ -1920,7 +1920,7 @@ export async function setupAutoUpdate(runner: CloudRunner, agentName: string, up
  * Install a cron job that runs basic security heuristics every 6 hours.
  * Checks: SSH authorized_keys anomalies, failed login attempts, unexpected
  * packages, and suspicious processes. Findings are written to
- * /var/log/spawn-security-scan.log so they can be displayed on reconnect.
+ * /var/log/agentsea-security-scan.log so they can be displayed on reconnect.
  *
  * Skipped for local cloud and non-cron systems.
  */
@@ -1930,8 +1930,8 @@ export async function setupSecurityScan(runner: CloudRunner): Promise<void> {
   const scanScript = [
     "#!/bin/bash",
     "set -eo pipefail",
-    'LOGFILE="/var/log/spawn-security-scan.log"',
-    'ALERTFILE="/var/log/spawn-security-alerts.log"',
+    'LOGFILE="/var/log/agentsea-security-scan.log"',
+    'ALERTFILE="/var/log/agentsea-security-alerts.log"',
     "",
     "# Truncate alerts file each run — only latest findings matter",
     '> "$ALERTFILE"',
@@ -1942,7 +1942,7 @@ export async function setupSecurityScan(runner: CloudRunner): Promise<void> {
     'log "Security scan started"',
     "",
     "# ── Check 1: SSH authorized_keys ──",
-    "# Count keys across all users. Spawn injects exactly one key at provision time.",
+    "# Count keys across all users. Agentsea injects exactly one key at provision time.",
     "# Multiple keys or keys from unexpected sources are suspicious.",
     "_total_keys=0",
     "_key_alerts=0",
@@ -1984,7 +1984,7 @@ export async function setupSecurityScan(runner: CloudRunner): Promise<void> {
     'log "Auth check done: $_fail_count failed attempts"',
     "",
     "# ── Check 3: Unexpected software ──",
-    "# Flag known attack tools or unexpected daemons that spawn never installs.",
+    "# Flag known attack tools or unexpected daemons that agentsea never installs.",
     '_suspicious_bins="nmap masscan hydra john hashcat ettercap aircrack-ng metasploit msfconsole msfvenom netcat ncat socat cryptominer xmrig minerd cgminer"',
     "_found_suspicious=0",
     "for _bin in $_suspicious_bins; do",
@@ -2018,14 +2018,14 @@ export async function setupSecurityScan(runner: CloudRunner): Promise<void> {
     "fi",
     "",
     "# ── Check 5: Unexpected cron jobs ──",
-    "# Look for cron entries not installed by spawn.",
+    "# Look for cron entries not installed by agentsea.",
     "_cron_alerts=0",
     "for _user in $(cut -d: -f1 /etc/passwd 2>/dev/null); do",
     '  _cron=$(crontab -l -u "$_user" 2>/dev/null || true)',
     '  if [ -n "$_cron" ]; then',
-    '    _non_spawn=$(echo "$_cron" | grep -v "^#" | grep -v "spawn\\|openclaw-gateway" || true)',
-    '    if [ -n "$_non_spawn" ]; then',
-    '      _count=$(echo "$_non_spawn" | wc -l | tr -d " ")',
+    '    _non_agentsea=$(echo "$_cron" | grep -v "^#" | grep -v "agentsea\\|openclaw-gateway" || true)',
+    '    if [ -n "$_non_agentsea" ]; then',
+    '      _count=$(echo "$_non_agentsea" | wc -l | tr -d " ")',
     '      if [ "$_count" -gt 0 ]; then',
     '        alert "CRON: $_count unexpected cron entries for user $_user"',
     "        _cron_alerts=$((_cron_alerts + 1))",
@@ -2055,20 +2055,20 @@ export async function setupSecurityScan(runner: CloudRunner): Promise<void> {
     throw new Error("Unexpected characters in base64 output");
   }
 
-  const cronLine = "0 */6 * * * /usr/local/bin/spawn-security-scan >> /var/log/spawn-security-scan.log 2>&1";
+  const cronLine = "0 */6 * * * /usr/local/bin/agentsea-security-scan >> /var/log/agentsea-security-scan.log 2>&1";
 
   const installScript = [
     "if ! command -v crontab >/dev/null 2>&1; then exit 0; fi",
     '_sudo=""',
     '[ "$(id -u)" != "0" ] && _sudo="sudo"',
-    "printf '%s' '" + scanB64 + "' | base64 -d | $_sudo tee /usr/local/bin/spawn-security-scan > /dev/null",
-    "$_sudo chmod +x /usr/local/bin/spawn-security-scan",
-    "$_sudo touch /var/log/spawn-security-scan.log /var/log/spawn-security-alerts.log",
-    "$_sudo chmod 644 /var/log/spawn-security-scan.log /var/log/spawn-security-alerts.log",
+    "printf '%s' '" + scanB64 + "' | base64 -d | $_sudo tee /usr/local/bin/agentsea-security-scan > /dev/null",
+    "$_sudo chmod +x /usr/local/bin/agentsea-security-scan",
+    "$_sudo touch /var/log/agentsea-security-scan.log /var/log/agentsea-security-alerts.log",
+    "$_sudo chmod 644 /var/log/agentsea-security-scan.log /var/log/agentsea-security-alerts.log",
     // Add cron entry if not already present
-    `(crontab -l 2>/dev/null | grep -v spawn-security-scan; echo "${cronLine}") | crontab - 2>/dev/null || true`,
+    `(crontab -l 2>/dev/null | grep -v agentsea-security-scan; echo "${cronLine}") | crontab - 2>/dev/null || true`,
     // Run the first scan immediately
-    "/usr/local/bin/spawn-security-scan 2>/dev/null || true",
+    "/usr/local/bin/agentsea-security-scan 2>/dev/null || true",
   ].join("\n");
 
   const result = await asyncTryCatch(() => runner.runServer(installScript));
@@ -2102,9 +2102,9 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
       ],
       configure: (apiKey, modelId) => setupClaudeCodeConfig(runner, apiKey, modelId),
       launchCmd: () =>
-        'source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH; claude --model "$ANTHROPIC_MODEL"',
+        'source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH; claude --model "$ANTHROPIC_MODEL"',
       promptCmd: (prompt) =>
-        `source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH; claude --model "$ANTHROPIC_MODEL" -p --dangerously-skip-permissions ${shellQuote(prompt)}`,
+        `source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH; claude --model "$ANTHROPIC_MODEL" -p --dangerously-skip-permissions ${shellQuote(prompt)}`,
       updateCmd:
         'export PATH="$HOME/.claude/local/bin:$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.bun/bin:$HOME/.n/bin:$PATH"; ' +
         "npm install -g @anthropic-ai/claude-code@latest 2>/dev/null || " +
@@ -2124,15 +2124,15 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         ),
       envVars: (apiKey) => [
         `THEGRID_API_KEY=${apiKey}`,
-        ...spawnrcGridInferenceExtras(),
+        ...agentsearcGridInferenceExtras(),
         `OPENAI_API_KEY=${apiKey}`,
         `OPENAI_BASE_URL=${resolveGridInferenceApiBase()}`,
       ],
       configure: (_apiKey, modelId, _enabledSteps) => setupCodexConfig(runner, modelId),
       preLaunch: () => startCodexLiteLlmProxy(runner),
-      launchCmd: () => "source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; codex",
+      launchCmd: () => "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; codex",
       promptCmd: (prompt) =>
-        `source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; codex exec --sandbox danger-full-access --ask-for-approval=never ${shellQuote(prompt)} < /dev/null`,
+        `source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; codex exec --sandbox danger-full-access --ask-for-approval=never ${shellQuote(prompt)} < /dev/null`,
       updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + "npm install -g $_NPM_G_FLAGS @openai/codex@latest",
     },
 
@@ -2159,9 +2159,9 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
           setupOpenclawConfig(runner, apiKey, modelId || VENDOR_CHAT_MODEL_DEFAULT, dashboardToken, enabledSteps),
         preLaunch: () => startGateway(runner),
         launchCmd: () =>
-          "source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; openclaw tui",
+          "source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; openclaw tui",
         promptCmd: (prompt: string) =>
-          `source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; openclaw run ${shellQuote(prompt)}`,
+          `source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; openclaw run ${shellQuote(prompt)}`,
         tunnel: {
           remotePort: 18789,
           logGatewayToken: dashboardToken,
@@ -2184,9 +2184,9 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
       envVars: (apiKey) => [
         `THEGRID_API_KEY=${apiKey}`,
       ],
-      launchCmd: () => "source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; opencode",
+      launchCmd: () => "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; opencode",
       promptCmd: (prompt) =>
-        `source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; opencode --prompt ${shellQuote(prompt)}`,
+        `source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; opencode --prompt ${shellQuote(prompt)}`,
       updateCmd: openCodeInstallCmd(),
     },
 
@@ -2206,9 +2206,9 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         `KILO_PROVIDER_TYPE=${VENDOR_KILO_PROVIDER_TYPE_VALUE}`,
         `KILO_OPEN_ROUTER_API_KEY=${apiKey}`,
       ],
-      launchCmd: () => "source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; kilocode",
+      launchCmd: () => "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; kilocode",
       promptCmd: (prompt) =>
-        `source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; kilocode --prompt ${shellQuote(prompt)}`,
+        `source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; kilocode --prompt ${shellQuote(prompt)}`,
       updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + "npm install -g $_NPM_G_FLAGS @kilocode/cli@latest",
     },
 
@@ -2238,9 +2238,9 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
       configure: async (apiKey, modelId, enabledSteps) => {
         await setupHermesConfig(runner, apiKey, modelId);
         // YOLO mode is on by default (in envVars above). If the user explicitly
-        // unchecked it in setup options, remove it from .spawnrc.
+        // unchecked it in setup options, remove it from .agentsearc.
         if (enabledSteps && !enabledSteps.has("yolo-mode")) {
-          await runner.runServer("sed -i '/HERMES_YOLO_MODE/d' ~/.spawnrc");
+          await runner.runServer("sed -i '/HERMES_YOLO_MODE/d' ~/.agentsearc");
           logInfo("YOLO mode disabled — Hermes will prompt before installing tools");
         }
       },
@@ -2251,9 +2251,9 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
       preLaunchMsg:
         "Your Hermes web dashboard will open automatically — use it to configure settings, monitor sessions, and manage gateways.",
       launchCmd: () =>
-        "source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.local/bin:$HOME/.hermes/hermes-agent/venv/bin:$PATH; hermes",
+        "source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.local/bin:$HOME/.hermes/hermes-agent/venv/bin:$PATH; hermes",
       promptCmd: (prompt) =>
-        `source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.local/bin:$HOME/.hermes/hermes-agent/venv/bin:$PATH; hermes ${shellQuote(prompt)}`,
+        `source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.local/bin:$HOME/.hermes/hermes-agent/venv/bin:$PATH; hermes ${shellQuote(prompt)}`,
       tunnel: {
         remotePort: 9119,
         browserUrl: (localPort: number) => `http://localhost:${localPort}/`,
@@ -2303,9 +2303,9 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         `THEGRID_API_KEY=${apiKey}`,
       ],
       configure: (apiKey, modelId) => setupPiConfig(runner, apiKey, modelId),
-      launchCmd: () => "source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; pi",
+      launchCmd: () => "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; pi",
       promptCmd: (prompt) =>
-        `source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; pi --prompt ${shellQuote(prompt)}`,
+        `source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; pi --prompt ${shellQuote(prompt)}`,
       updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + "npm install -g $_NPM_G_FLAGS @mariozechner/pi-coding-agent@latest",
     },
 
@@ -2320,10 +2320,10 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
           "T3 Code",
           `${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} t3 @openai/codex && ${NPM_GLOBAL_PATH_PERSIST}`,
         ),
-      // T3 Code spawns Codex CLI as its primary provider; child processes inherit Grid auth via .spawnrc.
+      // T3 Code spawns Codex CLI as its primary provider; child processes inherit Grid auth via .agentsearc.
       envVars: (apiKey) => [
         `THEGRID_API_KEY=${apiKey}`,
-        ...spawnrcGridInferenceExtras(),
+        ...agentsearcGridInferenceExtras(),
         `ANTHROPIC_BASE_URL=${resolveGridAnthropicMessagesClientBase()}`,
         `ANTHROPIC_AUTH_TOKEN=${apiKey}`,
         "ANTHROPIC_API_KEY=",
@@ -2363,9 +2363,9 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
       configure: (_apiKey, modelId) => setupCursorProxy(runner, modelId),
       preLaunch: () => startCursorProxy(runner),
       launchCmd: () =>
-        'source ~/.spawnrc 2>/dev/null; export PATH="$HOME/.local/bin:$PATH"; agent --endpoint https://api2.cursor.sh',
+        'source ~/.agentsearc 2>/dev/null; export PATH="$HOME/.local/bin:$PATH"; agent --endpoint https://api2.cursor.sh',
       promptCmd: (prompt) =>
-        `source ~/.spawnrc 2>/dev/null; export PATH="$HOME/.local/bin:$PATH"; agent --endpoint https://api2.cursor.sh --prompt ${shellQuote(prompt)}`,
+        `source ~/.agentsearc 2>/dev/null; export PATH="$HOME/.local/bin:$PATH"; agent --endpoint https://api2.cursor.sh --prompt ${shellQuote(prompt)}`,
       updateCmd: 'export PATH="$HOME/.local/bin:$PATH"; agent update',
     },
   };

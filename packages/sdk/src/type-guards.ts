@@ -1,4 +1,4 @@
-/** Runtime type guards (mirrors historic spawn-shared package layout). */
+/** Runtime type guards (mirrors historic agentsea-shared package layout). */
 
 /** Extract union of all values from a const object or readonly tuple. */
 export type ValueOf<T> = T extends readonly (infer U)[] ? U : T[keyof T];

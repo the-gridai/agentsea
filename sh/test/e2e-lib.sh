@@ -206,7 +206,7 @@ assert_eq "INSTALL_WAIT default" "600" "${INSTALL_WAIT}"
 assert_eq "INPUT_TEST_TIMEOUT default" "120" "${INPUT_TEST_TIMEOUT}"
 assert_eq "AGENT_TIMEOUT default" "1800" "${AGENT_TIMEOUT}"
 
-# Test that non-numeric values get reset to defaults (spawn a subshell)
+# Test that non-numeric values get reset to defaults (agentsea a subshell)
 result=$(INPUT_TEST_TIMEOUT="DROP TABLE;" bash -c 'source "'"${REPO_ROOT}"'/sh/e2e/lib/common.sh" && printf "%s" "${INPUT_TEST_TIMEOUT}"' 2>/dev/null)
 assert_eq "INPUT_TEST_TIMEOUT injection reset" "120" "${result}"
 

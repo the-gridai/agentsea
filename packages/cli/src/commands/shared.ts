@@ -10,7 +10,7 @@ import { agentKeys, cloudKeys, isStaleCache, loadManifest, matrixStatus } from "
 import { validateIdentifier, validatePrompt } from "../security.js";
 import { hasSavedTheGridKey } from "../shared/oauth.js";
 import { PkgVersionSchema, parseJsonObj } from "../shared/parse.js";
-import { getSpawnCloudConfigPath } from "../shared/paths.js";
+import { getAgentseaCloudConfigPath } from "../shared/paths.js";
 import { getCloudProvider } from "../shared/cloud-provider-registry.js";
 import { asyncTryCatch, tryCatch, unwrapOr } from "../shared/result.js";
 import { CLACK_LOG_OPTS } from "../shared/ui.js";
@@ -539,7 +539,7 @@ export function formatCredStatusLine(varName: string, urlHint?: string): string 
 function hasCloudConfigCredentials(cloud: string): boolean {
   return unwrapOr(
     tryCatch(() => {
-      const configPath = getSpawnCloudConfigPath(cloud);
+      const configPath = getAgentseaCloudConfigPath(cloud);
       if (!fs.existsSync(configPath)) {
         return false;
       }
@@ -750,20 +750,20 @@ export function printQuickStart(opts: {
   auth: string;
   authVars: string[];
   cloudUrl?: string;
-  spawnCmd?: string;
+  agentseaCmd?: string;
 }): void {
   console.log();
 
-  if (checkAllCredentialsReady(opts.auth) && opts.spawnCmd) {
+  if (checkAllCredentialsReady(opts.auth) && opts.agentseaCmd) {
     console.log(pc.bold("Quick start:") + "  " + pc.green("credentials detected -- ready to go"));
-    console.log(`  ${pc.cyan(opts.spawnCmd)}`);
+    console.log(`  ${pc.cyan(opts.agentseaCmd)}`);
     return;
   }
 
   console.log(pc.bold("Quick start:"));
   printAuthVariableStatus(opts.authVars, opts.cloudUrl);
-  if (opts.spawnCmd) {
-    console.log(`  ${pc.cyan(opts.spawnCmd)}`);
+  if (opts.agentseaCmd) {
+    console.log(`  ${pc.cyan(opts.agentseaCmd)}`);
   }
 }
 
@@ -780,9 +780,9 @@ export function resolveDisplayName(manifest: Manifest | null, key: string, kind:
   return entry ? entry.name : key;
 }
 
-export function buildRetryCommand(agent: string, cloud: string, prompt?: string, spawnName?: string): string {
-  const safeName = spawnName ? spawnName.replace(/"/g, '\\"') : "";
-  const nameFlag = spawnName ? ` --name "${safeName}"` : "";
+export function buildRetryCommand(agent: string, cloud: string, prompt?: string, agentseaName?: string): string {
+  const safeName = agentseaName ? agentseaName.replace(/"/g, '\\"') : "";
+  const nameFlag = agentseaName ? ` --name "${safeName}"` : "";
   if (!prompt) {
     return `agentsea ${agent} ${cloud}${nameFlag}`;
   }

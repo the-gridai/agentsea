@@ -5,7 +5,7 @@ import { recoverProvisionCheckpoints } from "../commands/resume.js";
 import {
   isProvisioningIncomplete,
   loadHistory,
-  upsertSpawnRecord,
+  upsertAgentseaRecord,
   writeProvisionCheckpoint,
 } from "../history.js";
 import type { CloudOrchestrator } from "../shared/orchestrate.js";
@@ -20,11 +20,11 @@ describe("resume / provision recovery", () => {
     testDir = join(process.env.HOME ?? "", `.agentsea-resume-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(testDir, { recursive: true });
     originalEnv = { ...process.env };
-    process.env.GRID_SPAWN_HOME = testDir;
+    process.env.AGENTSEA_HOME = testDir;
     process.env.THEGRID_API_KEY = "sk-test-resume";
-    process.env.SPAWN_TELEMETRY = "0";
-    process.env.SPAWN_NON_INTERACTIVE = "1";
-    process.env.SPAWN_HEADLESS = "1";
+    process.env.AGENTSEA_TELEMETRY = "0";
+    process.env.AGENTSEA_NON_INTERACTIVE = "1";
+    process.env.AGENTSEA_HEADLESS = "1";
     process.env.NODE_ENV = "test";
   });
 
@@ -115,7 +115,7 @@ describe("resume / provision recovery", () => {
 
     it("skips checkpoint when that id is already in history", () => {
       const id = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee";
-      upsertSpawnRecord({
+      upsertAgentseaRecord({
         id,
         agent: "claude",
         cloud: "digitalocean",
@@ -147,7 +147,7 @@ describe("resume / provision recovery", () => {
 
   describe("resumeOrchestrationFromRecord (injected cloud)", () => {
     it("runs vm wait + tarball install + env inject then stops before post-install when test hook set", async () => {
-      process.env.SPAWN_FAST = "1";
+      process.env.AGENTSEA_FAST = "1";
       let waitForReadyCalls = 0;
       let tarballCalls = 0;
 
@@ -181,7 +181,7 @@ describe("resume / provision recovery", () => {
       manifest.matrix["digitalocean/claude"] = "implemented";
 
       const recordId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
-      upsertSpawnRecord({
+      upsertAgentseaRecord({
         id: recordId,
         agent: "claude",
         cloud: "digitalocean",
@@ -262,7 +262,7 @@ describe("resume / provision recovery", () => {
       manifest.matrix["digitalocean/claude"] = "implemented";
 
       const recordId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
-      upsertSpawnRecord({
+      upsertAgentseaRecord({
         id: recordId,
         agent: "claude",
         cloud: "digitalocean",

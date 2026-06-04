@@ -1,5 +1,5 @@
 import type { ValueOf } from "@agentsea/sdk";
-import type { CloudInstance, SpawnRecord } from "../history.js";
+import type { CloudInstance, AgentseaRecord } from "../history.js";
 import type { Manifest } from "../manifest.js";
 
 import * as p from "@clack/prompts";
@@ -15,12 +15,12 @@ import {
   updateRecordIp,
 } from "../history.js";
 import { agentKeys, cloudKeys, loadManifest } from "../manifest.js";
-import { trackSpawnConnected } from "../shared/lifecycle-telemetry.js";
+import { trackAgentseaConnected } from "../shared/lifecycle-telemetry.js";
 import { asyncTryCatch, tryCatch, unwrapOr } from "../shared/result.js";
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
 import { cmdConnect, cmdEnterAgent, cmdOpenDashboard } from "./connect.js";
 import { confirmAndDelete } from "./delete.js";
-import { fixSpawn } from "./fix.js";
+import { fixAgentsea } from "./fix.js";
 import { cmdRun } from "./run.js";
 import {
   buildRetryCommand,
@@ -77,13 +77,13 @@ export function formatRelativeTime(iso: string): string {
   );
 }
 
-/** Build a display label (line 1: name) for a spawn record in the interactive picker */
-export function buildRecordLabel(r: SpawnRecord): string {
+/** Build a display label (line 1: name) for a agentsea record in the interactive picker */
+export function buildRecordLabel(r: AgentseaRecord): string {
   return r.name || r.connection?.server_name || "unnamed";
 }
 
 /** Build a subtitle (line 2: agent + cloud + time) for the interactive picker */
-export function buildRecordSubtitle(r: SpawnRecord, manifest: Manifest | null): string {
+export function buildRecordSubtitle(r: AgentseaRecord, manifest: Manifest | null): string {
   const agentDisplay = resolveDisplayName(manifest, r.agent, "agent");
   const cloudDisplay = resolveDisplayName(manifest, r.cloud, "cloud");
   const relative = formatRelativeTime(r.timestamp);
@@ -98,7 +98,7 @@ export function buildRecordSubtitle(r: SpawnRecord, manifest: Manifest | null): 
   return parts.join(" \u00b7 ");
 }
 
-async function assertValidDaytonaRecords(records: SpawnRecord[]): Promise<void> {
+async function assertValidDaytonaRecords(records: AgentseaRecord[]): Promise<void> {
   const daytonaRecords = records.filter((record) => record.connection?.cloud === "daytona");
   if (daytonaRecords.length === 0) {
     return;
@@ -177,14 +177,14 @@ async function showEmptyListMessage(agentFilter?: string, cloudFilter?: string):
   const totalRecords = filterHistory();
   if (totalRecords.length > 0) {
     p.log.info(
-      `Run ${pc.cyan(`${AGENTSEA_CLI} list`)} to see all ${totalRecords.length} recorded spawn${totalRecords.length !== 1 ? "s" : ""}.`,
+      `Run ${pc.cyan(`${AGENTSEA_CLI} list`)} to see all ${totalRecords.length} recorded agentsea${totalRecords.length !== 1 ? "s" : ""}.`,
     );
   }
 }
 
 // ── List display ─────────────────────────────────────────────────────────────
 
-function buildListFooterLines(records: SpawnRecord[], agentFilter?: string, cloudFilter?: string): string[] {
+function buildListFooterLines(records: AgentseaRecord[], agentFilter?: string, cloudFilter?: string): string[] {
   const lines: string[] = [];
   const latest = records[0];
   lines.push(`Rerun last: ${pc.cyan(buildRetryCommand(latest.agent, latest.cloud, latest.prompt, latest.name))}`);
@@ -192,11 +192,11 @@ function buildListFooterLines(records: SpawnRecord[], agentFilter?: string, clou
   if (agentFilter || cloudFilter) {
     const totalRecords = filterHistory();
     lines.push(
-      pc.dim(`Showing ${records.length} of ${totalRecords.length} spawn${totalRecords.length !== 1 ? "s" : ""}`),
+      pc.dim(`Showing ${records.length} of ${totalRecords.length} agentsea${totalRecords.length !== 1 ? "s" : ""}`),
     );
     lines.push(pc.dim(`Clear filter: ${pc.cyan(`${AGENTSEA_CLI} list`)}`));
   } else {
-    lines.push(pc.dim(`${records.length} spawn${records.length !== 1 ? "s" : ""} recorded`));
+    lines.push(pc.dim(`${records.length} agentsea${records.length !== 1 ? "s" : ""} recorded`));
     lines.push(
       pc.dim(
         `Filter: ${pc.cyan(`${AGENTSEA_CLI} list -a <agent>`)}  or  ${pc.cyan(`${AGENTSEA_CLI} list -c <cloud>`)}  |  Clear: ${pc.cyan(`${AGENTSEA_CLI} list --clear`)}`,
@@ -206,7 +206,7 @@ function buildListFooterLines(records: SpawnRecord[], agentFilter?: string, clou
   return lines;
 }
 
-function showListFooter(records: SpawnRecord[], agentFilter?: string, cloudFilter?: string): void {
+function showListFooter(records: AgentseaRecord[], agentFilter?: string, cloudFilter?: string): void {
   for (const line of buildListFooterLines(records, agentFilter, cloudFilter)) {
     console.log(line);
   }
@@ -216,12 +216,12 @@ function showListFooter(records: SpawnRecord[], agentFilter?: string, cloudFilte
 // ── Tree rendering ──────────────────────────────────────────────────────────
 
 interface TreeNode {
-  record: SpawnRecord;
+  record: AgentseaRecord;
   children: TreeNode[];
 }
 
 /** Build a tree structure from records that have parent_id. */
-function buildTree(records: SpawnRecord[]): TreeNode[] {
+function buildTree(records: AgentseaRecord[]): TreeNode[] {
   const nodeMap = new Map<string, TreeNode>();
   const roots: TreeNode[] = [];
 
@@ -271,7 +271,7 @@ function renderTreeNode(
 }
 
 /** Render records as a tree when parent_id relationships exist. */
-function renderTreeTable(records: SpawnRecord[], manifest: Manifest | null): void {
+function renderTreeTable(records: AgentseaRecord[], manifest: Manifest | null): void {
   console.log();
   const roots = buildTree(records);
   for (let i = 0; i < roots.length; i++) {
@@ -284,11 +284,11 @@ function renderTreeTable(records: SpawnRecord[], manifest: Manifest | null): voi
 }
 
 /** Check if any records have parent_id (indicating a tree structure). */
-function hasTreeStructure(records: SpawnRecord[]): boolean {
+function hasTreeStructure(records: AgentseaRecord[]): boolean {
   return records.some((r) => r.parent_id);
 }
 
-function renderListTable(records: SpawnRecord[], manifest: Manifest | null): void {
+function renderListTable(records: AgentseaRecord[], manifest: Manifest | null): void {
   console.log();
   for (let i = 0; i < records.length; i++) {
     const r = records[i];
@@ -345,7 +345,7 @@ export async function resolveListFilters(
 // ── Gone server handling ────────────────────────────────────────────────────
 
 /** Fetch live instances from a cloud provider. */
-async function fetchCloudInstances(cloud: string, record: SpawnRecord): Promise<CloudInstance[]> {
+async function fetchCloudInstances(cloud: string, record: AgentseaRecord): Promise<CloudInstance[]> {
   switch (cloud) {
     case "hetzner": {
       const { listServers } = await import("../hetzner/hetzner.js");
@@ -382,11 +382,11 @@ async function fetchCloudInstances(cloud: string, record: SpawnRecord): Promise<
  * Offers the user a choice: remap to an existing instance, delete from history, or cancel.
  * In non-interactive mode, falls back to silent deletion (previous behavior).
  */
-async function handleGoneServer(record: SpawnRecord, cloud: string): Promise<"deleted" | "remapped" | "cancelled"> {
+async function handleGoneServer(record: AgentseaRecord, cloud: string): Promise<"deleted" | "remapped" | "cancelled"> {
   p.log.warn("Server no longer exists on the cloud provider.");
 
   // Non-interactive: fall back to silent deletion
-  if (process.env.SPAWN_NON_INTERACTIVE === "1" || !isInteractiveTTY()) {
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1" || !isInteractiveTTY()) {
     markRecordDeleted(record);
     if (record.connection) {
       record.connection.deleted = true;
@@ -479,7 +479,7 @@ async function handleGoneServer(record: SpawnRecord, cloud: string): Promise<"de
  * Returns "ok" if the IP was refreshed (or unchanged), "gone" if the server
  * no longer exists, or "skip" if refresh is not applicable (local, sprite, etc.).
  */
-async function refreshConnectionIp(record: SpawnRecord): Promise<"ok" | "gone" | "skip"> {
+async function refreshConnectionIp(record: AgentseaRecord): Promise<"ok" | "gone" | "skip"> {
   const conn = record.connection;
   if (!conn?.cloud || conn.cloud === "local" || conn.cloud === "sprite" || conn.cloud === "daytona" || conn.deleted) {
     // Daytona reconnects are keyed by sandbox id. There is no stable public VM IP
@@ -525,14 +525,14 @@ async function refreshConnectionIp(record: SpawnRecord): Promise<"ok" | "gone" |
       process.env.GCP_PROJECT = project;
       await ensureGcloudCli();
       await authenticate();
-      // Set SPAWN_NON_INTERACTIVE to suppress project prompt during refresh
-      const prevNonInteractive = process.env.SPAWN_NON_INTERACTIVE;
-      process.env.SPAWN_NON_INTERACTIVE = "1";
+      // Set AGENTSEA_NON_INTERACTIVE to suppress project prompt during refresh
+      const prevNonInteractive = process.env.AGENTSEA_NON_INTERACTIVE;
+      process.env.AGENTSEA_NON_INTERACTIVE = "1";
       const resolveResult = await asyncTryCatch(() => resolveProject());
       if (prevNonInteractive === undefined) {
-        delete process.env.SPAWN_NON_INTERACTIVE;
+        delete process.env.AGENTSEA_NON_INTERACTIVE;
       } else {
-        process.env.SPAWN_NON_INTERACTIVE = prevNonInteractive;
+        process.env.AGENTSEA_NON_INTERACTIVE = prevNonInteractive;
       }
       if (!resolveResult.ok) {
         return "skip";
@@ -575,20 +575,20 @@ export const RecordActionOutcome = {
 export type RecordActionOutcome = ValueOf<typeof RecordActionOutcome>;
 
 /**
- * Handle reconnect or rerun action for a selected spawn record.
+ * Handle reconnect or rerun action for a selected agentsea record.
  * Returns Back if the picker should navigate back to the list (delete/remove),
  * or Exit for terminal actions (enter/reconnect/rerun) that exit the picker.
  */
 export async function handleRecordAction(
-  selected: SpawnRecord,
+  selected: AgentseaRecord,
   manifest: Manifest | null,
 ): Promise<RecordActionOutcome> {
   if (!selected.connection) {
-    // No connection info -- just rerun, reusing the existing spawn name
+    // No connection info -- just rerun, reusing the existing agentsea name
     if (selected.name) {
-      process.env.SPAWN_NAME = selected.name;
+      process.env.AGENTSEA_NAME = selected.name;
     }
-    p.log.step(`Spawning ${pc.bold(buildRecordLabel(selected))}`);
+    p.log.step(`Agentseaing ${pc.bold(buildRecordLabel(selected))}`);
     await cmdRun(selected.agent, selected.cloud, selected.prompt);
     return RecordActionOutcome.Exit;
   }
@@ -602,7 +602,7 @@ export async function handleRecordAction(
     hint?: string;
   }[] = [];
 
-  // Prefer stored launch command (captured at spawn time), fall back to manifest
+  // Prefer stored launch command (captured at agentsea time), fall back to manifest
   const agentDef = manifest?.agents?.[selected.agent];
   const launchCmd = conn.launch_cmd || agentDef?.launch;
 
@@ -639,7 +639,7 @@ export async function handleRecordAction(
 
   options.push({
     value: "rerun",
-    label: "Spawn a new VM",
+    label: "Agentsea a new VM",
     hint: "Create a fresh instance",
   });
 
@@ -711,8 +711,8 @@ export async function handleRecordAction(
   if (action === "reconnect") {
     // Lifecycle telemetry: record the login BEFORE we hand off to SSH.
     // cmdConnect spawns an interactive session and never returns under normal
-    // use, so calling trackSpawnConnected after would be unreachable code.
-    trackSpawnConnected(selected);
+    // use, so calling trackAgentseaConnected after would be unreachable code.
+    trackAgentseaConnected(selected);
     const reconnectResult = await asyncTryCatch(() => cmdConnect(conn, selected.agent));
     if (!reconnectResult.ok) {
       p.log.error(`Connection failed: ${getErrorMessage(reconnectResult.error)}`);
@@ -725,7 +725,7 @@ export async function handleRecordAction(
   }
 
   if (action === "fix") {
-    await fixSpawn(selected, manifest);
+    await fixAgentsea(selected, manifest);
     return RecordActionOutcome.Back;
   }
 
@@ -744,12 +744,12 @@ export async function handleRecordAction(
     return RecordActionOutcome.Back;
   }
 
-  // Rerun (create new spawn).  Clear any pre-set name so the user is prompted for
+  // Rerun (create new agentsea).  Clear any pre-set name so the user is prompted for
   // a fresh one — this prevents cmdRun's duplicate-detection from immediately
   // routing them back here in an infinite loop.
-  delete process.env.SPAWN_NAME;
+  delete process.env.AGENTSEA_NAME;
   p.log.step(
-    `Spawning ${pc.bold(buildRecordLabel(selected))} ${pc.dim(`(${buildRecordSubtitle(selected, manifest)})`)}`,
+    `Agentseaing ${pc.bold(buildRecordLabel(selected))} ${pc.dim(`(${buildRecordSubtitle(selected, manifest)})`)}`,
   );
   await cmdRun(selected.agent, selected.cloud, selected.prompt);
   return RecordActionOutcome.Exit;
@@ -757,7 +757,7 @@ export async function handleRecordAction(
 
 /** Interactive picker with inline delete support.
  *  Pressing 'd' triggers delete; Enter triggers handleRecordAction. */
-export async function activeServerPicker(records: SpawnRecord[], manifest: Manifest | null): Promise<void> {
+export async function activeServerPicker(records: AgentseaRecord[], manifest: Manifest | null): Promise<void> {
   const { pickToTTYWithActions } = await import("../picker.js");
 
   const remaining = [
@@ -772,7 +772,7 @@ export async function activeServerPicker(records: SpawnRecord[], manifest: Manif
     }));
 
     const result = pickToTTYWithActions({
-      message: `Select a spawn (${remaining.length} server${remaining.length !== 1 ? "s" : ""})`,
+      message: `Select a agentsea (${remaining.length} server${remaining.length !== 1 ? "s" : ""})`,
       options,
       deleteKey: true,
     });
@@ -859,7 +859,7 @@ export async function activeServerPicker(records: SpawnRecord[], manifest: Manif
 export async function cmdListClear(forceYes?: boolean): Promise<void> {
   const records = filterHistory();
   if (records.length === 0) {
-    p.log.info("No spawn history to clear.");
+    p.log.info("No agentsea history to clear.");
     return;
   }
 
@@ -871,7 +871,7 @@ export async function cmdListClear(forceYes?: boolean): Promise<void> {
 
   if (isInteractiveTTY() && !forceYes) {
     const shouldClear = await p.confirm({
-      message: `Delete ${records.length} spawn record${records.length !== 1 ? "s" : ""} from history?`,
+      message: `Delete ${records.length} agentsea record${records.length !== 1 ? "s" : ""} from history?`,
       initialValue: false,
     });
     if (p.isCancel(shouldClear) || !shouldClear) {
@@ -880,7 +880,7 @@ export async function cmdListClear(forceYes?: boolean): Promise<void> {
   }
 
   const count = clearHistory();
-  p.log.success(`Cleared ${count} spawn record${count !== 1 ? "s" : ""} from history.`);
+  p.log.success(`Cleared ${count} agentsea record${count !== 1 ? "s" : ""} from history.`);
 }
 
 export async function cmdList(agentFilter?: string, cloudFilter?: string): Promise<void> {
@@ -906,7 +906,7 @@ export async function cmdList(agentFilter?: string, cloudFilter?: string): Promi
       const historyRecords = filterHistory(agentFilter, cloudFilter);
       if (historyRecords.length > 0) {
         await assertValidDaytonaRecords(historyRecords);
-        p.log.info("No active servers found. Showing spawn history:");
+        p.log.info("No active servers found. Showing agentsea history:");
         renderListTable(historyRecords, manifest);
         showListFooter(historyRecords, agentFilter, cloudFilter);
       } else {
@@ -952,8 +952,8 @@ export async function cmdLast(): Promise<void> {
   const records = filterHistory();
 
   if (records.length === 0) {
-    p.log.info("No spawn history found.");
-    p.log.info(`Run ${pc.cyan(`${AGENTSEA_CLI} <agent> <cloud>`)} to create your first spawn.`);
+    p.log.info("No agentsea history found.");
+    p.log.info(`Run ${pc.cyan(`${AGENTSEA_CLI} <agent> <cloud>`)} to create your first agentsea.`);
     return;
   }
 
@@ -967,7 +967,7 @@ export async function cmdLast(): Promise<void> {
 
   const label = buildRecordLabel(latest);
   const subtitle = buildRecordSubtitle(latest, manifest);
-  p.log.step(`Last spawn: ${pc.bold(label)} ${pc.dim(`(${subtitle})`)}`);
+  p.log.step(`Last agentsea: ${pc.bold(label)} ${pc.dim(`(${subtitle})`)}`);
 
   // If the latest record has connection info (IP/server), let the user
   // reconnect to the existing VM instead of blindly provisioning a new one.

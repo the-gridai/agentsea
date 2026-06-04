@@ -19,11 +19,11 @@ import { createConsoleMocks, createMockManifest, mockClackPrompts, restoreMocks 
  * This file covers the UNTESTED integration paths:
  * - Primary URL download succeeds (no fallback needed)
  * - Primary URL fails, fallback URL succeeds
- * - saveSpawnRecord is called before script execution (history recording)
+ * - saveAgentseaRecord is called before script execution (history recording)
  * - History record includes agent, cloud, timestamp, and optional prompt
- * - SPAWN_PROMPT and SPAWN_MODE env vars passed to bash when prompt is set
- * - SPAWN_PROMPT and SPAWN_MODE are NOT set when no prompt is provided
- * - saveSpawnRecord failure is non-fatal (script still runs)
+ * - AGENTSEA_PROMPT and AGENTSEA_MODE env vars passed to bash when prompt is set
+ * - AGENTSEA_PROMPT and AGENTSEA_MODE are NOT set when no prompt is provided
+ * - saveAgentseaRecord failure is non-fatal (script still runs)
  * - Dry-run mode skips script download entirely
  */
 
@@ -114,7 +114,7 @@ describe("cmdRun happy-path pipeline", () => {
   let originalFetch: typeof global.fetch;
   let processExitSpy: ReturnType<typeof spyOn>;
   let historyDir: string;
-  let originalSpawnHome: string | undefined;
+  let originalAgentseaHome: string | undefined;
 
   beforeEach(async () => {
     consoleMocks = createConsoleMocks();
@@ -133,12 +133,12 @@ describe("cmdRun happy-path pipeline", () => {
     originalFetch = global.fetch;
 
     // Set up isolated history directory
-    historyDir = join(process.env.HOME ?? "", `spawn-test-history-${Date.now()}-${Math.random()}`);
+    historyDir = join(process.env.HOME ?? "", `agentsea-test-history-${Date.now()}-${Math.random()}`);
     mkdirSync(historyDir, {
       recursive: true,
     });
-    originalSpawnHome = process.env.SPAWN_HOME;
-    process.env.SPAWN_HOME = historyDir;
+    originalAgentseaHome = process.env.AGENTSEA_HOME;
+    process.env.AGENTSEA_HOME = historyDir;
   });
 
   afterEach(() => {
@@ -147,7 +147,7 @@ describe("cmdRun happy-path pipeline", () => {
     restoreMocks(consoleMocks.log, consoleMocks.error);
 
     // Clean up history directory
-    process.env.SPAWN_HOME = originalSpawnHome;
+    process.env.AGENTSEA_HOME = originalAgentseaHome;
     if (existsSync(historyDir)) {
       rmSync(historyDir, {
         recursive: true,
@@ -203,6 +203,34 @@ describe("cmdRun happy-path pipeline", () => {
       expect(scriptFetches.length).toBe(2);
       expect(scriptFetches[0].url).toContain("spawn.thegrid.ai");
       expect(scriptFetches[1].url).toContain("raw.githubusercontent.com");
+    });
+
+    it("should fall back to GitHub when the primary URL throws a connection error", async () => {
+      // Regression: an unreachable CDN (DNS/connection error) makes fetch THROW
+      // rather than return a non-OK status. The fallback must still be attempted.
+      global.fetch = mock(async (url: string | URL | Request) => {
+        const urlStr = isString(url) ? url : url instanceof URL ? url.href : url.url;
+        fetchCalls.push({ url: urlStr });
+        if (urlStr.includes("manifest.json")) {
+          return new Response(JSON.stringify(mockManifest));
+        }
+        if (urlStr.includes("spawn.thegrid.ai")) {
+          throw new TypeError("fetch failed: getaddrinfo ENOTFOUND spawn.thegrid.ai");
+        }
+        if (urlStr.includes("raw.githubusercontent.com")) {
+          return new Response(VALID_SCRIPT, { status: 200 });
+        }
+        return new Response("not found", { status: 404 });
+      }) as unknown as typeof global.fetch;
+      await loadManifest(true);
+
+      await cmdRun("claude", "sprite");
+
+      const scriptFetches = fetchCalls.filter((c) => !c.url.includes("manifest.json"));
+      expect(scriptFetches.length).toBe(2);
+      expect(scriptFetches[0].url).toContain("spawn.thegrid.ai");
+      expect(scriptFetches[1].url).toContain("raw.githubusercontent.com");
+      expect(processExitSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -291,14 +319,14 @@ describe("cmdRun happy-path pipeline", () => {
     });
 
     it("should still execute script when history save fails", async () => {
-      // Make history dir read-only to force saveSpawnRecord failure
-      const readOnlyDir = join(process.env.HOME ?? "", `spawn-test-readonly-${Date.now()}`);
+      // Make history dir read-only to force saveAgentseaRecord failure
+      const readOnlyDir = join(process.env.HOME ?? "", `agentsea-test-readonly-${Date.now()}`);
       mkdirSync(readOnlyDir, {
         recursive: true,
       });
       // Create a file where the directory should be, so mkdir fails
       writeFileSync(join(readOnlyDir, "history.json"), "not-a-directory");
-      process.env.SPAWN_HOME = readOnlyDir;
+      process.env.AGENTSEA_HOME = readOnlyDir;
 
       global.fetch = mockFetchForDownload({
         primaryOk: true,
@@ -344,14 +372,14 @@ describe("cmdRun happy-path pipeline", () => {
 
   // ── Env var passing via runBash ───────────────────────────────────────────
 
-  describe("SPAWN_PROMPT and SPAWN_MODE env var passing", () => {
-    it("should set both SPAWN_PROMPT and SPAWN_MODE when prompt is provided", async () => {
+  describe("AGENTSEA_PROMPT and AGENTSEA_MODE env var passing", () => {
+    it("should set both AGENTSEA_PROMPT and AGENTSEA_MODE when prompt is provided", async () => {
       // Single script checks both vars — avoids two separate bash invocations
       const checkScript = [
         "#!/bin/bash",
         "set -eo pipefail",
-        'test "$SPAWN_PROMPT" = "Fix all bugs"',
-        'test "$SPAWN_MODE" = "non-interactive"',
+        'test "$AGENTSEA_PROMPT" = "Fix all bugs"',
+        'test "$AGENTSEA_MODE" = "non-interactive"',
       ].join("\n");
       global.fetch = mockFetchForDownload({
         primaryOk: true,
@@ -363,13 +391,13 @@ describe("cmdRun happy-path pipeline", () => {
       expect(processExitSpy).not.toHaveBeenCalled();
     });
 
-    it("should NOT set SPAWN_PROMPT or SPAWN_MODE when no prompt is provided", async () => {
+    it("should NOT set AGENTSEA_PROMPT or AGENTSEA_MODE when no prompt is provided", async () => {
       // Single script verifies both vars are unset
       const checkScript = [
         "#!/bin/bash",
         "set -eo pipefail",
-        'test -z "${SPAWN_PROMPT:-}"',
-        'test -z "${SPAWN_MODE:-}"',
+        'test -z "${AGENTSEA_PROMPT:-}"',
+        'test -z "${AGENTSEA_MODE:-}"',
       ].join("\n");
       global.fetch = mockFetchForDownload({
         primaryOk: true,
@@ -383,7 +411,7 @@ describe("cmdRun happy-path pipeline", () => {
 
     it("should handle prompts with special characters", async () => {
       const prompt = 'Fix the "login" page & add tests';
-      const checkScript = `#!/bin/bash\nset -eo pipefail\ntest -n "$SPAWN_PROMPT"`;
+      const checkScript = `#!/bin/bash\nset -eo pipefail\ntest -n "$AGENTSEA_PROMPT"`;
       global.fetch = mockFetchForDownload({
         primaryOk: true,
         scriptContent: checkScript,

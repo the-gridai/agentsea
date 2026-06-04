@@ -127,7 +127,7 @@
   line-height: 1.25;
 }
 
-/* --- Step 3: Spawn --- */
+/* --- Step 3: Agentsea --- */
 .band {
   padding: pad(10) 0;
   border-top: 1px solid c(stroke-2);
@@ -160,14 +160,14 @@
   letter-spacing: -0.02em;
 }
 
-.spawnFoot {
+.agentseaFoot {
   margin: pad(6) 0 0;
   @include text(text-s);
   color: c(text-3);
   text-align: center;
 }
 
-.spawnFoot__link {
+.agentseaFoot__link {
   color: rgb(var(--text-highlight));
   text-decoration: none;
 

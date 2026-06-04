@@ -13,7 +13,7 @@ The `agentsea` CLI sends **optional analytics** to PostHog when telemetry is ena
 ## Opt out
 
 ```bash
-export SPAWN_TELEMETRY=0
+export AGENTSEA_TELEMETRY=0
 ```
 
 ## Retention and DPA

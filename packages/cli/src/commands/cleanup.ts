@@ -53,7 +53,7 @@ export async function cmdCleanup(
   });
 
   if (stale.length === 0) {
-    p.log.info(`No droplets tagged ${pc.dim(doMod.SPAWN_DIGITALOCEAN_ATTRIBUTION_TAG)} older than ${ttlHours}h.`);
+    p.log.info(`No droplets tagged ${pc.dim(doMod.AGENTSEA_DIGITALOCEAN_ATTRIBUTION_TAG)} older than ${ttlHours}h.`);
     return;
   }
 

@@ -40,15 +40,15 @@ _gcp_validate_instance_name() {
 #
 # Check that the gcloud CLI is installed and credentials are valid.
 # Requires GCP_PROJECT to be set. Loads GCP_PROJECT and GCP_ZONE from
-# ~/.config/spawn/gcp.json if not already in the environment.
+# ~/.config/agentsea/gcp.json if not already in the environment.
 # Returns 0 on success, 1 on failure.
 # ---------------------------------------------------------------------------
 _gcp_validate_env() {
   local missing=0
 
-  # Load GCP_PROJECT and GCP_ZONE from ~/.config/spawn/gcp.json if not set.
+  # Load GCP_PROJECT and GCP_ZONE from ~/.config/agentsea/gcp.json if not set.
   # This allows the QA VM to configure the correct zone without env var exports.
-  local _gcp_config="${HOME}/.config/spawn/gcp.json"
+  local _gcp_config="${HOME}/.config/agentsea/gcp.json"
   if [ -f "${_gcp_config}" ]; then
     if [ -z "${GCP_PROJECT:-}" ]; then
       local _proj

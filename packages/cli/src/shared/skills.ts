@@ -82,7 +82,7 @@ export async function promptSkillSelection(manifest: Manifest, agentName: string
 
 // ─── Env Var Collection ─────────────────────────────────────────────────────────
 
-/** Prompt for missing env vars required by selected skills. Returns env pairs for .spawnrc. */
+/** Prompt for missing env vars required by selected skills. Returns env pairs for .agentsearc. */
 export async function collectSkillEnvVars(manifest: Manifest, selectedSkills: string[]): Promise<string[]> {
   if (!manifest.skills) {
     return [];

@@ -17,9 +17,9 @@ describe("cursorGridModelDisplayName", () => {
 });
 
 describe("cursorProxyEnvFileScript", () => {
-  it("sources ~/.spawnrc instead of grepping bare KEY= lines", () => {
+  it("sources ~/.agentsearc instead of grepping bare KEY= lines", () => {
     const script = cursorProxyEnvFileScript();
-    expect(script.includes(". ~/.spawnrc")).toBe(true);
+    expect(script.includes(". ~/.agentsearc")).toBe(true);
     expect(script.includes("grep ^THEGRID_API_KEY=")).toBe(false);
     expect(script.includes("proxy.env")).toBe(true);
   });

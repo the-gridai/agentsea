@@ -4,7 +4,7 @@ import * as p from "@clack/prompts";
 import * as v from "valibot";
 import { loadHistory } from "../history.js";
 import { parseJsonObj } from "./parse.js";
-import { getSpawnPreferencesPath } from "./paths.js";
+import { getAgentseaPreferencesPath } from "./paths.js";
 import { tryCatch } from "./result.js";
 
 const StarPreferencesSchema = v.object({
@@ -15,7 +15,7 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 const MIN_SUCCESSFUL_SPAWNS = 2;
 
 /**
- * Show a non-intrusive "star us on GitHub" message after a successful spawn.
+ * Show a non-intrusive "star us on GitHub" message after a successful agentsea.
  * Only shown to returning users (2+ successful spawns) and at most once per 30 days.
  * Silently skips on any error — this is purely optional UX.
  */
@@ -29,7 +29,7 @@ export function maybeShowStarPrompt(): void {
     }
 
     // 2. Read preferences and check if shown within 30 days
-    const prefsPath = getSpawnPreferencesPath();
+    const prefsPath = getAgentseaPreferencesPath();
     const rawPrefs: Record<string, unknown> = existsSync(prefsPath)
       ? (parseJsonObj(readFileSync(prefsPath, "utf-8")) ?? {})
       : {};
@@ -42,7 +42,7 @@ export function maybeShowStarPrompt(): void {
     }
 
     // 3. Print the star message
-    p.log.message("⭐ Enjoying Spawn? Star us on GitHub!\n   https://github.com/Spectral-Finance/agentsea");
+    p.log.message("⭐ Enjoying Agentsea? Star us on GitHub!\n   https://github.com/Spectral-Finance/agentsea");
 
     // 4. Save the updated timestamp
     const merged = {

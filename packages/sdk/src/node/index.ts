@@ -1,9 +1,7 @@
 export {
   AGENTSEA_CDN,
-  GRID_SPAWN_CDN,
   RAW_BASE,
   REPO,
-  SPAWN_CDN,
   VERSION_URL,
   _resetCacheForTesting,
   getCacheAge,

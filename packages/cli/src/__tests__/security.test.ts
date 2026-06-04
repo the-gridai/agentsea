@@ -196,7 +196,7 @@ rm -rf /
     expect(() => validateScriptContent(forkBomb)).toThrow("fork bomb");
   });
 
-  it("should accept scripts with curl|bash (used by spawn scripts)", () => {
+  it("should accept scripts with curl|bash (used by agentsea scripts)", () => {
     const curlBash = `#!/bin/bash
 curl http://example.com/install.sh | bash
 `;
@@ -225,7 +225,7 @@ dd if=/dev/zero of=/dev/sda
     expect(() => validateScriptContent(ddScript)).toThrow("raw disk operation");
   });
 
-  it("should accept scripts with wget|bash (used by spawn scripts)", () => {
+  it("should accept scripts with wget|bash (used by agentsea scripts)", () => {
     const wgetBash = `#!/bin/bash
 wget http://example.com/install.sh | sh
 `;
@@ -335,7 +335,7 @@ dd if=/dev/urandom of=/tmp/random.bin bs=1M count=1
     expect(() => validateScriptContent(script)).not.toThrow();
   });
 
-  it("should accept curl|bash with tabs (used by spawn scripts)", () => {
+  it("should accept curl|bash with tabs (used by agentsea scripts)", () => {
     const script = "#!/bin/bash\ncurl http://example.com/s.sh |\tbash";
     expect(() => validateScriptContent(script)).not.toThrow();
   });

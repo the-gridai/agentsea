@@ -166,7 +166,7 @@ export function mockClackPrompts(overrides?: Partial<ClackPromptsMock>): ClackPr
   return mocks;
 }
 
-export function mockBunSpawn(exitCode = 0, stdout = "", stderr = "") {
+export function mockBunAgentsea(exitCode = 0, stdout = "", stderr = "") {
   function createMockProc(): ReturnType<typeof Bun.spawn> {
     return {
       pid: 1234,
@@ -214,7 +214,7 @@ export function mockBunSpawn(exitCode = 0, stdout = "", stderr = "") {
         }) satisfies ReturnType<ReturnType<typeof Bun.spawn>["resourceUsage"]>,
     };
   }
-  return spyOn(Bun, "spawn").mockImplementation(() => createMockProc());
+  return spyOn(Bun, "agentsea").mockImplementation(() => createMockProc());
 }
 
 export function mockSuccessfulFetch(data: unknown) {
@@ -230,7 +230,7 @@ export interface TestEnvironment {
 }
 
 export function setupTestEnvironment(): TestEnvironment {
-  const testDir = join(tmpdir(), `spawn-test-${Date.now()}-${Math.random()}`);
+  const testDir = join(tmpdir(), `agentsea-test-${Date.now()}-${Math.random()}`);
   mkdirSync(testDir, {
     recursive: true,
   });

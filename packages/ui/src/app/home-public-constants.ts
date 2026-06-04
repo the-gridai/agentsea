@@ -6,10 +6,8 @@ export const AGENTSEA_PUBLIC_ORIGIN_UNSET = "https://next-public-agentsea-public
 
 function agentSeaPublicOrigin(): string {
   const raw =
-    typeof process !== "undefined" &&
-    (process.env.NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN || process.env.NEXT_PUBLIC_GRID_SPAWN_PUBLIC_ORIGIN)
-      ? (process.env.NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN ?? process.env.NEXT_PUBLIC_GRID_SPAWN_PUBLIC_ORIGIN ?? "")
-          .trim()
+    typeof process !== "undefined" && process.env.NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN
+      ? process.env.NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN.trim()
       : "";
   if (!raw) {
     return AGENTSEA_PUBLIC_ORIGIN_UNSET;
@@ -27,7 +25,7 @@ export const AGENTSEA_INSTALL_URL = `${AGENTSEA_PUBLIC_ORIGIN}/install.sh`;
 /** One-liner bootstrap example (DigitalOcean × OpenClaw). */
 export const AGENTSEA_OPENCLAW_DO_ONELINER = `${AGENTSEA_PUBLIC_ORIGIN}/digitalocean/openclaw.sh`;
 
-/** Websocket placeholder base (spawn detail, etc.). */
+/** Websocket placeholder base (agentsea detail, etc.). */
 export function agentSeaWsOrigin(): string {
   return AGENTSEA_PUBLIC_ORIGIN.replace(/^http/, "ws");
 }

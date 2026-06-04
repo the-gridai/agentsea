@@ -8,7 +8,7 @@ import { createConsoleMocks, createMockManifest, mockClackPrompts, restoreMocks 
 /**
  * Tests for the --name duplicate detection feature (issue #1864).
  *
- * When `spawn <agent> <cloud> --name "foo"` is run and an active instance named
+ * When `agentsea <agent> <cloud> --name "foo"` is run and an active instance named
  * "foo" already exists for that agent + cloud, cmdRun should route the user into
  * the existing-instance picker (handleRecordAction) rather than blindly
  * provisioning a new VM.
@@ -20,7 +20,7 @@ const mockManifest = createMockManifest();
 
 // ── Clack mock refs ──────────────────────────────────────────────────────────
 
-// select returns "rerun" to exercise the "Spawn a new VM" path
+// select returns "rerun" to exercise the "Agentsea a new VM" path
 const mockSelect = mock(async () => "rerun");
 
 const {
@@ -53,7 +53,7 @@ function mockFetchOk(scriptContent = VALID_SCRIPT) {
   });
 }
 
-/** Build a SpawnRecord that passes the getActiveServers() filter. */
+/** Build a AgentseaRecord that passes the getActiveServers() filter. */
 function activeRecord(name: string, agent: string, cloud: string) {
   return {
     agent,
@@ -77,8 +77,8 @@ describe("cmdRun --name duplicate detection", () => {
   let originalFetch: typeof global.fetch;
   let processExitSpy: ReturnType<typeof spyOn>;
   let historyDir: string;
-  let originalSpawnHome: string | undefined;
-  let originalSpawnName: string | undefined;
+  let originalAgentseaHome: string | undefined;
+  let originalAgentseaName: string | undefined;
 
   beforeEach(async () => {
     consoleMocks = createConsoleMocks();
@@ -96,16 +96,16 @@ describe("cmdRun --name duplicate detection", () => {
     });
 
     originalFetch = global.fetch;
-    originalSpawnHome = process.env.SPAWN_HOME;
-    originalSpawnName = process.env.SPAWN_NAME;
+    originalAgentseaHome = process.env.AGENTSEA_HOME;
+    originalAgentseaName = process.env.AGENTSEA_NAME;
 
-    historyDir = join(process.env.HOME ?? "", `spawn-dup-test-${Date.now()}-${Math.random()}`);
+    historyDir = join(process.env.HOME ?? "", `agentsea-dup-test-${Date.now()}-${Math.random()}`);
     mkdirSync(historyDir, {
       recursive: true,
     });
-    process.env.SPAWN_HOME = historyDir;
-    // Clean SPAWN_NAME before each test
-    delete process.env.SPAWN_NAME;
+    process.env.AGENTSEA_HOME = historyDir;
+    // Clean AGENTSEA_NAME before each test
+    delete process.env.AGENTSEA_NAME;
   });
 
   afterEach(() => {
@@ -113,11 +113,11 @@ describe("cmdRun --name duplicate detection", () => {
     processExitSpy.mockRestore();
     restoreMocks(consoleMocks.log, consoleMocks.error);
 
-    process.env.SPAWN_HOME = originalSpawnHome;
-    if (originalSpawnName !== undefined) {
-      process.env.SPAWN_NAME = originalSpawnName;
+    process.env.AGENTSEA_HOME = originalAgentseaHome;
+    if (originalAgentseaName !== undefined) {
+      process.env.AGENTSEA_NAME = originalAgentseaName;
     } else {
-      delete process.env.SPAWN_NAME;
+      delete process.env.AGENTSEA_NAME;
     }
 
     if (historyDir) {
@@ -140,8 +140,8 @@ describe("cmdRun --name duplicate detection", () => {
     global.fetch = mockFetchOk();
     await loadManifest(true);
 
-    // Simulate `spawn claude sprite --name "alexclaw-do"`
-    process.env.SPAWN_NAME = "alexclaw-do";
+    // Simulate `agentsea claude sprite --name "alexclaw-do"`
+    process.env.AGENTSEA_NAME = "alexclaw-do";
     await cmdRun("claude", "sprite");
 
     // Warning should have been shown
@@ -161,7 +161,7 @@ describe("cmdRun --name duplicate detection", () => {
     global.fetch = mockFetchOk();
     await loadManifest(true);
 
-    process.env.SPAWN_NAME = "mydev";
+    process.env.AGENTSEA_NAME = "mydev";
     await cmdRun("claude", "sprite");
 
     // p.select should have been called to present the action picker
@@ -180,7 +180,7 @@ describe("cmdRun --name duplicate detection", () => {
     global.fetch = mockFetchOk();
     await loadManifest(true);
 
-    process.env.SPAWN_NAME = "brand-new";
+    process.env.AGENTSEA_NAME = "brand-new";
     await cmdRun("claude", "sprite");
 
     // No warning should be shown — it's a fresh instance
@@ -192,7 +192,7 @@ describe("cmdRun --name duplicate detection", () => {
   });
 
   it("proceeds normally when no name is set and history has an active instance", async () => {
-    // No SPAWN_NAME — promptSpawnName returns undefined from text prompt
+    // No AGENTSEA_NAME — promptAgentseaName returns undefined from text prompt
     writeFileSync(
       join(historyDir, "history.json"),
       JSON.stringify([
@@ -203,7 +203,7 @@ describe("cmdRun --name duplicate detection", () => {
     global.fetch = mockFetchOk();
     await loadManifest(true);
 
-    // No SPAWN_NAME set — text mock returns undefined
+    // No AGENTSEA_NAME set — text mock returns undefined
     await cmdRun("claude", "sprite");
 
     // No warning, no picker — name is undefined so duplicate check is skipped
@@ -224,7 +224,7 @@ describe("cmdRun --name duplicate detection", () => {
     await loadManifest(true);
 
     // Same name, same cloud, but DIFFERENT agent
-    process.env.SPAWN_NAME = "mydev";
+    process.env.AGENTSEA_NAME = "mydev";
     await cmdRun("claude", "sprite");
 
     const warnCalls = mockLogWarn.mock.calls.map((c: unknown[]) => c.join(" "));
@@ -244,7 +244,7 @@ describe("cmdRun --name duplicate detection", () => {
     await loadManifest(true);
 
     // Same name, same agent, but DIFFERENT cloud
-    process.env.SPAWN_NAME = "mydev";
+    process.env.AGENTSEA_NAME = "mydev";
     await cmdRun("claude", "sprite");
 
     const warnCalls = mockLogWarn.mock.calls.map((c: unknown[]) => c.join(" "));
@@ -275,7 +275,7 @@ describe("cmdRun --name duplicate detection", () => {
     global.fetch = mockFetchOk();
     await loadManifest(true);
 
-    process.env.SPAWN_NAME = "mydev";
+    process.env.AGENTSEA_NAME = "mydev";
     await cmdRun("claude", "sprite");
 
     // Deleted instances should not trigger duplicate detection

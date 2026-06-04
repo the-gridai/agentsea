@@ -1,6 +1,6 @@
 // shared/telemetry.ts — PostHog telemetry for errors, warnings, crashes, and
-// low-volume product events (funnel steps, spawn lifecycle).
-// Default on. Disable with SPAWN_TELEMETRY=0.
+// low-volume product events (funnel steps, agentsea lifecycle).
+// Default on. Disable with AGENTSEA_TELEMETRY=0.
 // Never sends command args, file paths, or user prompt content.
 // Events are sent immediately — no batching, no lost events on process.exit().
 
@@ -125,7 +125,7 @@ export function initTelemetry(version: string): void {
     return;
   }
 
-  _enabled = process.env.SPAWN_TELEMETRY !== "0";
+  _enabled = process.env.AGENTSEA_TELEMETRY !== "0";
   if (!_enabled) {
     return;
   }
@@ -133,12 +133,12 @@ export function initTelemetry(version: string): void {
   // Persistent user ID — same across all runs (shared with feature flags)
   _userId = getInstallId();
 
-  // Session ID — shared between parent and child processes within one spawn run
-  _sessionId = process.env.SPAWN_TELEMETRY_SESSION || crypto.randomUUID();
-  process.env.SPAWN_TELEMETRY_SESSION = _sessionId;
+  // Session ID — shared between parent and child processes within one agentsea run
+  _sessionId = process.env.AGENTSEA_TELEMETRY_SESSION || crypto.randomUUID();
+  process.env.AGENTSEA_TELEMETRY_SESSION = _sessionId;
 
   _context = {
-    spawn_version: version,
+    agentsea_version: version,
     os: process.platform,
     arch: process.arch,
     source: "cli",

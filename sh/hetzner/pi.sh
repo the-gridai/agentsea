@@ -10,9 +10,9 @@ _ensure_bun() {
 }
 _ensure_bun
 
-# SPAWN_CLI_DIR override — force local source (used by e2e tests)
-if [[ -n "${SPAWN_CLI_DIR:-}" && -f "$SPAWN_CLI_DIR/packages/cli/src/hetzner/main.ts" ]]; then
-    exec bun run "$SPAWN_CLI_DIR/packages/cli/src/hetzner/main.ts" pi "$@"
+# AGENTSEA_CLI_DIR override — force local source (used by e2e tests)
+if [[ -n "${AGENTSEA_CLI_DIR:-}" && -f "$AGENTSEA_CLI_DIR/packages/cli/src/hetzner/main.ts" ]]; then
+    exec bun run "$AGENTSEA_CLI_DIR/packages/cli/src/hetzner/main.ts" pi "$@"
 fi
 
 HETZNER_JS=$(mktemp)

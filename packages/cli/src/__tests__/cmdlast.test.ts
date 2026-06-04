@@ -1,4 +1,4 @@
-import type { SpawnRecord } from "../history.js";
+import type { AgentseaRecord } from "../history.js";
 
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -7,7 +7,7 @@ import { asyncTryCatch } from "@agentsea/sdk";
 import { createConsoleMocks, createMockManifest, mockClackPrompts, restoreMocks } from "./test-helpers";
 
 /**
- * Tests for cmdLast — the feature added in PR #1171 that reruns the most recent spawn.
+ * Tests for cmdLast — the feature added in PR #1171 that reruns the most recent agentsea.
  *
  * cmdLast() reads history, finds the newest record, and calls cmdRun to rerun it.
  * This integration test covers:
@@ -41,7 +41,7 @@ describe("cmdLast", () => {
   let originalFetch: typeof global.fetch;
   let processExitSpy: ReturnType<typeof spyOn>;
 
-  function writeHistory(records: SpawnRecord[]) {
+  function writeHistory(records: AgentseaRecord[]) {
     writeFileSync(join(testDir, "history.json"), JSON.stringify(records));
   }
 
@@ -54,7 +54,7 @@ describe("cmdLast", () => {
   }
 
   beforeEach(async () => {
-    testDir = join(process.env.HOME ?? "", `spawn-cmdlast-test-${Date.now()}-${Math.random()}`);
+    testDir = join(process.env.HOME ?? "", `agentsea-cmdlast-test-${Date.now()}-${Math.random()}`);
     mkdirSync(testDir, {
       recursive: true,
     });
@@ -62,7 +62,7 @@ describe("cmdLast", () => {
     originalEnv = {
       ...process.env,
     };
-    process.env.SPAWN_HOME = testDir;
+    process.env.AGENTSEA_HOME = testDir;
     process.env.XDG_CACHE_HOME = join(testDir, "cache");
 
     consoleMocks = createConsoleMocks();
@@ -98,14 +98,14 @@ describe("cmdLast", () => {
   // ── Empty history ───────────────────────────────────────────────────────────
 
   describe("empty history (no records)", () => {
-    it("should show 'No spawn history found' when no history file exists", async () => {
+    it("should show 'No agentsea history found' when no history file exists", async () => {
       await cmdLast();
 
       const info = logInfoOutput();
-      expect(info).toContain("No spawn history found");
+      expect(info).toContain("No agentsea history found");
     });
 
-    it("should suggest 'spawn <agent> <cloud>' for first spawn", async () => {
+    it("should suggest 'agentsea <agent> <cloud>' for first agentsea", async () => {
       await cmdLast();
 
       const info = logInfoOutput();
@@ -120,7 +120,7 @@ describe("cmdLast", () => {
       await cmdLast();
 
       const info = logInfoOutput();
-      expect(info).toContain("No spawn history found");
+      expect(info).toContain("No agentsea history found");
     });
 
     it("should handle history file with non-array JSON", async () => {
@@ -134,14 +134,14 @@ describe("cmdLast", () => {
       await cmdLast();
 
       const info = logInfoOutput();
-      expect(info).toContain("No spawn history found");
+      expect(info).toContain("No agentsea history found");
     });
   });
 
   // ── History with records ────────────────────────────────────────────────────
 
   describe("history with records (rerunning latest)", () => {
-    const sampleRecords: SpawnRecord[] = [
+    const sampleRecords: AgentseaRecord[] = [
       {
         agent: "claude",
         cloud: "sprite",
@@ -159,7 +159,7 @@ describe("cmdLast", () => {
       },
     ];
 
-    it("should show 'Last spawn' when history exists", async () => {
+    it("should show 'Last agentsea' when history exists", async () => {
       writeHistory(sampleRecords);
 
       global.fetch = mock(() => Promise.resolve(new Response(JSON.stringify(mockManifest))));
@@ -169,7 +169,7 @@ describe("cmdLast", () => {
       await asyncTryCatch(() => cmdLast());
 
       const step = logStepOutput();
-      expect(step).toContain("Last spawn");
+      expect(step).toContain("Last agentsea");
     });
 
     it("should select the most recent record (newest first)", async () => {
@@ -275,8 +275,8 @@ describe("cmdLast", () => {
   // ── Helper function tests (buildRecordLabel and buildRecordSubtitle) ────────
 
   describe("buildRecordLabel helper", () => {
-    it("should return spawn name when present", () => {
-      const record: SpawnRecord = {
+    it("should return agentsea name when present", () => {
+      const record: AgentseaRecord = {
         agent: "claude",
         cloud: "sprite",
         timestamp: "2026-01-01T00:00:00Z",
@@ -287,22 +287,22 @@ describe("cmdLast", () => {
     });
 
     it("should fall back to server_name when no name", () => {
-      const record: SpawnRecord = {
+      const record: AgentseaRecord = {
         agent: "claude",
         cloud: "sprite",
         timestamp: "2026-01-01T00:00:00Z",
         connection: {
           ip: "1.2.3.4",
           user: "root",
-          server_name: "spawn-abc",
+          server_name: "agentsea-abc",
         },
       };
       const label = buildRecordLabel(record);
-      expect(label).toBe("spawn-abc");
+      expect(label).toBe("agentsea-abc");
     });
 
     it("should fall back to 'unnamed' when no name or server_name", () => {
-      const record: SpawnRecord = {
+      const record: AgentseaRecord = {
         agent: "claude",
         cloud: "sprite",
         timestamp: "2026-01-01T00:00:00Z",
@@ -315,7 +315,7 @@ describe("cmdLast", () => {
   describe("buildRecordSubtitle helper", () => {
     it("should include agent, cloud, and relative timestamp", () => {
       const now = new Date().toISOString();
-      const record: SpawnRecord = {
+      const record: AgentseaRecord = {
         agent: "claude",
         cloud: "sprite",
         timestamp: now,
@@ -328,7 +328,7 @@ describe("cmdLast", () => {
     });
 
     it("should use raw keys when manifest is null", () => {
-      const record: SpawnRecord = {
+      const record: AgentseaRecord = {
         agent: "claude",
         cloud: "sprite",
         timestamp: "2026-01-01T00:00:00Z",
@@ -340,7 +340,7 @@ describe("cmdLast", () => {
     });
 
     it("should include [deleted] when connection is deleted", () => {
-      const record: SpawnRecord = {
+      const record: AgentseaRecord = {
         agent: "claude",
         cloud: "sprite",
         timestamp: "2026-01-01T00:00:00Z",
@@ -374,7 +374,7 @@ describe("cmdLast", () => {
 
       const step = logStepOutput();
       // Should handle old dates gracefully
-      expect(step).toContain("Last spawn");
+      expect(step).toContain("Last agentsea");
     });
 
     it("should handle records with all metadata fields", async () => {
@@ -392,7 +392,7 @@ describe("cmdLast", () => {
       await asyncTryCatch(() => cmdLast());
 
       const step = logStepOutput();
-      expect(step).toContain("Last spawn");
+      expect(step).toContain("Last agentsea");
       expect(step).toContain("Claude Code");
     });
 

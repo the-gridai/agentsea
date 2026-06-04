@@ -47,7 +47,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               try {
                 var dark = JSON.parse(
                   localStorage.getItem('agentsea-theme') ??
-                  localStorage.getItem('grid-spawn-theme') ??
+                  localStorage.getItem('grid-agentsea-theme') ??
                   'true'
                 );
                 document.firstElementChild.classList.toggle('dark', !!dark);

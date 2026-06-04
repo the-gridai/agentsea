@@ -1,7 +1,7 @@
 // shared/orchestrate.ts — Shared orchestration pipeline for deploying agents
 // Each cloud implements CloudOrchestrator and calls runOrchestration().
 
-import type { SpawnRecord, VMConnection } from "../history.js";
+import type { AgentseaRecord, VMConnection } from "../history.js";
 import type { Manifest } from "../manifest.js";
 import type { CloudRunner } from "./agent-setup.js";
 import type { AgentConfig } from "./agents.js";
@@ -13,13 +13,13 @@ import pc from "picocolors";
 import * as v from "valibot";
 import {
   deleteProvisionCheckpoint,
-  generateSpawnId,
+  generateAgentseaId,
   mergeChildHistory,
-  patchSpawnRecord,
+  patchAgentseaRecord,
   saveLaunchCmd,
   saveMetadata,
-  SpawnRecordSchema,
-  upsertSpawnRecord,
+  AgentseaRecordSchema,
+  upsertAgentseaRecord,
   writeProvisionCheckpoint,
 } from "../history.js";
 import { offerGithubAuth, setupAutoUpdate, setupSecurityScan, wrapSshCall } from "./agent-setup.js";
@@ -31,10 +31,10 @@ import { ensureGridModelHasCredits } from "./grid-credits-guidance.js";
 import { getOrPromptApiKey } from "./oauth.js";
 import { parseJsonWith } from "./parse.js";
 import { provisionPhaseIndex } from "./provision-phases.js";
-import { getSpawnCloudConfigPath, getSpawnPreferencesPath, getTmpDir } from "./paths.js";
+import { getAgentseaCloudConfigPath, getAgentseaPreferencesPath, getTmpDir } from "./paths.js";
 import { asyncTryCatch, asyncTryCatchIf, isOperationalError, tryCatch } from "./result.js";
 import { isWindows } from "./shell.js";
-import { injectSpawnSkill } from "./spawn-skill.js";
+import { injectAgentseaSkill } from "./agentsea-skill.js";
 import { sleep, startSshTunnel } from "./ssh.js";
 import { logT3PairingHandoff, startT3PairingBrowserWatcher } from "./t3-config.js";
 import { buildCloudOrchestratorForResume } from "./resume-cloud-factory.js";
@@ -81,7 +81,7 @@ function logDashboardAuthHandoff(url: string, gatewayToken?: string): void {
 // ── Funnel telemetry ────────────────────────────────────────────────────────
 //
 // Tracks onboarding pipeline drop-off. Events flow through the shared
-// PostHog pipeline in shared/telemetry.ts and respect SPAWN_TELEMETRY=0 opt-out.
+// PostHog pipeline in shared/telemetry.ts and respect AGENTSEA_TELEMETRY=0 opt-out.
 // No PII — only agent/cloud names and elapsed timing. The goal is to answer
 // "where do users bail before reaching a running agent" at the fleet level.
 let _funnelStart = 0;
@@ -102,14 +102,14 @@ function shortProvisionError(err: unknown): string {
   return m.length > 400 ? `${m.slice(0, 397)}...` : m;
 }
 
-function finalizeProvisionSuccess(spawnId: string, softFailures: string[]): void {
-  patchSpawnRecord(spawnId, {
+function finalizeProvisionSuccess(agentseaId: string, softFailures: string[]): void {
+  patchAgentseaRecord(agentseaId, {
     provision_phase: "complete",
     provision_status: softFailures.length > 0 ? "degraded" : "complete",
     post_install_soft_failures: softFailures.length > 0 ? softFailures : undefined,
     provision_error: undefined,
   });
-  deleteProvisionCheckpoint(spawnId);
+  deleteProvisionCheckpoint(agentseaId);
 }
 
 /**
@@ -156,7 +156,7 @@ export function normalizeRepoUrl(input: string): string | null {
 }
 
 /** Docker container name used by --beta docker deployments. */
-export const DOCKER_CONTAINER_NAME = "spawn-agent";
+export const DOCKER_CONTAINER_NAME = "agentsea-agent";
 /** Docker registry hosting AgentSea agent images (see todo.md until first-party mirrors exist). */
 export const DOCKER_REGISTRY = VENDOR_AGENT_IMAGE_REGISTRY;
 
@@ -228,20 +228,20 @@ export interface CloudOrchestratorCapabilities {
 function wrapWithRestartLoop(cmd: string): string {
   // Shell restart loop — bash 3.x compatible (no ((var++)), no set -u)
   return [
-    "_spawn_restarts=0",
-    "_spawn_max=10",
-    'while [ "$_spawn_restarts" -lt "$_spawn_max" ]; do',
+    "_agentsea_restarts=0",
+    "_agentsea_max=10",
+    'while [ "$_agentsea_restarts" -lt "$_agentsea_max" ]; do',
     `  ${cmd}`,
-    "  _spawn_exit=$?",
-    '  if [ "$_spawn_exit" -eq 0 ]; then break; fi',
-    "  _spawn_restarts=$((_spawn_restarts + 1))",
-    '  printf "\\n[spawn] Agent exited with code %d. Restarting in 5s (%d/%d)...\\n" "$_spawn_exit" "$_spawn_restarts" "$_spawn_max" >&2',
+    "  _agentsea_exit=$?",
+    '  if [ "$_agentsea_exit" -eq 0 ]; then break; fi',
+    "  _agentsea_restarts=$((_agentsea_restarts + 1))",
+    '  printf "\\n[agentsea] Agent exited with code %d. Restarting in 5s (%d/%d)...\\n" "$_agentsea_exit" "$_agentsea_restarts" "$_agentsea_max" >&2',
     "  sleep 5",
     "done",
-    'if [ "$_spawn_restarts" -ge "$_spawn_max" ]; then',
-    '  printf "\\n[spawn] Agent crashed %d times. Giving up.\\n" "$_spawn_max" >&2',
+    'if [ "$_agentsea_restarts" -ge "$_agentsea_max" ]; then',
+    '  printf "\\n[agentsea] Agent crashed %d times. Giving up.\\n" "$_agentsea_max" >&2',
     "fi",
-    'exit "${_spawn_exit:-0}"',
+    'exit "${_agentsea_exit:-0}"',
   ].join("\n");
 }
 
@@ -270,11 +270,11 @@ function isConnectionDropCode(cloud: CloudOrchestrator, code: number): boolean {
   return code === 255 || extraCodes.includes(code);
 }
 
-// ── Recursive spawn helpers ──────────────────────────────────────────────────
+// ── Recursive agentsea helpers ──────────────────────────────────────────────────
 
-/** Install the spawn CLI on a remote VM. */
-export async function installSpawnCli(runner: CloudRunner): Promise<void> {
-  logStep("Installing spawn CLI on VM...");
+/** Install the agentsea CLI on a remote VM. */
+export async function installAgentseaCli(runner: CloudRunner): Promise<void> {
+  logStep("Installing agentsea CLI on VM...");
   // Build PATH explicitly — non-interactive bash skips .bashrc (PS1 guard),
   // and some platforms (Sprite) have a broken bun shim that finds via
   // `command -v` but doesn't actually work. We prepend all known bun
@@ -290,9 +290,9 @@ export async function installSpawnCli(runner: CloudRunner): Promise<void> {
     withRetry(`${AGENTSEA_CLI} CLI install`, () => wrapSshCall(runner.runServer(installCmd)), 2, 5),
   );
   if (!result.ok) {
-    logWarn("Spawn CLI install failed — recursive spawning will not be available on this VM");
+    logWarn("Agentsea CLI install failed — recursive spawning will not be available on this VM");
   } else {
-    logAlwaysInfo("Spawn CLI installed on VM");
+    logAlwaysInfo("Agentsea CLI installed on VM");
   }
 }
 
@@ -305,7 +305,7 @@ export async function delegateCloudCredentials(runner: CloudRunner): Promise<voi
     remotePath: string;
   }[] = [];
 
-  // Delegate ALL cloud credentials so the child VM can spawn on any cloud,
+  // Delegate ALL cloud credentials so the child VM can agentsea on any cloud,
   // not just the one the parent is running on.
   const cloudNames = [
     "hetzner",
@@ -315,7 +315,7 @@ export async function delegateCloudCredentials(runner: CloudRunner): Promise<voi
     "sprite",
   ];
   for (const cloud of cloudNames) {
-    const cloudConfigPath = getSpawnCloudConfigPath(cloud);
+    const cloudConfigPath = getAgentseaCloudConfigPath(cloud);
     if (existsSync(cloudConfigPath)) {
       filesToDelegate.push({
         localPath: cloudConfigPath,
@@ -325,7 +325,7 @@ export async function delegateCloudCredentials(runner: CloudRunner): Promise<voi
   }
 
   // Saved The Grid API key (~/.config/agentsea/thegrid.json) for child spawns
-  const orConfigPath = getSpawnCloudConfigPath("thegrid");
+  const orConfigPath = getAgentseaCloudConfigPath("thegrid");
   if (existsSync(orConfigPath)) {
     filesToDelegate.push({
       localPath: orConfigPath,
@@ -364,13 +364,13 @@ export async function delegateCloudCredentials(runner: CloudRunner): Promise<voi
   logAlwaysInfo("Cloud credentials delegated to VM");
 }
 
-/** Get parent_id and depth fields for spawn records (set when running inside a child VM). */
+/** Get parent_id and depth fields for agentsea records (set when running inside a child VM). */
 function getParentFields(): {
   parent_id?: string;
   depth?: number;
 } {
-  const parentId = process.env.SPAWN_PARENT_ID;
-  const depth = Number(process.env.SPAWN_DEPTH) || 0;
+  const parentId = process.env.AGENTSEA_PARENT_ID;
+  const depth = Number(process.env.AGENTSEA_DEPTH) || 0;
   return parentId
     ? {
         parent_id: parentId,
@@ -383,17 +383,17 @@ function getParentFields(): {
       : {};
 }
 
-/** Build and persist a SpawnRecord for a newly-created server. */
-function recordSpawn(spawnId: string, agentName: string, cloudName: string, connection: VMConnection): void {
-  const spawnName = process.env.SPAWN_NAME_KEBAB || process.env.SPAWN_NAME || undefined;
-  upsertSpawnRecord({
-    id: spawnId,
+/** Build and persist a AgentseaRecord for a newly-created server. */
+function recordAgentsea(agentseaId: string, agentName: string, cloudName: string, connection: VMConnection): void {
+  const agentseaName = process.env.AGENTSEA_NAME_KEBAB || process.env.AGENTSEA_NAME || undefined;
+  upsertAgentseaRecord({
+    id: agentseaId,
     agent: agentName,
     cloud: cloudName,
     timestamp: new Date().toISOString(),
-    ...(spawnName
+    ...(agentseaName
       ? {
-          name: spawnName,
+          name: agentseaName,
         }
       : {}),
     ...getParentFields(),
@@ -404,12 +404,12 @@ function recordSpawn(spawnId: string, agentName: string, cloudName: string, conn
   });
 }
 
-/** Append recursive-spawn env vars to the envPairs array when --beta recursive is active. */
-export function appendRecursiveEnvVars(envPairs: string[], spawnId: string): void {
-  const currentDepth = Number(process.env.SPAWN_DEPTH) || 0;
-  envPairs.push(`SPAWN_PARENT_ID=${spawnId}`);
-  envPairs.push(`SPAWN_DEPTH=${currentDepth + 1}`);
-  envPairs.push("SPAWN_BETA=recursive");
+/** Append recursive-agentsea env vars to the envPairs array when --beta recursive is active. */
+export function appendRecursiveEnvVars(envPairs: string[], agentseaId: string): void {
+  const currentDepth = Number(process.env.AGENTSEA_DEPTH) || 0;
+  envPairs.push(`AGENTSEA_PARENT_ID=${agentseaId}`);
+  envPairs.push(`AGENTSEA_DEPTH=${currentDepth + 1}`);
+  envPairs.push("AGENTSEA_BETA=recursive");
 }
 
 /** Options for runOrchestration (used in tests to inject mock dependencies). */
@@ -434,7 +434,7 @@ const PreferencesSchema = v.object({
 
 function loadPreferredModel(agentName: string): string | null {
   const result = tryCatch(() => {
-    const raw = JSON.parse(readFileSync(getSpawnPreferencesPath(), "utf-8"));
+    const raw = JSON.parse(readFileSync(getAgentseaPreferencesPath(), "utf-8"));
     const parsed = v.safeParse(PreferencesSchema, raw);
     if (!parsed.success) {
       return null;
@@ -456,9 +456,9 @@ function shouldOfferGridModelPicker(agent: AgentConfig, preference: string | nul
     return false;
   }
   if (
-    process.env.SPAWN_NON_INTERACTIVE === "1" ||
-    process.env.SPAWN_HEADLESS === "1" ||
-    process.env.SPAWN_SKIP_MODEL_PROMPT === "1"
+    process.env.AGENTSEA_NON_INTERACTIVE === "1" ||
+    process.env.AGENTSEA_HEADLESS === "1" ||
+    process.env.AGENTSEA_SKIP_MODEL_PROMPT === "1"
   ) {
     return false;
   }
@@ -502,11 +502,11 @@ async function resolveProvisionModelId(
       if (
         !authRetried &&
         isInteractiveTTY() &&
-        process.env.SPAWN_NON_INTERACTIVE !== "1" &&
-        process.env.SPAWN_HEADLESS !== "1"
+        process.env.AGENTSEA_NON_INTERACTIVE !== "1" &&
+        process.env.AGENTSEA_HEADLESS !== "1"
       ) {
         logWarn(
-          "If you removed your key, unset THEGRID_API_KEY or run with SPAWN_REAUTH=1 — a stale key may still be exported from ~/.spawnrc in your shell.",
+          "If you removed your key, unset THEGRID_API_KEY or run with AGENTSEA_REAUTH=1 — a stale key may still be exported from ~/.agentsearc in your shell.",
         );
         delete process.env.THEGRID_API_KEY;
         const freshKey = await getOrPromptApiKey(agentName);
@@ -567,7 +567,7 @@ export async function runOrchestration(
   setTelemetryContext("cloud", cloud.cloudName);
   trackFunnel("funnel_started");
 
-  let failureSpawnId: string | undefined;
+  let failureAgentseaId: string | undefined;
 
   const orchestrationResult = await asyncTryCatch(async () => {
     await cloud.authenticate();
@@ -577,11 +577,11 @@ export async function runOrchestration(
       await cloud.ensureReadyBeforeSizing();
     }
 
-    const spawnId = generateSpawnId();
-    failureSpawnId = spawnId;
+    const agentseaId = generateAgentseaId();
+    failureAgentseaId = agentseaId;
     const stubTs = new Date().toISOString();
     writeProvisionCheckpoint({
-      id: spawnId,
+      id: agentseaId,
       agent: agentName,
       cloud: cloud.cloudName,
       timestamp: stubTs,
@@ -591,8 +591,8 @@ export async function runOrchestration(
       ...getParentFields(),
     });
 
-    const betaFeatures = new Set((process.env.SPAWN_BETA ?? "").split(",").filter(Boolean));
-    const fastMode = process.env.SPAWN_FAST === "1" || betaFeatures.has("parallel");
+    const betaFeatures = new Set((process.env.AGENTSEA_BETA ?? "").split(",").filter(Boolean));
+    const fastMode = process.env.AGENTSEA_FAST === "1" || betaFeatures.has("parallel");
     const useTarball = fastMode || betaFeatures.has("tarball");
 
     if ((useTarball || cloud.skipAgentInstall) && !isLocalRuntime(cloud) && (agent.cloudInitTier === "minimal" || !agent.cloudInitTier)) {
@@ -600,7 +600,7 @@ export async function runOrchestration(
     }
 
     await cloud.promptSize();
-    patchSpawnRecord(spawnId, {
+    patchAgentseaRecord(agentseaId, {
       provision_phase: "cloud_authenticated",
       provision_status: "in_progress",
     });
@@ -613,18 +613,18 @@ export async function runOrchestration(
       const keepAlive = setInterval(() => {}, 60_000);
 
       const serverBootPromise = (async () => {
-        patchSpawnRecord(spawnId, {
+        patchAgentseaRecord(agentseaId, {
           provision_phase: "vm_creating",
           provision_status: "in_progress",
         });
         const conn = await cloud.createServer(serverName);
-        recordSpawn(spawnId, agentName, cloud.cloudName, conn);
-        patchSpawnRecord(spawnId, {
+        recordAgentsea(agentseaId, agentName, cloud.cloudName, conn);
+        patchAgentseaRecord(agentseaId, {
           provision_phase: "vm_waiting",
           provision_status: "in_progress",
         });
         await cloud.waitForReady();
-        patchSpawnRecord(spawnId, {
+        patchAgentseaRecord(agentseaId, {
           provision_phase: "vm_ready",
           provision_status: "in_progress",
         });
@@ -655,18 +655,18 @@ export async function runOrchestration(
       if (bootResult.status === "rejected") {
         logError(getErrorMessage(bootResult.reason));
         await retryOrQuit("Retry server creation?");
-        patchSpawnRecord(spawnId, {
+        patchAgentseaRecord(agentseaId, {
           provision_phase: "vm_creating",
           provision_status: "in_progress",
         });
         const connection = await cloud.createServer(serverName);
-        recordSpawn(spawnId, agentName, cloud.cloudName, connection);
-        patchSpawnRecord(spawnId, {
+        recordAgentsea(agentseaId, agentName, cloud.cloudName, connection);
+        patchAgentseaRecord(agentseaId, {
           provision_phase: "vm_waiting",
           provision_status: "in_progress",
         });
         await cloud.waitForReady();
-        patchSpawnRecord(spawnId, {
+        patchAgentseaRecord(agentseaId, {
           provision_phase: "vm_ready",
           provision_status: "in_progress",
         });
@@ -677,7 +677,7 @@ export async function runOrchestration(
         throw apiKeyResult.reason;
       }
       const apiKey = apiKeyResult.value;
-      patchSpawnRecord(spawnId, {
+      patchAgentseaRecord(agentseaId, {
         provision_phase: "credentials_ready",
         provision_status: "in_progress",
       });
@@ -690,14 +690,14 @@ export async function runOrchestration(
         envPairs.push(`${agent.modelEnvVar}=${modelId}`);
       }
       if (betaFeatures.has("recursive")) {
-        appendRecursiveEnvVars(envPairs, spawnId);
+        appendRecursiveEnvVars(envPairs, agentseaId);
       }
       const envContent = generateEnvConfig(envPairs);
 
       if (cloud.skipAgentInstall) {
         logInfo("Snapshot boot — skipping agent install");
       } else {
-        patchSpawnRecord(spawnId, {
+        patchAgentseaRecord(agentseaId, {
           provision_phase: "agent_installing",
           provision_status: "in_progress",
         });
@@ -716,7 +716,7 @@ export async function runOrchestration(
             await retryOrQuit("Retry agent install?");
           }
         }
-        patchSpawnRecord(spawnId, {
+        patchAgentseaRecord(agentseaId, {
           provision_phase: "agent_installed",
           provision_status: "in_progress",
         });
@@ -725,20 +725,20 @@ export async function runOrchestration(
 
       clearInterval(keepAlive);
       const envSoft: string[] = [];
-      patchSpawnRecord(spawnId, {
+      patchAgentseaRecord(agentseaId, {
         provision_phase: "env_injecting",
         provision_status: "in_progress",
       });
       await injectEnvVars(cloud, envContent, envSoft);
-      patchSpawnRecord(spawnId, {
+      patchAgentseaRecord(agentseaId, {
         provision_phase: "env_injected",
         provision_status: "in_progress",
       });
-      patchSpawnRecord(spawnId, {
+      patchAgentseaRecord(agentseaId, {
         provision_phase: "post_install",
         provision_status: "in_progress",
       });
-      await runPostInstallPhase(cloud, agent, agentName, apiKey, modelId, spawnId, envSoft, options);
+      await runPostInstallPhase(cloud, agent, agentName, apiKey, modelId, agentseaId, envSoft, options);
     } else {
       if (cloud.checkAccountReady && !skipParallelAccountReadyCheck(cloud)) {
         const r = await asyncTryCatch(() => cloud.checkAccountReady!());
@@ -750,7 +750,7 @@ export async function runOrchestration(
 
       const resolveApiKey = options?.getApiKey ?? getOrPromptApiKey;
       const apiKey = await resolveApiKey(agentName, cloud.cloudName);
-      patchSpawnRecord(spawnId, {
+      patchAgentseaRecord(agentseaId, {
         provision_phase: "credentials_ready",
         provision_status: "in_progress",
       });
@@ -767,7 +767,7 @@ export async function runOrchestration(
       const modelId = await resolveProvisionModelId(agentName, agent, apiKey);
 
       let connection: VMConnection;
-      patchSpawnRecord(spawnId, {
+      patchAgentseaRecord(agentseaId, {
         provision_phase: "vm_creating",
         provision_status: "in_progress",
       });
@@ -780,9 +780,9 @@ export async function runOrchestration(
         logError(getErrorMessage(r.error));
         await retryOrQuit("Retry server creation?");
       }
-      recordSpawn(spawnId, agentName, cloud.cloudName, connection);
+      recordAgentsea(agentseaId, agentName, cloud.cloudName, connection);
 
-      patchSpawnRecord(spawnId, {
+      patchAgentseaRecord(agentseaId, {
         provision_phase: "vm_waiting",
         provision_status: "in_progress",
       });
@@ -794,7 +794,7 @@ export async function runOrchestration(
         logError(getErrorMessage(r.error));
         await retryOrQuit("Server may still be starting. Keep waiting?");
       }
-      patchSpawnRecord(spawnId, {
+      patchAgentseaRecord(agentseaId, {
         provision_phase: "vm_ready",
         provision_status: "in_progress",
       });
@@ -805,14 +805,14 @@ export async function runOrchestration(
         envPairs.push(`${agent.modelEnvVar}=${modelId}`);
       }
       if (betaFeatures.has("recursive")) {
-        appendRecursiveEnvVars(envPairs, spawnId);
+        appendRecursiveEnvVars(envPairs, agentseaId);
       }
       const envContent = generateEnvConfig(envPairs);
 
       if (cloud.skipAgentInstall) {
         logInfo("Snapshot boot — skipping agent install");
       } else {
-        patchSpawnRecord(spawnId, {
+        patchAgentseaRecord(agentseaId, {
           provision_phase: "agent_installing",
           provision_status: "in_progress",
         });
@@ -831,7 +831,7 @@ export async function runOrchestration(
             await retryOrQuit("Retry agent install?");
           }
         }
-        patchSpawnRecord(spawnId, {
+        patchAgentseaRecord(agentseaId, {
           provision_phase: "agent_installed",
           provision_status: "in_progress",
         });
@@ -839,26 +839,26 @@ export async function runOrchestration(
       trackFunnel("funnel_install_completed");
 
       const envSoft: string[] = [];
-      patchSpawnRecord(spawnId, {
+      patchAgentseaRecord(agentseaId, {
         provision_phase: "env_injecting",
         provision_status: "in_progress",
       });
       await injectEnvVars(cloud, envContent, envSoft);
-      patchSpawnRecord(spawnId, {
+      patchAgentseaRecord(agentseaId, {
         provision_phase: "env_injected",
         provision_status: "in_progress",
       });
-      patchSpawnRecord(spawnId, {
+      patchAgentseaRecord(agentseaId, {
         provision_phase: "post_install",
         provision_status: "in_progress",
       });
-      await runPostInstallPhase(cloud, agent, agentName, apiKey, modelId, spawnId, envSoft, options);
+      await runPostInstallPhase(cloud, agent, agentName, apiKey, modelId, agentseaId, envSoft, options);
     }
   });
 
   if (!orchestrationResult.ok) {
-    if (failureSpawnId) {
-      patchSpawnRecord(failureSpawnId, {
+    if (failureAgentseaId) {
+      patchAgentseaRecord(failureAgentseaId, {
         provision_status: "failed",
         provision_error: shortProvisionError(orchestrationResult.error),
       });
@@ -869,7 +869,7 @@ export async function runOrchestration(
 
 /** Continue provisioning from last recorded phase (DigitalOcean / Hetzner SSH clouds). */
 export async function resumeOrchestrationFromRecord(
-  record: SpawnRecord,
+  record: AgentseaRecord,
   manifest: Manifest,
   options?: OrchestrationOptions,
 ): Promise<void> {
@@ -877,7 +877,7 @@ export async function resumeOrchestrationFromRecord(
     throw new Error(`Unknown agent in history: ${record.agent}`);
   }
 
-  patchSpawnRecord(record.id, {
+  patchAgentseaRecord(record.id, {
     provision_status: "in_progress",
     provision_error: undefined,
   });
@@ -902,9 +902,9 @@ export async function resumeOrchestrationFromRecord(
   const apiKey = await resolveApiKey(record.agent, record.cloud);
 
   const modelId = await resolveProvisionModelId(record.agent, agent, apiKey);
-  const betaFeatures = new Set((process.env.SPAWN_BETA ?? "").split(",").filter(Boolean));
+  const betaFeatures = new Set((process.env.AGENTSEA_BETA ?? "").split(",").filter(Boolean));
   const useTarball =
-    process.env.SPAWN_FAST === "1" || betaFeatures.has("parallel") || betaFeatures.has("tarball");
+    process.env.AGENTSEA_FAST === "1" || betaFeatures.has("parallel") || betaFeatures.has("tarball");
 
   const envPairs = agent.envVars(apiKey);
   if (modelId && agent.modelEnvVar) {
@@ -918,11 +918,11 @@ export async function resumeOrchestrationFromRecord(
   const phaseIdx = provisionPhaseIndex(record.provision_phase);
 
   if (phaseIdx < provisionPhaseIndex("vm_ready")) {
-    patchSpawnRecord(record.id, {
+    patchAgentseaRecord(record.id, {
       provision_phase: "vm_waiting",
     });
     await cloud.waitForReady();
-    patchSpawnRecord(record.id, {
+    patchAgentseaRecord(record.id, {
       provision_phase: "vm_ready",
     });
   }
@@ -931,7 +931,7 @@ export async function resumeOrchestrationFromRecord(
     if (cloud.skipAgentInstall) {
       logInfo("Snapshot boot — skipping agent install");
     } else {
-      patchSpawnRecord(record.id, {
+      patchAgentseaRecord(record.id, {
         provision_phase: "agent_installing",
       });
       let installed = false;
@@ -946,23 +946,23 @@ export async function resumeOrchestrationFromRecord(
         }
       }
     }
-    patchSpawnRecord(record.id, {
+    patchAgentseaRecord(record.id, {
       provision_phase: "agent_installed",
     });
   }
 
   const envSoft: string[] = [];
   if (phaseIdx < provisionPhaseIndex("env_injected")) {
-    patchSpawnRecord(record.id, {
+    patchAgentseaRecord(record.id, {
       provision_phase: "env_injecting",
     });
     await injectEnvVars(cloud, envContent, envSoft);
-    patchSpawnRecord(record.id, {
+    patchAgentseaRecord(record.id, {
       provision_phase: "env_injected",
     });
   }
 
-  patchSpawnRecord(record.id, {
+  patchAgentseaRecord(record.id, {
     provision_phase: "post_install",
   });
   if (options?.testResumeStopBeforePostInstall) {
@@ -971,7 +971,7 @@ export async function resumeOrchestrationFromRecord(
   await runPostInstallPhase(cloud, agent, record.agent, apiKey, modelId, record.id, envSoft, options);
 }
 
-/** Write env content to ~/.spawnrc and ensure all shell rc files source it. */
+/** Write env content to ~/.agentsearc and ensure all shell rc files source it. */
 export async function injectEnvVarsToRunner(runner: CloudRunner, envContent: string): Promise<boolean> {
   logStep("Setting up environment variables...");
   const envB64 = Buffer.from(envContent).toString("base64");
@@ -980,9 +980,9 @@ export async function injectEnvVarsToRunner(runner: CloudRunner, envContent: str
   }
 
   const envSetupCmd =
-    `printf '%s' '${envB64}' | base64 -d > ~/.spawnrc && chmod 600 ~/.spawnrc; ` +
+    `printf '%s' '${envB64}' | base64 -d > ~/.agentsearc && chmod 600 ~/.agentsearc; ` +
     "for _rc in ~/.bashrc ~/.profile ~/.bash_profile ~/.zshrc; do " +
-    `grep -q 'source ~/.spawnrc' "$_rc" 2>/dev/null || echo '[ -f ~/.spawnrc ] && source ~/.spawnrc' >> "$_rc"; ` +
+    `grep -q 'source ~/.agentsearc' "$_rc" 2>/dev/null || echo '[ -f ~/.agentsearc ] && source ~/.agentsearc' >> "$_rc"; ` +
     "done";
 
   const envResult = await asyncTryCatch(() =>
@@ -1004,7 +1004,7 @@ async function injectEnvVars(cloud: CloudOrchestrator, envContent: string, softF
       throw new Error("Unexpected characters in base64 output");
     }
     const envSetupCmd =
-      `$bytes = [Convert]::FromBase64String('${envB64}'); ` + `[IO.File]::WriteAllBytes("$HOME/.spawnrc", $bytes)`;
+      `$bytes = [Convert]::FromBase64String('${envB64}'); ` + `[IO.File]::WriteAllBytes("$HOME/.agentsearc", $bytes)`;
     const envResult = await asyncTryCatch(() =>
       withRetry("env setup", () => wrapSshCall(cloud.runner.runServer(envSetupCmd)), 2, 5),
     );
@@ -1026,18 +1026,18 @@ export async function runPostInstallPhase(
   agentName: string,
   apiKey: string,
   modelId: string | undefined,
-  spawnId: string,
+  agentseaId: string,
   provisionSoftFailures: string[],
   options?: OrchestrationOptions,
 ): Promise<void> {
   const soft = provisionSoftFailures;
-  // ── Repo clone + spawn.md (--repo mode) ────────────────────────────────
+  // ── Repo clone + agentsea.md (--repo mode) ────────────────────────────────
   // Built-in steps (github, auto-update, etc.) come from the CLI --steps
-  // flag, not from spawn.md.  spawn.md only handles custom setup (OAuth,
+  // flag, not from agentsea.md.  agentsea.md only handles custom setup (OAuth,
   // MCP servers, setup commands).
-  let spawnMdConfig: import("./spawn-md.js").SpawnMdConfig | null = null;
+  let agentseaMdConfig: import("./agentsea-md.js").AgentseaMdConfig | null = null;
   let repoCloned = false;
-  const repoArg = process.env.SPAWN_REPO;
+  const repoArg = process.env.AGENTSEA_REPO;
   if (repoArg && !isLocalRuntime(cloud)) {
     const cloneUrl = normalizeRepoUrl(repoArg);
     if (!cloneUrl) {
@@ -1052,10 +1052,10 @@ export async function runPostInstallPhase(
         soft.push("repo_clone");
       } else {
         repoCloned = true;
-        const { readRemoteSpawnMd } = await import("./spawn-md.js");
-        spawnMdConfig = await readRemoteSpawnMd(cloud.runner);
-        if (spawnMdConfig) {
-          logInfo(`Template loaded: ${spawnMdConfig.name ?? repoArg}`);
+        const { readRemoteAgentseaMd } = await import("./agentsea-md.js");
+        agentseaMdConfig = await readRemoteAgentseaMd(cloud.runner);
+        if (agentseaMdConfig) {
+          logInfo(`Template loaded: ${agentseaMdConfig.name ?? repoArg}`);
         }
       }
     }
@@ -1063,8 +1063,8 @@ export async function runPostInstallPhase(
 
   // Parse enabled setup steps
   let enabledSteps: Set<string> | undefined;
-  const stepsEnv = process.env.SPAWN_ENABLED_STEPS;
-  const isHeadless = process.env.SPAWN_HEADLESS === "1";
+  const stepsEnv = process.env.AGENTSEA_ENABLED_STEPS;
+  const isHeadless = process.env.AGENTSEA_HEADLESS === "1";
   if (stepsEnv !== undefined) {
     const stepNames = stepsEnv.split(",").filter(Boolean);
     if (stepNames.length > 0) {
@@ -1111,7 +1111,7 @@ export async function runPostInstallPhase(
         {
           auto_update_enabled: "1",
         },
-        spawnId,
+        agentseaId,
       );
     }
     if (cloud.setupAutoUpdate) {
@@ -1126,7 +1126,7 @@ export async function runPostInstallPhase(
       {
         auto_update_enabled: "0",
       },
-      spawnId,
+      agentseaId,
     );
   }
 
@@ -1135,22 +1135,22 @@ export async function runPostInstallPhase(
     await setupSecurityScan(cloud.runner);
   }
 
-  // Spawn CLI + skill injection (recursive spawn)
-  // The "spawn" step is defaultOn when --beta recursive is active, so it should
+  // Agentsea CLI + skill injection (recursive agentsea)
+  // The "agentsea" step is defaultOn when --beta recursive is active, so it should
   // run when no explicit steps are selected (!enabledSteps) AND the beta flag is set.
-  const betaFeaturesPost = new Set((process.env.SPAWN_BETA ?? "").split(",").filter(Boolean));
+  const betaFeaturesPost = new Set((process.env.AGENTSEA_BETA ?? "").split(",").filter(Boolean));
   if (
     !isLocalRuntime(cloud) &&
     betaFeaturesPost.has("recursive") &&
-    (!enabledSteps || enabledSteps.has("spawn"))
+    (!enabledSteps || enabledSteps.has("agentsea"))
   ) {
-    await installSpawnCli(cloud.runner);
+    await installAgentseaCli(cloud.runner);
     await delegateCloudCredentials(cloud.runner);
-    await injectSpawnSkill(cloud.runner, agentName);
+    await injectAgentseaSkill(cloud.runner, agentName);
   }
 
   // Skill installation (--beta skills)
-  const selectedSkillsEnv = process.env.SPAWN_SELECTED_SKILLS;
+  const selectedSkillsEnv = process.env.AGENTSEA_SELECTED_SKILLS;
   if (selectedSkillsEnv && !isLocalRuntime(cloud)) {
     const skillIds = selectedSkillsEnv.split(",").filter(Boolean);
     if (skillIds.length > 0) {
@@ -1160,8 +1160,8 @@ export async function runPostInstallPhase(
         const { installSkills } = await import("./skills.js");
         await installSkills(cloud.runner, manifestForSkills, agentName, skillIds);
 
-        // Append skill env vars to .spawnrc so MCP servers can resolve ${VAR} at runtime
-        const skillEnvPairs = (process.env.SPAWN_SKILL_ENV_PAIRS ?? "").split(",").filter(Boolean);
+        // Append skill env vars to .agentsearc so MCP servers can resolve ${VAR} at runtime
+        const skillEnvPairs = (process.env.AGENTSEA_SKILL_ENV_PAIRS ?? "").split(",").filter(Boolean);
         if (skillEnvPairs.length > 0) {
           const validKeyRe = /^[A-Z_][A-Z0-9_]*$/;
           const envLines = skillEnvPairs
@@ -1186,13 +1186,13 @@ export async function runPostInstallPhase(
             .filter(Boolean)
             .join("\n");
           if (envLines) {
-            const payload = `\n# [spawn:skills]\n${envLines}\n`;
+            const payload = `\n# [agentsea:skills]\n${envLines}\n`;
             const payloadB64 = Buffer.from(payload).toString("base64");
             if (!/^[A-Za-z0-9+/=]+$/.test(payloadB64)) {
               logWarn("Unexpected characters in skill env payload base64");
             } else {
               await asyncTryCatch(() =>
-                cloud.runner.runServer(`printf '%s' '${payloadB64}' | base64 -d >> ~/.spawnrc`),
+                cloud.runner.runServer(`printf '%s' '${payloadB64}' | base64 -d >> ~/.agentsearc`),
               );
             }
           }
@@ -1201,10 +1201,10 @@ export async function runPostInstallPhase(
     }
   }
 
-  // Apply spawn.md custom setup (after built-in steps, before pre-launch)
-  if (spawnMdConfig) {
-    const { applySpawnMdSetup } = await import("./spawn-md.js");
-    await applySpawnMdSetup(cloud.runner, spawnMdConfig, agentName);
+  // Apply agentsea.md custom setup (after built-in steps, before pre-launch)
+  if (agentseaMdConfig) {
+    const { applyAgentseaMdSetup } = await import("./agentsea-md.js");
+    await applyAgentseaMdSetup(cloud.runner, agentseaMdConfig, agentName);
   }
 
   // Pre-launch hooks (retry loop)
@@ -1297,7 +1297,7 @@ export async function runPostInstallPhase(
     if (tunnelHandle) {
       tunnelMeta.tunnel_local_port = String(tunnelHandle.localPort);
     }
-    saveMetadata(tunnelMeta, spawnId);
+    saveMetadata(tunnelMeta, agentseaId);
   }
 
   // Channel setup
@@ -1320,7 +1320,7 @@ export async function runPostInstallPhase(
       const escaped = shellQuote(pairingCode);
       const result = await asyncTryCatchIf(isOperationalError, () =>
         cloud.runner.runServer(
-          `source ~/.spawnrc 2>/dev/null; ${ocPath}; openclaw pairing approve telegram ${escaped}`,
+          `source ~/.agentsearc 2>/dev/null; ${ocPath}; openclaw pairing approve telegram ${escaped}`,
         ),
       );
       if (result.ok) {
@@ -1346,7 +1346,7 @@ export async function runPostInstallPhase(
   // Downstream analysis: (funnel_started count) - (funnel_handoff count) =
   // total drop-off. Per-step counts reveal where the drop-off happens.
   trackFunnel("funnel_handoff", {
-    headless: process.env.SPAWN_HEADLESS === "1",
+    headless: process.env.AGENTSEA_HEADLESS === "1",
   });
 
   // When --repo cloned successfully, launch the agent inside the cloned
@@ -1355,13 +1355,13 @@ export async function runPostInstallPhase(
   // into a non-existent dir.
   const baseLaunchCmd = agent.launchCmd();
   const launchCmd = repoCloned ? `cd ~/project && ${baseLaunchCmd}` : baseLaunchCmd;
-  saveLaunchCmd(launchCmd, spawnId);
-  finalizeProvisionSuccess(spawnId, soft);
+  saveLaunchCmd(launchCmd, agentseaId);
+  finalizeProvisionSuccess(agentseaId, soft);
 
   // In headless mode, provisioning is done — skip the interactive session.
   // If --prompt was provided and the agent has a promptCmd, execute the prompt on the VM.
   if (isHeadless) {
-    const headlessPrompt = process.env.SPAWN_PROMPT;
+    const headlessPrompt = process.env.AGENTSEA_PROMPT;
     if (headlessPrompt && agent.promptCmd) {
       logAlwaysInfo("Headless mode — running prompt on provisioned VM...");
       const promptRunCmd = agent.promptCmd(headlessPrompt);
@@ -1384,7 +1384,7 @@ export async function runPostInstallPhase(
       tunnelHandle.stop();
     }
     if (!isLocalRuntime(cloud)) {
-      await pullChildHistory(cloud.runner, spawnId);
+      await pullChildHistory(cloud.runner, agentseaId);
     }
     process.exit(0);
   }
@@ -1401,7 +1401,7 @@ export async function runPostInstallPhase(
   prepareStdinForHandoff();
 
   const tunnelPortExport = tunnelHandle
-    ? `export SPAWN_TUNNEL_LOCAL_PORT=${tunnelHandle.localPort}; `
+    ? `export AGENTSEA_TUNNEL_LOCAL_PORT=${tunnelHandle.localPort}; `
     : "";
   const sessionCmd = isLocalRuntime(cloud)
     ? `${tunnelPortExport}${launchCmd}`
@@ -1439,25 +1439,25 @@ export async function runPostInstallPhase(
   }
   t3PairingWatcher?.stop();
 
-  // Pull child's spawn history back to the parent for `spawn tree`.
+  // Pull child's agentsea history back to the parent for `agentsea tree`.
   // Fire-and-forget — never delay exit for a convenience feature.
   // process.exit() below kills any in-flight SSH calls.
   if (!isLocalRuntime(cloud)) {
-    pullChildHistory(cloud.runner, spawnId).catch(() => {});
+    pullChildHistory(cloud.runner, agentseaId).catch(() => {});
   }
 
   process.exit(exitCode);
 }
 
 /**
- * Pull spawn history from a child VM and merge it into local history.
+ * Pull agentsea history from a child VM and merge it into local history.
  * First tells the child to recursively pull from ITS children via
  * `agentsea pull-history`, then downloads the child's history.json.
- * This enables `spawn tree` to show the full recursive hierarchy.
+ * This enables `agentsea tree` to show the full recursive hierarchy.
  */
-async function pullChildHistory(runner: CloudRunner, parentSpawnId: string): Promise<void> {
+async function pullChildHistory(runner: CloudRunner, parentAgentseaId: string): Promise<void> {
   const result = await asyncTryCatch(async () => {
-    const tmpPath = `${getTmpDir()}/child-history-${parentSpawnId}.json`;
+    const tmpPath = `${getTmpDir()}/child-history-${parentAgentseaId}.json`;
 
     // Recursive pull: tell the child to pull from ALL its children first.
     const recursePull = await asyncTryCatch(() =>
@@ -1473,26 +1473,26 @@ async function pullChildHistory(runner: CloudRunner, parentSpawnId: string): Pro
     // Copy the child's history to a temp location then download
     const copyResult = await asyncTryCatch(() =>
       runner.runServer(
-        "cp ~/.config/agentsea/history.json /tmp/_spawn_history.json 2>/dev/null || cp ~/.config/agentsea/history.json /tmp/_spawn_history.json 2>/dev/null || echo '{}'  > /tmp/_spawn_history.json",
+        "cp ~/.config/agentsea/history.json /tmp/_agentsea_history.json 2>/dev/null || cp ~/.config/agentsea/history.json /tmp/_agentsea_history.json 2>/dev/null || echo '{}'  > /tmp/_agentsea_history.json",
       ),
     );
     if (!copyResult.ok) {
       return;
     }
 
-    await runner.downloadFile("/tmp/_spawn_history.json", tmpPath);
+    await runner.downloadFile("/tmp/_agentsea_history.json", tmpPath);
 
     const json = readFileSync(tmpPath, "utf-8");
     const ChildHistorySchema = v.object({
       version: v.optional(v.number()),
-      records: v.array(SpawnRecordSchema),
+      records: v.array(AgentseaRecordSchema),
     });
     const parsed = parseJsonWith(json, ChildHistorySchema);
     if (!parsed || parsed.records.length === 0) {
       return;
     }
 
-    const validRecords: SpawnRecord[] = [];
+    const validRecords: AgentseaRecord[] = [];
     for (const r of parsed.records) {
       if (r.id) {
         validRecords.push({
@@ -1525,8 +1525,8 @@ async function pullChildHistory(runner: CloudRunner, parentSpawnId: string): Pro
     }
 
     if (validRecords.length > 0) {
-      mergeChildHistory(parentSpawnId, validRecords);
-      logInfo(`Pulled ${validRecords.length} spawn record(s) from child VM`);
+      mergeChildHistory(parentAgentseaId, validRecords);
+      logInfo(`Pulled ${validRecords.length} agentsea record(s) from child VM`);
     }
 
     tryCatch(() => unlinkSync(tmpPath));

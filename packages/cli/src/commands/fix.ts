@@ -1,4 +1,4 @@
-import type { SpawnRecord } from "../history.js";
+import type { AgentseaRecord } from "../history.js";
 import type { Manifest } from "../manifest.js";
 import type { CloudRunner } from "../shared/agent-setup.js";
 
@@ -43,17 +43,17 @@ export interface FixOptions {
 
 /**
  * Run the full fix pipeline on a remote VM:
- * 1. Re-inject env vars + ensure shell rc files source ~/.spawnrc
+ * 1. Re-inject env vars + ensure shell rc files source ~/.agentsearc
  * 2. Reinstall agent (same install() as provisioning)
  * 3. Configure agent (settings files, etc.)
  * 4. Set up auto-update timer
  * 5. Start daemons (OpenClaw gateway, Cursor proxy, etc.)
  * 6. Verify agent binary is in PATH
  */
-export async function fixSpawn(record: SpawnRecord, manifest: Manifest | null, options?: FixOptions): Promise<void> {
+export async function fixAgentsea(record: AgentseaRecord, manifest: Manifest | null, options?: FixOptions): Promise<void> {
   const conn = record.connection;
   if (!conn) {
-    p.log.error("Cannot fix: spawn has no connection information.");
+    p.log.error("Cannot fix: agentsea has no connection information.");
     p.log.info("This usually means provisioning failed before SSH was established.");
     return;
   }
@@ -88,7 +88,7 @@ export async function fixSpawn(record: SpawnRecord, manifest: Manifest | null, o
   });
   if (!validationResult.ok) {
     p.log.error(`Security validation failed: ${getErrorMessage(validationResult.error)}`);
-    p.log.info("Your spawn history file may be corrupted or tampered with.");
+    p.log.info("Your agentsea history file may be corrupted or tampered with.");
     p.log.info(`Location: ${getHistoryPath()}`);
     return;
   }
@@ -107,7 +107,7 @@ export async function fixSpawn(record: SpawnRecord, manifest: Manifest | null, o
   const agentManifest = man.agents[record.agent];
   if (!agentManifest) {
     p.log.error(`Unknown agent: ${pc.bold(record.agent)}`);
-    p.log.info("This spawn may have been created with an agent that no longer exists.");
+    p.log.info("This agentsea may have been created with an agent that no longer exists.");
     return;
   }
 
@@ -118,7 +118,7 @@ export async function fixSpawn(record: SpawnRecord, manifest: Manifest | null, o
       process.env.THEGRID_API_KEY = savedKey;
     } else {
       p.log.error("No Grid API key found.");
-      p.log.info("Set THEGRID_API_KEY in your environment, or run a new spawn to authenticate via OAuth.");
+      p.log.info("Set THEGRID_API_KEY in your environment, or run a new agentsea to authenticate via OAuth.");
       return;
     }
   }
@@ -140,7 +140,7 @@ export async function fixSpawn(record: SpawnRecord, manifest: Manifest | null, o
       "#!/bin/bash",
       "set -eo pipefail",
       "",
-      `printf '%s' '${Buffer.from(envContent).toString("base64")}' | base64 -d > ~/.spawnrc && chmod 600 ~/.spawnrc`,
+      `printf '%s' '${Buffer.from(envContent).toString("base64")}' | base64 -d > ~/.agentsearc && chmod 600 ~/.agentsearc`,
     ];
     if (agentManifest.install) {
       scriptLines.push(agentManifest.install);
@@ -186,7 +186,7 @@ export async function fixSpawn(record: SpawnRecord, manifest: Manifest | null, o
   }
   const agent = agentResult.data;
 
-  // --- Phase 1: Re-inject env vars + ensure rc files source ~/.spawnrc ---
+  // --- Phase 1: Re-inject env vars + ensure rc files source ~/.agentsearc ---
   const envPairs = buildEnvPairs(agentManifest.env ?? {});
   const envContent = generateEnvConfig(envPairs);
   const envResult = await asyncTryCatch(() => injectEnvVarsToRunner(runner, envContent));
@@ -243,12 +243,12 @@ export async function fixSpawn(record: SpawnRecord, manifest: Manifest | null, o
   p.log.info(`Reconnect: ${pc.cyan(`${AGENTSEA_CLI} last`)}`);
 }
 
-export async function cmdFix(spawnId?: string, options?: FixOptions): Promise<void> {
+export async function cmdFix(agentseaId?: string, options?: FixOptions): Promise<void> {
   const servers = getActiveServers();
 
   if (servers.length === 0) {
-    p.log.info("No active spawns to fix.");
-    p.log.info(`Run ${pc.cyan(`${AGENTSEA_CLI} <agent> <cloud>`)} to create a spawn first.`);
+    p.log.info("No active agentseas to fix.");
+    p.log.info(`Run ${pc.cyan(`${AGENTSEA_CLI} <agent> <cloud>`)} to create a agentsea first.`);
     return;
   }
 
@@ -256,27 +256,27 @@ export async function cmdFix(spawnId?: string, options?: FixOptions): Promise<vo
   const manifest = manifestResult.ok ? manifestResult.data : null;
 
   // If a specific name/id is given, find and fix it directly
-  if (spawnId) {
-    const record = servers.find((r) => r.id === spawnId || r.name === spawnId || r.connection?.server_name === spawnId);
+  if (agentseaId) {
+    const record = servers.find((r) => r.id === agentseaId || r.name === agentseaId || r.connection?.server_name === agentseaId);
     if (!record) {
-      p.log.error(`Spawn not found: ${pc.bold(spawnId)}`);
-      p.log.info(`Run ${pc.cyan(`${AGENTSEA_CLI} list`)} to see your active spawns.`);
+      p.log.error(`Agentsea not found: ${pc.bold(agentseaId)}`);
+      p.log.info(`Run ${pc.cyan(`${AGENTSEA_CLI} list`)} to see your active agentseas.`);
       process.exit(1);
     }
-    await fixSpawn(record, manifest, options);
+    await fixAgentsea(record, manifest, options);
     return;
   }
 
   // Only one server — fix it directly without prompting (works in non-interactive mode too)
   if (servers.length === 1) {
-    await fixSpawn(servers[0], manifest, options);
+    await fixAgentsea(servers[0], manifest, options);
     return;
   }
 
   // Non-interactive fallback (multiple servers require picking)
   if (!isInteractiveTTY()) {
-    p.log.error(`${AGENTSEA_CLI} fix requires an interactive terminal or a spawn name/ID.`);
-    p.log.info(`Usage: ${pc.cyan(`${AGENTSEA_CLI} fix <spawn-id>`)}`);
+    p.log.error(`${AGENTSEA_CLI} fix requires an interactive terminal or a agentsea name/ID.`);
+    p.log.info(`Usage: ${pc.cyan(`${AGENTSEA_CLI} fix <agentsea-id>`)}`);
     process.exit(1);
   }
 
@@ -288,7 +288,7 @@ export async function cmdFix(spawnId?: string, options?: FixOptions): Promise<vo
   }));
 
   const selected = await p.select({
-    message: "Select a spawn to fix",
+    message: "Select a agentsea to fix",
     options: pickerOptions,
   });
 
@@ -298,9 +298,9 @@ export async function cmdFix(spawnId?: string, options?: FixOptions): Promise<vo
 
   const record = servers.find((r) => (r.id || r.timestamp) === selected);
   if (!record) {
-    p.log.error("Spawn not found.");
+    p.log.error("Agentsea not found.");
     process.exit(1);
   }
 
-  await fixSpawn(record, manifest, options);
+  await fixAgentsea(record, manifest, options);
 }

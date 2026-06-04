@@ -18,10 +18,10 @@ import {
   scpQuietArgs,
   waitForSsh as sharedWaitForSsh,
   sleep,
-  spawnInteractive,
+  agentseaInteractive,
   validateRemotePath,
 } from "../shared/ssh.js";
-import { ensureSshKeys, getSpawnKey, getSshKeyOpts } from "../shared/ssh-keys.js";
+import { ensureSshKeys, getAgentseaKey, getSshKeyOpts } from "../shared/ssh-keys.js";
 import {
   getServerNameFromEnv,
   logError,
@@ -32,7 +32,7 @@ import {
   logWarn,
   openBrowser,
   prompt,
-  promptSpawnNameShared,
+  promptAgentseaNameShared,
   retryOrQuit,
   sanitizeTermValue,
   selectFromList,
@@ -219,7 +219,7 @@ function requireGcloudCmd(): string {
       "gcloud CLI not found. Install it first:\n" +
         "  macOS:  brew install --cask google-cloud-sdk\n" +
         "  Linux:  curl https://sdk.cloud.google.com | bash\n" +
-        "  Or run: spawn <agent> gcp  (auto-installs gcloud)",
+        "  Or run: agentsea <agent> gcp  (auto-installs gcloud)",
     );
   }
   return cmd;
@@ -478,7 +478,7 @@ export async function resolveProject(): Promise<void> {
   }
 
   // 3. Confirm or pick
-  if (project && process.env.SPAWN_NON_INTERACTIVE !== "1") {
+  if (project && process.env.AGENTSEA_NON_INTERACTIVE !== "1") {
     const confirm = await prompt(`Use project '${project}'? [Y/n]: `);
     if (/^[nN]/.test(confirm)) {
       project = "";
@@ -487,7 +487,7 @@ export async function resolveProject(): Promise<void> {
 
   if (!project) {
     // In non-interactive mode (e.g. during deletion), fail fast instead of prompting
-    if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+    if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
       logError("No GCP project found in metadata or gcloud config");
       logError("Set one before retrying:");
       logError("  export GCP_PROJECT=your-project-id");
@@ -609,11 +609,11 @@ export async function promptMachineType(): Promise<string> {
     return process.env.GCP_MACHINE_TYPE;
   }
 
-  if (process.env.SPAWN_CUSTOM !== "1") {
+  if (process.env.AGENTSEA_CUSTOM !== "1") {
     return DEFAULT_MACHINE_TYPE;
   }
 
-  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
     return DEFAULT_MACHINE_TYPE;
   }
 
@@ -628,11 +628,11 @@ export async function promptZone(): Promise<string> {
     return process.env.GCP_ZONE;
   }
 
-  if (process.env.SPAWN_CUSTOM !== "1") {
+  if (process.env.AGENTSEA_CUSTOM !== "1") {
     return DEFAULT_ZONE;
   }
 
-  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
     return DEFAULT_ZONE;
   }
 
@@ -644,11 +644,11 @@ export async function promptZone(): Promise<string> {
 // ─── SSH Key ────────────────────────────────────────────────────────────────
 
 async function ensureSshKey(): Promise<string> {
-  // Inject only the spawn-managed key into instance metadata. User's other
+  // Inject only the agentsea-managed key into instance metadata. User's other
   // local keys stay off the instance (privacy + avoids client-side auth flood).
-  const spawnKey = getSpawnKey();
-  const pubKey = readFileSync(spawnKey.pubPath, "utf-8").trim();
-  logInfo(`SSH key '${spawnKey.name}' ready`);
+  const agentseaKey = getAgentseaKey();
+  const pubKey = readFileSync(agentseaKey.pubPath, "utf-8").trim();
+  logInfo(`SSH key '${agentseaKey.name}' ready`);
   return pubKey;
 }
 
@@ -679,8 +679,8 @@ export async function getServerName(): Promise<string> {
   return getServerNameFromEnv("GCP_INSTANCE_NAME");
 }
 
-export async function promptSpawnName(): Promise<void> {
-  return promptSpawnNameShared("GCP instance");
+export async function promptAgentseaName(): Promise<void> {
+  return promptAgentseaNameShared("GCP instance");
 }
 
 // ─── Cloud Init Startup Script ──────────────────────────────────────────────
@@ -724,8 +724,8 @@ function getStartupScript(tier: CloudInitTier = "full"): string {
   }
   lines.push(
     "# Configure PATH for all users",
-    "echo 'export PATH=\"${HOME}/.npm-global/bin:${HOME}/.claude/local/bin:${HOME}/.local/bin:${HOME}/.bun/bin:${PATH}\"' >> /etc/profile.d/spawn.sh",
-    "chmod +x /etc/profile.d/spawn.sh",
+    "echo 'export PATH=\"${HOME}/.npm-global/bin:${HOME}/.claude/local/bin:${HOME}/.local/bin:${HOME}/.bun/bin:${PATH}\"' >> /etc/profile.d/agentsea.sh",
+    "chmod +x /etc/profile.d/agentsea.sh",
     "touch /tmp/.cloud-init-complete",
   );
   return lines.join("\n") + "\n";
@@ -758,7 +758,7 @@ export async function createInstance(
   const skipStartupScript = imageProject === "cos-cloud";
   const tmpFile = skipStartupScript
     ? undefined
-    : `/tmp/spawn_startup_${Date.now()}_${Math.random().toString(36).slice(2)}.sh`;
+    : `/tmp/agentsea_startup_${Date.now()}_${Math.random().toString(36).slice(2)}.sh`;
   if (tmpFile) {
     writeFileSync(tmpFile, getStartupScript(tier), {
       mode: 0o600,
@@ -1118,7 +1118,7 @@ export async function interactiveSession(cmd: string): Promise<number> {
   const fullCmd = `export TERM='${term}' LANG='C.UTF-8' PATH="$HOME/.npm-global/bin:$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH" && exec bash -l -c ${shellQuote(cmd)}`;
   const keyOpts = getSshKeyOpts(await ensureSshKeys());
 
-  const exitCode = spawnInteractive([
+  const exitCode = agentseaInteractive([
     "ssh",
     ...SSH_INTERACTIVE_OPTS,
     ...keyOpts,

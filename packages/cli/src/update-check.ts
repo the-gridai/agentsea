@@ -8,7 +8,7 @@ import path from "node:path";
 import { getErrorMessage, hasStatus } from "@agentsea/sdk";
 import pc from "picocolors";
 import pkg from "../package.json" with { type: "json" };
-import { RAW_BASE, SPAWN_CDN, VERSION_URL } from "./manifest.js";
+import { RAW_BASE, AGENTSEA_CDN, VERSION_URL } from "./manifest.js";
 import { PkgVersionSchema, parseJsonWith } from "./shared/parse.js";
 import { getUpdateCheckedPath, getUpdateFailedPath } from "./shared/paths.js";
 import { asyncTryCatchIf, isFileError, isNetworkError, tryCatch, tryCatchIf, unwrapOr } from "./shared/result.js";
@@ -173,7 +173,7 @@ function printUpdateBanner(latestVersion: string): void {
 
 /**
  * Show a non-blocking update notice without auto-installing.
- * Users can update manually with `agentsea update` or set SPAWN_AUTO_UPDATE=1.
+ * Users can update manually with `agentsea update` or set AGENTSEA_AUTO_UPDATE=1.
  */
 function printUpdateNotice(latestVersion: string): void {
   console.error();
@@ -184,13 +184,13 @@ function printUpdateNotice(latestVersion: string): void {
       pc.green(pc.bold(`v${latestVersion}`)),
   );
   console.error(
-    pc.dim(`  Run ${pc.cyan(`${AGENTSEA_CLI} update`)} to install, or set SPAWN_AUTO_UPDATE=1 for automatic updates`),
+    pc.dim(`  Run ${pc.cyan(`${AGENTSEA_CLI} update`)} to install, or set AGENTSEA_AUTO_UPDATE=1 for automatic updates`),
   );
   console.error();
 }
 
 /**
- * Find the spawn binary to re-exec after an update.
+ * Find the agentsea binary to re-exec after an update.
  *
  * Prefers PATH resolution over process.argv[1] because the installer may place
  * the new binary in a different directory than where the currently running
@@ -204,7 +204,7 @@ function findUpdatedBinary(): string {
     executor.execFileSync(
       whichCmd,
       [
-        "spawn",
+        "agentsea",
       ],
       {
         encoding: "utf8",
@@ -221,7 +221,7 @@ function findUpdatedBinary(): string {
   if (found) {
     return found;
   }
-  return process.argv[1] || "spawn";
+  return process.argv[1] || "agentsea";
 }
 
 /** Re-exec the updated binary with the original CLI arguments, forwarding the exit code */
@@ -230,9 +230,9 @@ function reExecWithArgs(): void {
   const binPath = findUpdatedBinary();
 
   if (args.length === 0) {
-    console.error(pc.dim("  Restarting spawn with updated version..."));
+    console.error(pc.dim("  Restarting agentsea with updated version..."));
   } else {
-    console.error(pc.dim(`  Rerunning: spawn ${args.join(" ")}`));
+    console.error(pc.dim(`  Rerunning: agentsea ${args.join(" ")}`));
   }
   console.error();
 
@@ -241,8 +241,8 @@ function reExecWithArgs(): void {
       stdio: "inherit",
       env: {
         ...process.env,
-        SPAWN_NO_UPDATE_CHECK: "1",
-        SPAWN_CLI_UPDATED: "1",
+        AGENTSEA_NO_UPDATE_CHECK: "1",
+        AGENTSEA_CLI_UPDATED: "1",
       },
     }),
   );
@@ -290,11 +290,11 @@ function validateInstallScript(content: string, platform: "unix" | "windows"): v
 function performAutoUpdate(latestVersion: string, jsonOutput = false): void {
   printUpdateBanner(latestVersion);
 
-  const installUrl = getInstallScriptUrl(SPAWN_CDN);
-  const installCmd = getInstallCmd(SPAWN_CDN);
+  const installUrl = getInstallScriptUrl(AGENTSEA_CDN);
+  const installCmd = getInstallCmd(AGENTSEA_CDN);
 
   // When JSON output is active, redirect install script stdout to stderr to
-  // avoid polluting stdout with [spawn] install messages before the JSON result.
+  // avoid polluting stdout with [agentsea] install messages before the JSON result.
   const installStdio: ExecFileSyncOptions["stdio"] = jsonOutput
     ? [
         "pipe",
@@ -329,7 +329,7 @@ function performAutoUpdate(latestVersion: string, jsonOutput = false): void {
     // Write install script to temp file, execute, and guarantee cleanup.
     // Uses tryCatch so cleanup always runs before any error is re-thrown.
     const tmpExt = isWindows() ? "ps1" : "sh";
-    const tmpFile = path.join(tmpdir(), `spawn-install-${Date.now()}.${tmpExt}`);
+    const tmpFile = path.join(tmpdir(), `agentsea-install-${Date.now()}.${tmpExt}`);
     fs.writeFileSync(
       tmpFile,
       scriptContent,
@@ -400,7 +400,7 @@ function performAutoUpdate(latestVersion: string, jsonOutput = false): void {
  * Caches successful checks for 1 hour to avoid blocking every run with network I/O.
  *
  * @param jsonOutput - When true, redirects install script stdout to stderr so
- *   [spawn] install messages do not pollute structured JSON output on stdout.
+ *   [agentsea] install messages do not pollute structured JSON output on stdout.
  */
 export async function checkForUpdates(jsonOutput = false): Promise<void> {
   // Skip in test environment
@@ -408,8 +408,8 @@ export async function checkForUpdates(jsonOutput = false): Promise<void> {
     return;
   }
 
-  // Skip if SPAWN_NO_UPDATE_CHECK is set
-  if (process.env.SPAWN_NO_UPDATE_CHECK === "1") {
+  // Skip if AGENTSEA_NO_UPDATE_CHECK is set
+  if (process.env.AGENTSEA_NO_UPDATE_CHECK === "1") {
     return;
   }
 
@@ -439,14 +439,14 @@ export async function checkForUpdates(jsonOutput = false): Promise<void> {
     //   auto-installed. These contain bug fixes, security hardening, and
     //   new features that users benefit from getting promptly.
     //
-    //   MAJOR bumps (e.g. 1.x.x → 2.0.0) respect SPAWN_AUTO_UPDATE=1
+    //   MAJOR bumps (e.g. 1.x.x → 2.0.0) respect AGENTSEA_AUTO_UPDATE=1
     //   as opt-in, since these can contain breaking changes.
     //
-    //   SPAWN_NO_AUTO_UPDATE=1 lets users opt OUT of auto-update entirely
+    //   AGENTSEA_NO_AUTO_UPDATE=1 lets users opt OUT of auto-update entirely
     //   if they need a fully pinned CLI (CI environments, etc.).
     const sameMajor = parseSemver(VERSION)[0] === parseSemver(latestVersion)[0];
-    const explicitOptOut = process.env.SPAWN_NO_AUTO_UPDATE === "1";
-    const explicitOptIn = process.env.SPAWN_AUTO_UPDATE === "1";
+    const explicitOptOut = process.env.AGENTSEA_NO_AUTO_UPDATE === "1";
+    const explicitOptIn = process.env.AGENTSEA_AUTO_UPDATE === "1";
 
     const shouldAutoInstall = !explicitOptOut && (sameMajor || explicitOptIn);
 

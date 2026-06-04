@@ -23,7 +23,7 @@ SOAK_CLOUD="${SOAK_CLOUD:-sprite}"
 SOAK_HEARTBEAT_INTERVAL=300  # 5 minutes
 SOAK_GATEWAY_PORT=18789
 TELEGRAM_API_BASE="https://api.telegram.org"
-SOAK_CRON_JOB_NAME="spawn-soak-reminder"  # OpenClaw cron job name
+SOAK_CRON_JOB_NAME="agentsea-soak-reminder"  # OpenClaw cron job name
 
 # ---------------------------------------------------------------------------
 # validate_positive_int VAR_NAME VALUE
@@ -149,7 +149,7 @@ soak_inject_telegram_config() {
 
   # Use bun -e on the remote to JSON-patch the config file.
   # _TOKEN is passed via env var prefix so process.env._TOKEN is available in bun.
-  cloud_exec "${app}" "source ~/.spawnrc 2>/dev/null; \
+  cloud_exec "${app}" "source ~/.agentsearc 2>/dev/null; \
     export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:\$PATH; \
     _TOKEN=\$(printf '%s' '${encoded_token}' | base64 -d); \
     _TOKEN=\${_TOKEN} bun -e ' \
@@ -217,7 +217,7 @@ soak_test_telegram_send() {
   encoded_token=$(_encode_b64 "${TELEGRAM_BOT_TOKEN}") || return 1
 
   local marker
-  marker="SPAWN_SOAK_TEST_$(date +%s)"
+  marker="AGENTSEA_SOAK_TEST_$(date +%s)"
 
   local output
   output=$(cloud_exec "${app}" "_TOKEN=\$(printf '%s' '${encoded_token}' | base64 -d); \
@@ -308,13 +308,13 @@ soak_install_openclaw_cron() {
   # --announce: post the message to the channel
   # --delete-after-run: clean up after firing (one-shot)
   local output
-  output=$(cloud_exec "${app}" "source ~/.spawnrc 2>/dev/null; \
+  output=$(cloud_exec "${app}" "source ~/.agentsearc 2>/dev/null; \
     export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:\$PATH; \
     openclaw cron add \
       --name '${SOAK_CRON_JOB_NAME}' \
       --at '${fire_at}' \
       --session isolated \
-      --message 'Spawn soak test: scheduled reminder fired successfully at \$(date -u)' \
+      --message 'Agentsea soak test: scheduled reminder fired successfully at \$(date -u)' \
       --announce \
       --channel telegram \
       --to 'chat:${TELEGRAM_TEST_CHAT_ID}' \
@@ -329,11 +329,11 @@ soak_install_openclaw_cron() {
   log_ok "OpenClaw cron job scheduled (fires at ${fire_at})"
 
   # Drop a timestamp marker so the verify step can find cron artifacts created after this point
-  cloud_exec "${app}" "touch /tmp/.spawn-cron-scheduled-${app}" 2>/dev/null || true
+  cloud_exec "${app}" "touch /tmp/.agentsea-cron-scheduled-${app}" 2>/dev/null || true
 
   # Verify the job exists via openclaw cron list
   local list_output
-  list_output=$(cloud_exec "${app}" "source ~/.spawnrc 2>/dev/null; \
+  list_output=$(cloud_exec "${app}" "source ~/.agentsearc 2>/dev/null; \
     export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:\$PATH; \
     openclaw cron list" 2>&1) || true
 
@@ -378,7 +378,7 @@ soak_test_openclaw_cron_fired() {
 
   # Try openclaw cron runs first — it may include the delivery response
   local runs_output
-  runs_output=$(cloud_exec "${app}" "source ~/.spawnrc 2>/dev/null; \
+  runs_output=$(cloud_exec "${app}" "source ~/.agentsearc 2>/dev/null; \
     export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:\$PATH; \
     openclaw cron runs '${SOAK_CRON_JOB_NAME}' 2>/dev/null || true" 2>&1) || true
 
@@ -392,7 +392,7 @@ soak_test_openclaw_cron_fired() {
   if [ -z "${message_id}" ]; then
     log_info "Searching ~/.openclaw/cron/ for Telegram API response..."
     local cron_data
-    cron_data=$(cloud_exec "${app}" "find ~/.openclaw/cron/ -type f -name '*.json' -newer /tmp/.spawn-cron-scheduled-${app} 2>/dev/null | \
+    cron_data=$(cloud_exec "${app}" "find ~/.openclaw/cron/ -type f -name '*.json' -newer /tmp/.agentsea-cron-scheduled-${app} 2>/dev/null | \
       xargs grep -l 'message_id' 2>/dev/null | head -1 | xargs cat 2>/dev/null || true" 2>&1) || true
 
     if [ -n "${cron_data}" ]; then
@@ -416,7 +416,7 @@ soak_test_openclaw_cron_fired() {
 
     # Log diagnostic info
     local job_status
-    job_status=$(cloud_exec "${app}" "source ~/.spawnrc 2>/dev/null; \
+    job_status=$(cloud_exec "${app}" "source ~/.agentsearc 2>/dev/null; \
       export PATH=\$HOME/.npm-global/bin:\$HOME/.bun/bin:\$HOME/.local/bin:\$PATH; \
       openclaw cron status '${SOAK_CRON_JOB_NAME}' 2>/dev/null; \
       echo '---'; \
@@ -486,10 +486,10 @@ soak_run_telegram_tests() {
 run_soak_test() {
   local log_dir="${1:-${LOG_DIR:-}}"
   if [ -z "${log_dir}" ]; then
-    log_dir=$(mktemp -d "${TMPDIR:-/tmp}/spawn-soak.XXXXXX")
+    log_dir=$(mktemp -d "${TMPDIR:-/tmp}/agentsea-soak.XXXXXX")
   fi
 
-  log_header "Spawn Soak Test: OpenClaw + Telegram (with cron reminder)"
+  log_header "Agentsea Soak Test: OpenClaw + Telegram (with cron reminder)"
   log_info "Cloud: ${SOAK_CLOUD}"
   log_info "Soak wait: ${SOAK_WAIT_SECONDS}s"
   log_info "Cron delay: ${SOAK_CRON_DELAY_SECONDS}s"

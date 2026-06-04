@@ -24,7 +24,7 @@ import {
   interactiveSession,
   promptLocation,
   promptServerType,
-  promptSpawnName,
+  promptAgentseaName,
   runServer,
   uploadFile,
   waitForCloudInit,
@@ -46,7 +46,7 @@ async function main() {
   let useDocker = false;
 
   // Check if --beta docker is active
-  const betaFeatures = (process.env.SPAWN_BETA ?? "").split(",");
+  const betaFeatures = (process.env.AGENTSEA_BETA ?? "").split(",");
   if (betaFeatures.includes("docker")) {
     useDocker = true;
   }
@@ -67,7 +67,7 @@ async function main() {
           downloadFile,
         },
     async authenticate() {
-      await promptSpawnName();
+      await promptAgentseaName();
       await ensureHcloudToken();
       await ensureSshKey();
     },
@@ -79,7 +79,7 @@ async function main() {
       // Proactively clean up orphaned Primary IPs before provisioning in headless
       // mode (E2E batches). This prevents resource_limit_exceeded errors when
       // previous test runs left behind unattached IPs that consume quota (#2933).
-      if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+      if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
         const cleaned = await cleanupOrphanedPrimaryIps();
         if (cleaned > 0) {
           logInfo(`Pre-provisioning: cleaned ${cleaned} orphaned Primary IP(s)`);
@@ -110,7 +110,7 @@ async function main() {
 
       // Pull and start the agent Docker container after the server is ready
       if (useDocker) {
-        const image = `${DOCKER_REGISTRY}/spawn-${agentName}:latest`;
+        const image = `${DOCKER_REGISTRY}/agentsea-${agentName}:latest`;
         logStep(`Pulling Docker image ${image}...`);
         await runServer(`docker pull ${image}`, 300);
         logStep("Starting agent container...");

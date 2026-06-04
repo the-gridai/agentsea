@@ -1,6 +1,6 @@
 # `@agentsea/sdk`
 
-Shared **Spawn manifest contract** and small runtime helpers for the marketing site and `agentsea` CLI.
+Shared **Agentsea manifest contract** and small runtime helpers for the marketing site and `agentsea` CLI.
 
 ## What’s in the box
 
@@ -8,8 +8,8 @@ Shared **Spawn manifest contract** and small runtime helpers for the marketing s
 - **Pure helpers** — `parseJsonObj`, `Result` / `tryCatch` / `asyncTryCatch`, `isPlainObject`, `isString`, …
 - **Node loader** (`@agentsea/sdk/node`) — `loadManifest()` reads, in order:
 
-  1. `AGENTSEA_MANIFEST` (absolute path), if set and valid — legacy: `GRID_SPAWN_MANIFEST`
-  2. `AGENTSEA_ROOT/manifest.json` when `AGENTSEA_ROOT` points at a checkout (same as CLI dotenv resolution) — legacy: `GRID_SPAWN_ROOT`
+  1. `AGENTSEA_MANIFEST` (absolute path), if set and valid — legacy: `AGENTSEA_MANIFEST`
+  2. `AGENTSEA_ROOT/manifest.json` when `AGENTSEA_ROOT` points at a checkout (same as CLI dotenv resolution) — legacy: `AGENTSEA_ROOT`
   3. The nearest `manifest.json` walking up from `process.cwd()` (max 10 segments)
   4. `https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/manifest.json`
   5. `~/.cache/agentsea/manifest.json` stale cache
@@ -18,5 +18,5 @@ Runtime is **Node + browser-safe**: import types and pure helpers from `@agentse
 
 ## What is *not* here
 
-- **No `SpawnApi` / mock** — there is no Spawn control-plane HTTP API in this architecture (parity with Spawn: static manifest + cloud APIs + local history).
+- **No `AgentseaApi` / mock** — there is no Agentsea control-plane HTTP API in this architecture (parity with Agentsea: static manifest + cloud APIs + local history).
 - **`grid-ts`** — use [Spectral `grid-ts`](https://github.com/Spectral-Finance/grid-ts) when you want a typed **Grid / Cortex** HTTP client (`whoami`/preflight only; provision stays in the CLI).

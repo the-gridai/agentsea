@@ -61,9 +61,9 @@ The entire contract lives in a **static manifest** at the repo root � `manifes
 
 The CLI reads that manifest, talks directly to **your** cloud APIs (DigitalOcean REST, Hetzner, AWS Lightsail, GCP, Daytona SDK, Sprite CLI), and tracks local history under `~/.config/agentsea/`.
 
-No Spawn HTTP API. No multi-tenant control plane sitting between you and your VMs. Just a manifest, shell scripts, and cloud SDKs.
+No Agentsea HTTP API. No multi-tenant control plane sitting between you and your VMs. Just a manifest, shell scripts, and cloud SDKs.
 
-This is **Spawn-style architecture** � the same philosophy as the original Spawn project � but purpose-built for [The Grid](https://thegrid.ai) and fully CLI-first.
+This is **Agentsea-style architecture** � the same philosophy as the original Agentsea project � but purpose-built for [The Grid](https://thegrid.ai) and fully CLI-first.
 
 ---
 
@@ -118,7 +118,7 @@ The VM gets `THEGRID_API_KEY` and OpenAI-compatible base URLs pointing at `api.t
 **4. Run over SSH**  
 The CLI opens an interactive SSH session. You're in the agent's TTY. Full terminal support. Drive it like you would locally � except it's on an isolated VM in NYC3.
 
-For agents that need extra plumbing (Hermes needs a LiteLLM proxy, Cursor needs a ConnectRPC-to-REST translation layer, Junie needs redirect handling), AgentSea handles that during bootstrap. You don't configure it. You just spawn.
+For agents that need extra plumbing (Hermes needs a LiteLLM proxy, Cursor needs a ConnectRPC-to-REST translation layer, Junie needs redirect handling), AgentSea handles that during bootstrap. You don't configure it. You just agentsea.
 
 ---
 
@@ -134,7 +134,7 @@ Your provider account. Your keys. Your bill. We orchestrate; you own the data pl
 
 ### Fully sandboxed
 
-Each spawn is an isolated VM and credential boundary. No cross-talk between sessions. Spin up five agents on five droplets for five parallel tasks. Tear them down when you're done.
+Each agentsea is an isolated VM and credential boundary. No cross-talk between sessions. Spin up five agents on five droplets for five parallel tasks. Tear them down when you're done.
 
 ### The Grid inference
 
@@ -150,10 +150,10 @@ AgentSea isn't a proof of concept with a `--help` flag and nothing else. It's bu
 agentsea claude hetzner --headless --output json   # CI/CD friendly
 agentsea codex gcp --prompt "Add tests for auth"   # Non-interactive runs
 agentsea claude sprite --fast                       # Parallel provisioning optimizations
-agentsea fix <spawn-id>                             # Recover a broken VM in-place
+agentsea fix <agentsea-id>                             # Recover a broken VM in-place
 agentsea resume                                     # Continue a failed provision
-agentsea tree                                       # Parent/child spawn relationships
-agentsea export <name>                              # Export a Claude spawn to GitHub
+agentsea tree                                       # Parent/child agentsea relationships
+agentsea export <name>                              # Export a Claude agentsea to GitHub
 agentsea cleanup digitalocean --dry-run             # Prune stale droplets
 ```
 
@@ -195,7 +195,7 @@ curl -fsSL https://spawn.thegrid.ai/cli/install.sh | bash
 export THEGRID_API_KEY=sk-or-v1-...
 export DIGITALOCEAN_ACCESS_TOKEN=dop_v1_...
 
-# 3. Spawn
+# 3. Agentsea
 agentsea openclaw digitalocean
 ```
 

@@ -7,7 +7,7 @@ import { createConsoleMocks, createMockManifest, mockClackPrompts, restoreMocks 
  * Tests for detectAndFixSwappedArgs and resolveAndLog logic in commands/run.ts.
  *
  * These functions handle two important CLI UX features:
- * - Swapped argument detection: "spawn sprite claude" -> "spawn claude sprite"
+ * - Swapped argument detection: "agentsea sprite claude" -> "agentsea claude sprite"
  * - Display name resolution with logging: "Claude Code" -> "claude" with info message
  *
  * Previously, these were only tested through full cmdRun integration tests.

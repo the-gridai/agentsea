@@ -1,4 +1,4 @@
-import type { SpawnRecord } from "../history.js";
+import type { AgentseaRecord } from "../history.js";
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -7,7 +7,7 @@ import { filterHistory } from "../history.js";
 
 /**
  * Tests for filterHistory ordering guarantees.
- * (saveSpawnRecord tests are in history.test.ts)
+ * (saveAgentseaRecord tests are in history.test.ts)
  */
 
 describe("History Ordering and Save Behavior", () => {
@@ -15,14 +15,14 @@ describe("History Ordering and Save Behavior", () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(() => {
-    testDir = join(process.env.HOME ?? "", `spawn-history-trim-${Date.now()}-${Math.random()}`);
+    testDir = join(process.env.HOME ?? "", `agentsea-history-trim-${Date.now()}-${Math.random()}`);
     mkdirSync(testDir, {
       recursive: true,
     });
     originalEnv = {
       ...process.env,
     };
-    process.env.SPAWN_HOME = testDir;
+    process.env.AGENTSEA_HOME = testDir;
   });
 
   afterEach(() => {
@@ -39,7 +39,7 @@ describe("History Ordering and Save Behavior", () => {
 
   describe("filterHistory ordering guarantees", () => {
     it("should return records in reverse chronological order (newest first)", () => {
-      const records: SpawnRecord[] = [
+      const records: AgentseaRecord[] = [
         {
           id: "r1",
           agent: "claude",
@@ -69,7 +69,7 @@ describe("History Ordering and Save Behavior", () => {
     });
 
     it("should maintain reverse order after filtering by agent", () => {
-      const records: SpawnRecord[] = [
+      const records: AgentseaRecord[] = [
         {
           id: "r1",
           agent: "claude",
@@ -104,7 +104,7 @@ describe("History Ordering and Save Behavior", () => {
     });
 
     it("should maintain reverse order after filtering by cloud", () => {
-      const records: SpawnRecord[] = [
+      const records: AgentseaRecord[] = [
         {
           id: "r1",
           agent: "claude",
@@ -133,7 +133,7 @@ describe("History Ordering and Save Behavior", () => {
     });
 
     it("should maintain reverse order after filtering by both agent and cloud", () => {
-      const records: SpawnRecord[] = [
+      const records: AgentseaRecord[] = [
         {
           id: "r1",
           agent: "claude",
@@ -168,7 +168,7 @@ describe("History Ordering and Save Behavior", () => {
     });
 
     it("should return single-element array unchanged for one matching record", () => {
-      const records: SpawnRecord[] = [
+      const records: AgentseaRecord[] = [
         {
           id: "r1",
           agent: "claude",

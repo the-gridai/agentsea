@@ -4,7 +4,7 @@
 
 /** PostHog project API key (ingest / decide). */
 export const POSTHOG_PROJECT_API_KEY =
-  process.env.SPAWN_POSTHOG_PROJECT_KEY?.trim() || "phc_7ToS2jDeWBlMu4n2JoNzoA1FnArdKwFMFoHVnAqQ6O1";
+  process.env.AGENTSEA_POSTHOG_PROJECT_KEY?.trim() || "phc_7ToS2jDeWBlMu4n2JoNzoA1FnArdKwFMFoHVnAqQ6O1";
 
 export const POSTHOG_BATCH_INGEST_URL = "https://us.i.posthog.com/batch/";
 

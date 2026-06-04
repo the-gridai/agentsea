@@ -1,8 +1,8 @@
 #!/bin/bash
 # e2e/lib/interactive.sh — AI-driven interactive provision & verification
 #
-# Instead of running spawn in headless mode (SPAWN_NON_INTERACTIVE=1), this
-# runs spawn interactively with The Grid–driven chat responding to
+# Instead of running agentsea in headless mode (AGENTSEA_NON_INTERACTIVE=1), this
+# runs agentsea interactively with The Grid–driven chat responding to
 # prompts like a human user would. Tests the real user experience end-to-end.
 #
 # Requires: THEGRID_API_KEY (AI driver uses The Grid OpenAI-compatible chat + agent under test), plus cloud creds.
@@ -36,13 +36,13 @@ _report_ux_issues() {
 
   # Build a single issue that lists all findings
   local title
-  title="ux: spawn ${agent} ${cloud} — ${issue_count} UX issue(s) found in interactive session"
+  title="ux: agentsea ${agent} ${cloud} — ${issue_count} UX issue(s) found in interactive session"
 
   local body
   body="$(printf '%s\n' \
     "## UX issues found during interactive E2E test" \
     "" \
-    "The AI-driven interactive harness recorded a real \`spawn ${agent} ${cloud}\` session" \
+    "The AI-driven interactive harness recorded a real \`agentsea ${agent} ${cloud}\` session" \
     "and flagged the following UX problems in the terminal output:" \
     ""
   )"
@@ -68,7 +68,7 @@ ${example}
 
   body="${body}
 ---
-*Filed automatically by the interactive E2E harness after a live \`spawn ${agent} ${cloud}\` session.*"
+*Filed automatically by the interactive E2E harness after a live \`agentsea ${agent} ${cloud}\` session.*"
 
   local issue_url
   if issue_url=$(gh issue create \
@@ -93,7 +93,7 @@ ${example}
 # ---------------------------------------------------------------------------
 # interactive_provision AGENT APP_NAME LOG_DIR
 #
-# Runs spawn interactively with AI driving the prompts. On success, the
+# Runs agentsea interactively with AI driving the prompts. On success, the
 # instance is provisioned AND the agent is installed — equivalent to
 # provision_agent + verify_agent in the headless flow.
 #
@@ -130,27 +130,27 @@ interactive_provision() {
   log_step "Interactive provision: ${agent} on ${ACTIVE_CLOUD}"
   log_info "AI driver: Claude Haiku via Anthropic API"
 
-  # Build cloud-specific env for the spawn CLI invocation.
+  # Build cloud-specific env for the agentsea CLI invocation.
   # The harness inherits the current env, which already has cloud creds
-  # loaded by the cloud driver. We just need to set spawn-specific vars.
-  local spawn_env=""
-  spawn_env="${spawn_env} SPAWN_NAME_KEBAB=${app_name}"
-  # SPAWN_NAME bypasses the "Name your spawn" text prompt in cmdRun
-  # (promptSpawnName() only checks SPAWN_NAME, not SPAWN_NAME_KEBAB)
-  spawn_env="${spawn_env} SPAWN_NAME=${app_name}"
-  # SPAWN_ENABLED_STEPS bypasses the setup options multiselect — accept defaults
+  # loaded by the cloud driver. We just need to set agentsea-specific vars.
+  local agentsea_env=""
+  agentsea_env="${agentsea_env} AGENTSEA_NAME_KEBAB=${app_name}"
+  # AGENTSEA_NAME bypasses the "Name your agentsea" text prompt in cmdRun
+  # (promptAgentseaName() only checks AGENTSEA_NAME, not AGENTSEA_NAME_KEBAB)
+  agentsea_env="${agentsea_env} AGENTSEA_NAME=${app_name}"
+  # AGENTSEA_ENABLED_STEPS bypasses the setup options multiselect — accept defaults
   # so the harness tests provisioning/installation UX, not credential collection
-  spawn_env="${spawn_env} SPAWN_ENABLED_STEPS=auto-update"
+  agentsea_env="${agentsea_env} AGENTSEA_ENABLED_STEPS=auto-update"
 
-  # Map ACTIVE_CLOUD to the cloud name spawn expects
-  local spawn_cloud="${ACTIVE_CLOUD}"
+  # Map ACTIVE_CLOUD to the cloud name agentsea expects
+  local agentsea_cloud="${ACTIVE_CLOUD}"
 
   local harness_start
   harness_start=$(date +%s)
 
   # Run the harness — it outputs JSON to stdout, logs to stderr
   local harness_exit=0
-  env ${spawn_env} bun run "${harness_script}" "${agent}" "${spawn_cloud}" \
+  env ${agentsea_env} bun run "${harness_script}" "${agent}" "${agentsea_cloud}" \
     > "${result_file}" 2> "${log_file}" || harness_exit=$?
 
   local harness_end
@@ -177,14 +177,14 @@ interactive_provision() {
         log_ok "Cloud driver confirmed instance exists"
         return 0
       else
-        log_warn "Instance not found via cloud driver — spawn may have used a different name"
+        log_warn "Instance not found via cloud driver — agentsea may have used a different name"
         return 0
       fi
     else
       log_err "Interactive provision failed (${harness_duration}s): ${harness_reason}"
       # Save harness log to a persistent path for post-mortem inspection
       if [ -f "${log_file}" ]; then
-        local persist_log="/tmp/spawn-interactive-harness-last.log"
+        local persist_log="/tmp/agentsea-interactive-harness-last.log"
         cp "${log_file}" "${persist_log}" 2>/dev/null || true
         log_info "Harness log saved to ${persist_log}"
         log_info "Last 30 [harness] lines:"

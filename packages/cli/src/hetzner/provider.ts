@@ -1,4 +1,4 @@
-import type { SpawnRecord, VMConnection } from "../history.js";
+import type { AgentseaRecord, VMConnection } from "../history.js";
 import type { CloudProvider } from "../shared/cloud-provider.js";
 import type { CloudOrchestrator } from "../shared/orchestrate.js";
 import {
@@ -10,7 +10,7 @@ import {
   waitForCloudInit,
 } from "./hetzner.js";
 
-export async function buildHetznerResumeOrchestrator(record: SpawnRecord): Promise<CloudOrchestrator | null> {
+export async function buildHetznerResumeOrchestrator(record: AgentseaRecord): Promise<CloudOrchestrator | null> {
   const conn = record.connection;
   if (!conn?.ip || conn.deleted) {
     return null;

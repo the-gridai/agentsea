@@ -16,7 +16,7 @@ import {
 } from "../security.js";
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
 import { parseJsonWith } from "../shared/parse.js";
-import { getSpawnCloudConfigPath } from "../shared/paths.js";
+import { getAgentseaCloudConfigPath } from "../shared/paths.js";
 import { asyncTryCatch } from "../shared/result.js";
 import { SSH_INTERACTIVE_OPTS, validateRemotePath } from "../shared/ssh.js";
 import {
@@ -29,7 +29,7 @@ import {
   openBrowser,
   prepareStdinForHandoff,
   prompt,
-  promptSpawnNameShared,
+  promptAgentseaNameShared,
   selectFromList,
   shellQuote,
   validateServerName,
@@ -83,7 +83,7 @@ const DaytonaConfigFileSchema = v.object({
 const DAYTONA_SSH_HOST = "ssh.app.daytona.io";
 const DAYTONA_DASHBOARD_URL = "https://app.daytona.io/dashboard/sandboxes";
 const DAYTONA_SIGNED_PREVIEW_DEFAULT_SECONDS = 3600;
-const DAYTONA_AUTO_UPDATE_SESSION_ID = "spawn-auto-update";
+const DAYTONA_AUTO_UPDATE_SESSION_ID = "agentsea-auto-update";
 const OPENCLAW_DASHBOARD_PORT = 18789;
 const OPENCLAW_DASHBOARD_PAIR_LOG_PATH = "/tmp/openclaw-dashboard-pair.log";
 const OPENCLAW_DASHBOARD_PAIR_POLL_ATTEMPTS = 45;
@@ -133,7 +133,7 @@ export function resetDaytonaState(): void {
 }
 
 function getDaytonaConfigPath(): string {
-  return getSpawnCloudConfigPath("daytona");
+  return getAgentseaCloudConfigPath("daytona");
 }
 
 async function readSavedDaytonaConfigSafe(): Promise<DaytonaConfigFile | null> {
@@ -368,7 +368,7 @@ export async function promptSandboxSize(): Promise<SandboxSize> {
     return envSize;
   }
 
-  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
     const saved = await readSavedDaytonaConfigSafe();
     const savedId = saved?.sandbox_size;
     const savedSize = savedId ? SANDBOX_SIZES.find((s) => s.id === savedId) : null;
@@ -397,14 +397,14 @@ export async function promptSandboxSize(): Promise<SandboxSize> {
 }
 
 /**
- * Prompt for the spawn name or derive it non-interactively.
+ * Prompt for the agentsea name or derive it non-interactively.
  */
-export async function promptSpawnName(): Promise<void> {
-  await promptSpawnNameShared("Daytona sandbox");
+export async function promptAgentseaName(): Promise<void> {
+  await promptAgentseaNameShared("Daytona sandbox");
 }
 
 /**
- * Resolve the Daytona sandbox name from environment or default spawn naming.
+ * Resolve the Daytona sandbox name from environment or default agentsea naming.
  */
 export async function getServerName(): Promise<string> {
   return getServerNameFromEnv("DAYTONA_SANDBOX_NAME");
@@ -443,13 +443,13 @@ async function getSandboxById(sandboxId: string) {
 
 function buildCreateLabels(): Record<string, string> {
   return {
-    "managed-by": "spawn",
+    "managed-by": "agentsea",
     cloud: "daytona",
   };
 }
 
 /**
- * Create a Daytona sandbox and return Spawn's persisted connection shape.
+ * Create a Daytona sandbox and return Agentsea's persisted connection shape.
  */
 export async function createServer(name: string): Promise<VMConnection> {
   if (!validateServerName(name)) {
@@ -560,18 +560,18 @@ function buildAutoUpdateScript(agentName: string, updateCmd: string): string {
   return [
     "#!/bin/bash",
     "set -eo pipefail",
-    'LOGFILE="$HOME/.spawn-auto-update.log"',
+    'LOGFILE="$HOME/.agentsea-auto-update.log"',
     "",
     'log() { printf "[%s] %s\\n" "$(date -u +\'%Y-%m-%dT%H:%M:%SZ\')" "$*" >> "$LOGFILE"; }',
     "",
-    '[ -f "$HOME/.spawnrc" ] && source "$HOME/.spawnrc" 2>/dev/null',
+    '[ -f "$HOME/.agentsearc" ] && source "$HOME/.agentsearc" 2>/dev/null',
     'export PATH="$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.claude/local/bin:$PATH"',
     "",
     'log "Auto-update session started; first run in 15 minutes"',
     "sleep 900",
     "",
     "while true; do",
-    '  [ -f "$HOME/.spawnrc" ] && source "$HOME/.spawnrc" 2>/dev/null',
+    '  [ -f "$HOME/.agentsearc" ] && source "$HOME/.agentsearc" 2>/dev/null',
     '  export PATH="$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.claude/local/bin:$PATH"',
     "",
     '  log "Updating system packages"',
@@ -627,7 +627,7 @@ export async function setupAutoUpdateSessionForSandbox(
   }
 
   const sandbox = await ensureSandboxStarted(sandboxId);
-  const remotePath = `${await getSandboxHomeDir(sandbox.id)}/.spawn-auto-update.sh`;
+  const remotePath = `${await getSandboxHomeDir(sandbox.id)}/.agentsea-auto-update.sh`;
   const script = buildAutoUpdateScript(agentName, updateCmd);
 
   await sandbox.fs.uploadFile(Buffer.from(script), remotePath);
@@ -785,7 +785,7 @@ function getPtySize(): {
 async function prepareInteractiveBootstrapScript(sandboxId: string, cmd: string): Promise<string> {
   const sandbox = await ensureSandboxStarted(sandboxId);
   const homeDir = await getSandboxHomeDir(sandboxId);
-  const remotePath = `${homeDir}/.spawn-interactive-session.sh`;
+  const remotePath = `${homeDir}/.agentsea-interactive-session.sh`;
   const script = `#!/usr/bin/env bash
 set -e
 
@@ -837,7 +837,7 @@ async function runInteractivePty(sandboxId: string, cmd: string): Promise<number
   let startupBuffer = "";
   let filteringStartupEcho = true;
   const pty = await sandbox.process.createPty({
-    id: `spawn-${randomUUID()}`,
+    id: `agentsea-${randomUUID()}`,
     cols,
     rows,
     envs: {
@@ -933,7 +933,7 @@ export async function interactiveSession(cmd: string): Promise<number> {
   process.stderr.write("\n");
   logWarn(`Session ended. Your sandbox '${_state.sandboxId}' may still be running.`);
   logWarn(`Manage or delete it in the Daytona dashboard: ${DAYTONA_DASHBOARD_URL}`);
-  logInfo(`Delete it from Spawn with: ${AGENTSEA_CLI} delete`);
+  logInfo(`Delete it from Agentsea with: ${AGENTSEA_CLI} delete`);
   return exitCode;
 }
 
@@ -974,7 +974,7 @@ export async function destroyServer(sandboxId?: string): Promise<void> {
 }
 
 /**
- * List Daytona sandboxes in the generic cloud-instance shape used by Spawn.
+ * List Daytona sandboxes in the generic cloud-instance shape used by Agentsea.
  */
 export async function listServers(): Promise<CloudInstance[]> {
   const client = await getRequiredClient();
@@ -988,7 +988,7 @@ export async function listServers(): Promise<CloudInstance[]> {
 }
 
 /**
- * Resolve a live-state value for Spawn's status command.
+ * Resolve a live-state value for Agentsea's status command.
  */
 export async function getDaytonaLiveState(sandboxId: string): Promise<"running" | "stopped" | "gone" | "unknown"> {
   const stateResult = await asyncTryCatch(async () => {
@@ -1023,7 +1023,7 @@ export async function probeDaytonaAgentBinary(sandboxId: string, binary: string)
     }
 
     const versionCmd =
-      "source ~/.spawnrc 2>/dev/null; " +
+      "source ~/.agentsearc 2>/dev/null; " +
       `export PATH="$HOME/.local/bin:$HOME/.claude/local/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.n/bin:$PATH"; ` +
       `${binary} --version`;
     const response = await sandbox.process.executeCommand(formatProcessCommand(versionCmd), undefined, undefined, 10);
@@ -1076,12 +1076,12 @@ async function prepareOpenClawPreviewAccess(
 async function allowOpenClawPreviewOrigin(sandboxId: string, previewUrl: string): Promise<void> {
   const previewOrigin = new URL(previewUrl).origin;
   const patchConfigCmd = [
-    `SPAWN_PREVIEW_ORIGIN=${shellQuote(previewOrigin)}`,
+    `AGENTSEA_PREVIEW_ORIGIN=${shellQuote(previewOrigin)}`,
     "node -e",
     shellQuote(
       `
 const fs = require("node:fs");
-const origin = process.env.SPAWN_PREVIEW_ORIGIN;
+const origin = process.env.AGENTSEA_PREVIEW_ORIGIN;
 if (!origin) { process.exit(1); }
 const cfgPath = process.env.HOME + "/.openclaw/openclaw.json";
 const config = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
@@ -1102,11 +1102,11 @@ fs.writeFileSync(cfgPath, JSON.stringify(config, null, 2) + "\\n", { mode: 0o600
 
 /** Auto-approve the first remote browser pairing request for the OpenClaw dashboard.
  *  Daytona preview URLs are remote origins, so OpenClaw correctly requires one-time
- *  device approval for a new browser profile. Spawn arms a short-lived watcher right
+ *  device approval for a new browser profile. Agentsea arms a short-lived watcher right
  *  before opening the dashboard so the user does not have to approve that request manually. */
 async function armOpenClawDashboardPairingWatcher(sandboxId: string): Promise<void> {
   const sandbox = await ensureSandboxStarted(sandboxId);
-  const remotePath = `${await getSandboxHomeDir(sandbox.id)}/.spawn-openclaw-dashboard-pair.sh`;
+  const remotePath = `${await getSandboxHomeDir(sandbox.id)}/.agentsea-openclaw-dashboard-pair.sh`;
   const watcherScript = buildOpenClawDashboardPairingWatcherScript();
 
   await sandbox.fs.uploadFile(Buffer.from(watcherScript), remotePath);
@@ -1150,7 +1150,7 @@ function buildOpenClawDashboardPairingWatcherScript(): string {
 }
 
 /**
- * Run the generated Spawn fix script inside a Daytona sandbox using filesystem and process APIs.
+ * Run the generated Agentsea fix script inside a Daytona sandbox using filesystem and process APIs.
  */
 export async function runDaytonaFixScript(
   sandboxId: string,
@@ -1160,7 +1160,7 @@ export async function runDaytonaFixScript(
   output: string;
 }> {
   const sandbox = await ensureSandboxStarted(sandboxId);
-  const remotePath = `/tmp/spawn-fix-${Date.now()}.sh`;
+  const remotePath = `/tmp/agentsea-fix-${Date.now()}.sh`;
 
   await sandbox.fs.uploadFile(Buffer.from(script), remotePath);
   await sandbox.process.executeCommand(

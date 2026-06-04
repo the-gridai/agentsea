@@ -21,18 +21,12 @@ export const RAW_BASE = `https://raw.githubusercontent.com/${REPO}/main` as cons
 export const VERSION_URL =
   `https://github.com/${REPO}/releases/download/cli-latest/version` as const;
 
-function defaultSpawnCdn(): string {
-  return process.env.AGENTSEA_CDN ?? process.env.GRID_SPAWN_CDN ?? "https://spawn.thegrid.ai";
+function defaultAgentseaCdn(): string {
+  return process.env.AGENTSEA_CDN ?? "https://spawn.thegrid.ai";
 }
 
 /** Primary CDN URL for bootstrap shell scripts (`{CDN}/{cloud}/{agent}.sh`). */
-export const AGENTSEA_CDN = defaultSpawnCdn() as string;
-
-/** @deprecated alias — use AGENTSEA_CDN */
-export const GRID_SPAWN_CDN = AGENTSEA_CDN;
-
-/** @deprecated alias — legacy field naming from upstream manifest slices */
-export const SPAWN_CDN = AGENTSEA_CDN;
+export const AGENTSEA_CDN = defaultAgentseaCdn() as string;
 
 const FETCH_TIMEOUT = 3_000;
 
@@ -175,11 +169,11 @@ function readManifestAt(localPath: string): Manifest | null {
 }
 
 function manifestEnvOverride(): string | undefined {
-  return process.env.AGENTSEA_MANIFEST?.trim() || process.env.GRID_SPAWN_MANIFEST?.trim() || undefined;
+  return process.env.AGENTSEA_MANIFEST?.trim() || undefined;
 }
 
 function rootEnvOverride(): string | undefined {
-  return process.env.AGENTSEA_ROOT?.trim() || process.env.GRID_SPAWN_ROOT?.trim() || undefined;
+  return process.env.AGENTSEA_ROOT?.trim() || undefined;
 }
 
 function tryLoadLocalManifest(): Manifest | null {

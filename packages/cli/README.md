@@ -24,17 +24,17 @@ The bundled **`cli.js`** is gitignored until you build; keep it out of commits o
 
 ## Releases / supply chain
 
-GitHub Releases hosts `digitalocean-latest` artifacts used by userdata shims under **`../../sh/`**. When publishing from a fork, add **immutable versioned** assets alongside `*-latest` and document their SHA-256; users can set **`AGENTSEA_BUNDLE_SHA256`** (legacy: `GRID_SPAWN_BUNDLE_SHA256`; see repo **`.env.example`**) so `openclaw.sh` verifies the download.
+GitHub Releases hosts `digitalocean-latest` artifacts used by userdata shims under **`../../sh/`**. When publishing from a fork, add **immutable versioned** assets alongside `*-latest` and document their SHA-256; users can set **`AGENTSEA_BUNDLE_SHA256`** (legacy: `AGENTSEA_BUNDLE_SHA256`; see repo **`.env.example`**) so `openclaw.sh` verifies the download.
 
 ## Auth
 
 Platform LLM/key usage is **`THEGRID_API_KEY`** (Grid dashboard). Persisted reuse (optional steps) writes **`~/.config/agentsea/thegrid.json`**. An alternate filename from early releases may still be read; see **`packages/cli/src/shared/oauth.ts`**.
 
-When you run the CLI from a checkout, a **repo-root `.env`** next to **`manifest.json`** is loaded automatically (does not replace variables already set in your shell). To point at a checkout when your current directory is elsewhere, set **`AGENTSEA_ROOT`** to that repository path (legacy: `GRID_SPAWN_ROOT`). Set **`SPAWN_DEBUG=1`** or **`AGENTSEA_DEBUG_ENV=1`** to log which `.env` path was loaded (never prints secret values).
+When you run the CLI from a checkout, a **repo-root `.env`** next to **`manifest.json`** is loaded automatically (does not replace variables already set in your shell). To point at a checkout when your current directory is elsewhere, set **`AGENTSEA_ROOT`** to that repository path (legacy: `AGENTSEA_ROOT`). Set **`AGENTSEA_DEBUG=1`** or **`AGENTSEA_DEBUG_ENV=1`** to log which `.env` path was loaded (never prints secret values).
 
 Individual clouds use existing env conventions from the inherited matrix (`DIGITALOCEAN_TOKEN`, `HCLOUD_TOKEN`, etc.) — see **`manifest.json` → clouds**.
 
-Forks / self-built binaries may set **`SPAWN_POSTHOG_PROJECT_KEY`** to a different PostHog **public** ingest key (optional; defaults to the bundled project).
+Forks / self-built binaries may set **`AGENTSEA_POSTHOG_PROJECT_KEY`** to a different PostHog **public** ingest key (optional; defaults to the bundled project).
 
 ## Package layout
 

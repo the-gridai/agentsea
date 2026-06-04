@@ -1,7 +1,7 @@
 /**
  * Fast contract tests for createCloudAgents (no cloud, no SSH).
  * For real provision + verify on DigitalOcean, see digitalocean-agent-flows.test.ts
- * when GRIDSPAWN_RUN_DO_E2E=1 and credentials are set.
+ * when GRIDAGENTSEA_RUN_DO_E2E=1 and credentials are set.
  */
 import { describe, expect, it } from "bun:test";
 import type { AgentConfig } from "../../shared/agents.js";
@@ -19,7 +19,7 @@ const noopRunner: CloudRunner = {
 const { agents, resolveAgent } = createCloudAgents(noopRunner);
 const { agents: moduleAgents } = createCloudAgentsFromModules(noopRunner);
 
-function assertSpawnRcEnvLines(lines: string[], slug: string): void {
+function assertAgentseaRcEnvLines(lines: string[], slug: string): void {
   expect(lines.length, `${slug}: envVars should not be empty`).toBeGreaterThan(0);
   for (const line of lines) {
     const m = /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);
@@ -66,7 +66,7 @@ function assertHeadlessPrompt(agent: AgentConfig, slug: E2eAgentSlug): void {
   const sample = 'Reply with OK.\nSecond: echo "x"';
   const cmd = agent.promptCmd!(sample);
   expect(cmd.length, `${slug}: promptCmd output empty`).toBeGreaterThan(10);
-  expect(cmd.includes("source ~/.spawnrc"), `${slug}: prompt should source ~/.spawnrc`).toBe(true);
+  expect(cmd.includes("source ~/.agentsearc"), `${slug}: prompt should source ~/.agentsearc`).toBe(true);
 }
 
 describe("agent config contract (createCloudAgents, no cloud)", () => {
@@ -86,11 +86,11 @@ describe("agent config contract (createCloudAgents, no cloud)", () => {
       expect(typeof a.launchCmd).toBe("function");
     });
 
-    it("envVars produces valid .spawnrc pairs and expected Grid wiring", () => {
+    it("envVars produces valid .agentsearc pairs and expected Grid wiring", () => {
       const apiKey = "test-key";
       const lines = agents[slug].envVars(apiKey);
       const blob = lines.join("\n");
-      assertSpawnRcEnvLines(lines, slug);
+      assertAgentseaRcEnvLines(lines, slug);
       for (const frag of GRID_ENV_SUBSTRINGS[slug]) {
         expect(blob.includes(frag), `${slug}: env missing ${frag}`).toBe(true);
       }

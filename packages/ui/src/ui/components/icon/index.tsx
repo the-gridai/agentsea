@@ -8,7 +8,7 @@
 import { memo } from "react";
 
 const ICONS = {
-  spawn: "M3 12l9-9 9 9-9 9zM12 3v18M3 12h18",
+  agentsea: "M3 12l9-9 9 9-9 9zM12 3v18M3 12h18",
   list: "M4 6h16M4 12h16M4 18h16",
   plus: "M12 5v14M5 12h14",
   cross: "M6 6l12 12M18 6L6 18",

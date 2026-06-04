@@ -1,4 +1,4 @@
-import type { SpawnRecord } from "../history.js";
+import type { AgentseaRecord } from "../history.js";
 import type { Manifest } from "../manifest.js";
 
 import * as p from "@clack/prompts";
@@ -14,7 +14,7 @@ import {
   resolveProject as gcpResolveProject,
 } from "../gcp/gcp.js";
 import { ensureHcloudToken, destroyServer as hetznerDestroyServer } from "../hetzner/hetzner.js";
-import { getActiveServers, loadHistory, markRecordDeleted, mergeChildHistory, SpawnRecordSchema } from "../history.js";
+import { getActiveServers, loadHistory, markRecordDeleted, mergeChildHistory, AgentseaRecordSchema } from "../history.js";
 import { loadManifest } from "../manifest.js";
 import {
   validateConnectionIP,
@@ -22,7 +22,7 @@ import {
   validateServerIdentifier,
   validateUsername,
 } from "../security.js";
-import { trackSpawnDeleted } from "../shared/lifecycle-telemetry.js";
+import { trackAgentseaDeleted } from "../shared/lifecycle-telemetry.js";
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
 import { getHistoryPath } from "../shared/paths.js";
 import { asyncTryCatch, asyncTryCatchIf, isNetworkError, tryCatch } from "../shared/result.js";
@@ -35,7 +35,7 @@ import { getErrorMessage, isInteractiveTTY } from "./shared.js";
  * This may prompt the user interactively and must be called BEFORE
  * starting any spinner to avoid overlapping UI elements.
  */
-async function ensureDeleteCredentials(record: SpawnRecord): Promise<void> {
+async function ensureDeleteCredentials(record: AgentseaRecord): Promise<void> {
   const conn = record.connection;
   if (!conn?.cloud || conn.cloud === "local") {
     return;
@@ -88,7 +88,7 @@ async function ensureDeleteCredentials(record: SpawnRecord): Promise<void> {
 }
 
 /** Execute server deletion for a given record using TypeScript cloud modules */
-async function execDeleteServer(record: SpawnRecord): Promise<boolean> {
+async function execDeleteServer(record: AgentseaRecord): Promise<boolean> {
   const conn = record.connection;
   if (!conn?.cloud || conn.cloud === "local") {
     return false;
@@ -102,7 +102,7 @@ async function execDeleteServer(record: SpawnRecord): Promise<boolean> {
   if (!idValidation.ok) {
     throw new Error(
       `Invalid server identifier in history: ${getErrorMessage(idValidation.error)}\n\n` +
-        "Your spawn history file may be corrupted or tampered with.\n" +
+        "Your agentsea history file may be corrupted or tampered with.\n" +
         `Location: ${getHistoryPath()}\n` +
         `To fix: edit the file and remove the invalid entry, or run '${AGENTSEA_CLI} list --clear'`,
     );
@@ -204,9 +204,9 @@ async function execDeleteServer(record: SpawnRecord): Promise<boolean> {
 
 /** Prompt for delete confirmation and execute. Returns true if deleted. */
 export async function confirmAndDelete(
-  record: SpawnRecord,
+  record: AgentseaRecord,
   manifest: Manifest | null,
-  deleteHandler?: (record: SpawnRecord) => Promise<boolean>,
+  deleteHandler?: (record: AgentseaRecord) => Promise<boolean>,
 ): Promise<boolean> {
   const conn = record.connection!;
   const label = conn.server_name || conn.server_id || conn.ip;
@@ -262,7 +262,7 @@ export async function confirmAndDelete(
     const detail = lastMessage ? `: ${lastMessage}` : "";
     p.log.success(`Server "${label}" deleted${detail}`);
     // Lifecycle telemetry: lifetime hours + final login count.
-    trackSpawnDeleted(record);
+    trackAgentseaDeleted(record);
   } else {
     const detail = lastMessage ? `: ${lastMessage}` : "";
     p.log.error(`Failed to delete "${label}"${detail}`);
@@ -271,7 +271,7 @@ export async function confirmAndDelete(
 }
 
 /** Pull child history from a remote VM via SSH before deleting it. */
-export async function pullChildHistory(record: SpawnRecord): Promise<void> {
+export async function pullChildHistory(record: AgentseaRecord): Promise<void> {
   const conn = record.connection;
   if (!conn?.ip || !conn.user || conn.cloud === "local" || conn.ip === "sprite-console") {
     return;
@@ -320,9 +320,9 @@ export async function pullChildHistory(record: SpawnRecord): Promise<void> {
     if (!Array.isArray(parsed)) {
       return;
     }
-    const childRecords: SpawnRecord[] = [];
+    const childRecords: AgentseaRecord[] = [];
     for (const el of parsed) {
-      const result = v.safeParse(SpawnRecordSchema, el);
+      const result = v.safeParse(AgentseaRecordSchema, el);
       if (result.success && result.output.id) {
         childRecords.push({
           ...result.output,
@@ -337,10 +337,10 @@ export async function pullChildHistory(record: SpawnRecord): Promise<void> {
   });
 }
 
-/** Find all children of a given spawn record (direct and transitive). */
-export function findDescendants(parentId: string): SpawnRecord[] {
+/** Find all children of a given agentsea record (direct and transitive). */
+export function findDescendants(parentId: string): AgentseaRecord[] {
   const history = loadHistory();
-  const descendants: SpawnRecord[] = [];
+  const descendants: AgentseaRecord[] = [];
   const queue = [
     parentId,
   ];
@@ -358,8 +358,8 @@ export function findDescendants(parentId: string): SpawnRecord[] {
   return descendants;
 }
 
-/** Delete a spawn and all its descendants (depth-first). */
-export async function cascadeDelete(record: SpawnRecord, manifest: Manifest | null): Promise<boolean> {
+/** Delete a agentsea and all its descendants (depth-first). */
+export async function cascadeDelete(record: AgentseaRecord, manifest: Manifest | null): Promise<boolean> {
   const descendants = findDescendants(record.id);
 
   if (descendants.length > 0) {
@@ -431,7 +431,7 @@ export async function cmdDelete(
       );
       p.log.info(`Run ${pc.cyan(`${AGENTSEA_CLI} delete`)} without filters to see all servers.`);
     } else {
-      p.log.info(`Run ${pc.cyan(`${AGENTSEA_CLI} <agent> <cloud>`)} to create a spawn first.`);
+      p.log.info(`Run ${pc.cyan(`${AGENTSEA_CLI} <agent> <cloud>`)} to create a agentsea first.`);
     }
     return;
   }
@@ -453,7 +453,7 @@ export async function cmdDelete(
       if (ok) {
         p.log.success(`Server "${label}" deleted`);
         // Lifecycle telemetry: headless path also fires the event.
-        trackSpawnDeleted(record);
+        trackAgentseaDeleted(record);
       }
     }
     return;

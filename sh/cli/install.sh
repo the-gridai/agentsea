@@ -7,13 +7,13 @@
 # This installs agentsea via bun. If bun is not available, it auto-installs it first.
 #
 # Override install directory:
-#   SPAWN_INSTALL_DIR=/usr/local/bin curl -fsSL --proto '=https' ... | bash
+#   AGENTSEA_INSTALL_DIR=/usr/local/bin curl -fsSL --proto '=https' ... | bash
 
 set -eo pipefail
 
-SPAWN_REPO="Spectral-Finance/agentsea"
-SPAWN_CDN="https://spawn.thegrid.ai"
-SPAWN_RAW_BASE="https://raw.githubusercontent.com/${SPAWN_REPO}/main"
+AGENTSEA_REPO="Spectral-Finance/agentsea"
+AGENTSEA_CDN="https://spawn.thegrid.ai"
+AGENTSEA_RAW_BASE="https://raw.githubusercontent.com/${AGENTSEA_REPO}/main"
 MIN_BUN_VERSION="1.2.0"
 BUN_INSTALL_VERSION="1.3.9"
 # SHA-256 of https://bun.sh/install?version=1.3.9 — update when bumping BUN_INSTALL_VERSION
@@ -77,7 +77,7 @@ ensure_min_bun_version() {
             echo "  bun upgrade"
             echo ""
             echo "Then re-run:"
-            echo "  curl -fsSL --proto '=https' ${SPAWN_CDN}/cli/install.sh | bash"
+            echo "  curl -fsSL --proto '=https' ${AGENTSEA_CDN}/cli/install.sh | bash"
             exit 1
         fi
         log_info "bun upgraded to ${current}"
@@ -161,7 +161,7 @@ safe_ln_sf() {
 # to /usr/local/bin for immediate availability (without prompting for a
 # password — only if writable or passwordless sudo is available).
 # Also patches shell rc files so both ~/.local/bin and ~/.bun/bin are in
-# PATH for future sessions (bun is required by spawn's shebang).
+# PATH for future sessions (bun is required by agentsea's shebang).
 ensure_in_path() {
     local install_dir="$1"
     local bun_bin_dir="${BUN_INSTALL}/bin"
@@ -169,10 +169,10 @@ ensure_in_path() {
     # 1. Check if install_dir and bun are already in the user's real PATH
     local agentsea_in_path=false
     local bun_in_path=false
-    if echo "${_SPAWN_ORIG_PATH}" | tr ':' '\n' | grep -qxF "${install_dir}"; then
+    if echo "${_AGENTSEA_ORIG_PATH}" | tr ':' '\n' | grep -qxF "${install_dir}"; then
         agentsea_in_path=true
     fi
-    if echo "${_SPAWN_ORIG_PATH}" | tr ':' '\n' | grep -qxF "${bun_bin_dir}"; then
+    if echo "${_AGENTSEA_ORIG_PATH}" | tr ':' '\n' | grep -qxF "${bun_bin_dir}"; then
         bun_in_path=true
     fi
 
@@ -262,7 +262,7 @@ ensure_in_path() {
 
     # 4. Show version and success message
     echo ""
-    SPAWN_NO_UPDATE_CHECK=1 PATH="${install_dir}:${PATH}" "${install_dir}/agentsea" version
+    AGENTSEA_NO_UPDATE_CHECK=1 PATH="${install_dir}:${PATH}" "${install_dir}/agentsea" version
     echo ""
     local all_ready=true
     if [ "$agentsea_in_path" = false ] && [ "$linked" = false ]; then
@@ -288,22 +288,22 @@ build_and_install() {
     trap '[ -n "${tmpdir}" ] && [ -d "${tmpdir}" ] && rm -rf "${tmpdir}"' EXIT
 
     log_step "Downloading pre-built CLI binary..."
-    curl -fsSL --proto '=https' "https://github.com/${SPAWN_REPO}/releases/download/cli-latest/cli.js" -o "${tmpdir}/cli.js"
+    curl -fsSL --proto '=https' "https://github.com/${AGENTSEA_REPO}/releases/download/cli-latest/cli.js" -o "${tmpdir}/cli.js"
     if [ ! -s "${tmpdir}/cli.js" ]; then
         log_error "Failed to download pre-built binary"
         exit 1
     fi
 
-    if [ -n "${SPAWN_INSTALL_DIR:-}" ]; then
-        case "${SPAWN_INSTALL_DIR}" in
+    if [ -n "${AGENTSEA_INSTALL_DIR:-}" ]; then
+        case "${AGENTSEA_INSTALL_DIR}" in
             /*) ;;  # absolute path OK
-            *) log_error "SPAWN_INSTALL_DIR must be an absolute path"; exit 1 ;;
+            *) log_error "AGENTSEA_INSTALL_DIR must be an absolute path"; exit 1 ;;
         esac
-        case "${SPAWN_INSTALL_DIR}" in
-            *..*) log_error "SPAWN_INSTALL_DIR must not contain .. path components"; exit 1 ;;
+        case "${AGENTSEA_INSTALL_DIR}" in
+            *..*) log_error "AGENTSEA_INSTALL_DIR must not contain .. path components"; exit 1 ;;
         esac
     fi
-    INSTALL_DIR="${SPAWN_INSTALL_DIR:-${HOME}/.local/bin}"
+    INSTALL_DIR="${AGENTSEA_INSTALL_DIR:-${HOME}/.local/bin}"
     mkdir -p "${INSTALL_DIR}"
     cp "${tmpdir}/cli.js" "${INSTALL_DIR}/agentsea"
     chmod +x "${INSTALL_DIR}/agentsea"
@@ -315,7 +315,7 @@ build_and_install() {
 # --- Locate or install bun ---
 # Save original PATH before modifications so ensure_in_path() can check
 # whether the install dir is already in the user's real PATH.
-_SPAWN_ORIG_PATH="${PATH}"
+_AGENTSEA_ORIG_PATH="${PATH}"
 # When running via `curl | bash`, subshells may not inherit PATH updates,
 # so we always prepend the standard bun install locations explicitly.
 export BUN_INSTALL="${BUN_INSTALL:-${HOME}/.bun}"
@@ -345,7 +345,7 @@ if ! bun --version &>/dev/null; then
         echo "This could indicate a compromised CDN or DNS hijack."
         echo ""
         echo "If bun has released a new installer, please report this at:"
-        echo "  https://github.com/${SPAWN_REPO}/issues"
+        echo "  https://github.com/${AGENTSEA_REPO}/issues"
         exit 1
     fi
     bash "$_bun_installer"
@@ -363,7 +363,7 @@ if ! bun --version &>/dev/null; then
         echo "  curl -fsSL --proto '=https' https://bun.sh/install?version=${BUN_INSTALL_VERSION} | bash"
         echo ""
         echo "Then reopen your terminal and re-run:"
-        echo "  curl -fsSL --proto '=https' ${SPAWN_CDN}/cli/install.sh | bash"
+        echo "  curl -fsSL --proto '=https' ${AGENTSEA_CDN}/cli/install.sh | bash"
         exit 1
     fi
 
@@ -375,15 +375,15 @@ ensure_min_bun_version
 log_step "Installing agentsea via bun..."
 build_and_install
 
-# Persist install referrer (e.g. SPAWN_REF=reddit) so the CLI can report
+# Persist install referrer (e.g. AGENTSEA_REF=reddit) so the CLI can report
 # attribution on first run. Only written once — never overwritten on updates.
-if [ -n "${SPAWN_REF:-}" ]; then
+if [ -n "${AGENTSEA_REF:-}" ]; then
     _ref_dir="${HOME}/.config/agentsea"
     _ref_file="${_ref_dir}/.ref"
     if [ ! -f "${_ref_file}" ]; then
         mkdir -p "${_ref_dir}"
         # Sanitize: allow only alphanumeric, hyphens, underscores (no injection)
-        _clean_ref=$(printf '%s' "${SPAWN_REF}" | tr -cd 'a-zA-Z0-9_-' | head -c 32)
+        _clean_ref=$(printf '%s' "${AGENTSEA_REF}" | tr -cd 'a-zA-Z0-9_-' | head -c 32)
         if [ -n "${_clean_ref}" ]; then
             printf '%s' "${_clean_ref}" > "${_ref_file}"
             log_info "Install referrer: ${_clean_ref}"

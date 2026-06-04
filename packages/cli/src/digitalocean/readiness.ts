@@ -3,7 +3,7 @@
 import * as p from "@clack/prompts";
 import { handleBillingError } from "../shared/billing-guidance.js";
 import { getOrPromptApiKey, loadSavedTheGridApiKey, verifyTheGridApiKey } from "../shared/oauth.js";
-import { getSpawnKey } from "../shared/ssh-keys.js";
+import { getAgentseaKey } from "../shared/ssh-keys.js";
 import { logAlwaysInfo, logAlwaysStep, logError, logWarn, openBrowser, prompt } from "../shared/ui.js";
 import { DIGITALOCEAN_BILLING_ADD_PAYMENT_URL, digitaloceanBilling } from "./billing.js";
 import {
@@ -203,7 +203,7 @@ export async function runDigitalOceanReadinessGate(opts: { agentName: string }):
   const { agentName } = opts;
 
   const canPrompt =
-    isInteractiveTTY() && process.env.SPAWN_NON_INTERACTIVE !== "1" && process.env.SPAWN_HEADLESS !== "1";
+    isInteractiveTTY() && process.env.AGENTSEA_NON_INTERACTIVE !== "1" && process.env.AGENTSEA_HEADLESS !== "1";
   if (canPrompt) {
     preloadDigitalOceanApiTokenForReadiness();
     let snapshot = await fetchDoAccountSnapshot();
@@ -228,8 +228,8 @@ export async function runDigitalOceanReadinessGate(opts: { agentName: string }):
     const state = await evaluateDigitalOceanReadiness(agentName);
 
     const jsonReadiness =
-      process.env.SPAWN_NON_INTERACTIVE === "1" &&
-      (process.argv.includes("--json-readiness") || process.env.SPAWN_JSON_READINESS === "1");
+      process.env.AGENTSEA_NON_INTERACTIVE === "1" &&
+      (process.argv.includes("--json-readiness") || process.env.AGENTSEA_JSON_READINESS === "1");
     if (!jsonReadiness) {
       renderReadinessChecklist(state);
     }
@@ -238,11 +238,11 @@ export async function runDigitalOceanReadinessGate(opts: { agentName: string }):
       break;
     }
 
-    if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+    if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
       const firstBlocker = state.blockers[0];
       if (firstBlocker === "ssh_missing" && !attemptedNonInteractiveSshRegistration) {
         attemptedNonInteractiveSshRegistration = true;
-        logAlwaysStep("Registering Spawn SSH key with DigitalOcean (non-interactive)...");
+        logAlwaysStep("Registering Agentsea SSH key with DigitalOcean (non-interactive)...");
         await ensureSshKey();
         continue;
       }
@@ -258,7 +258,7 @@ export async function runDigitalOceanReadinessGate(opts: { agentName: string }):
           logAlwaysInfo(`Billing: ${DIGITALOCEAN_BILLING_ADD_PAYMENT_URL}`);
         }
         if (attemptedNonInteractiveSshRegistration && state.blockers.includes("ssh_missing")) {
-          const pubPath = getSpawnKey().pubPath;
+          const pubPath = getAgentseaKey().pubPath;
           logAlwaysInfo(
             "SSH key registration did not succeed (try adding a payment method in DigitalOcean, or add this public key manually under Account → Security → SSH Keys):",
           );

@@ -2,20 +2,20 @@
 
 // delete.ts — cmdDelete, cascadeDelete
 export { cascadeDelete, cmdDelete } from "./delete.js";
-// export.ts — cmdExport (capture a claude spawn into a redistributable github repo)
+// export.ts — cmdExport (capture a claude agentsea into a redistributable github repo)
 export {
   buildExportScript,
   buildGitignore,
   buildReadmeTemplate,
-  buildSpawnMd,
+  buildAgentseaMd,
   cmdExport,
   parseStepsFromLaunchCmd,
   resolveSteps,
 } from "./export.js";
 // feedback.ts — cmdFeedback
 export { cmdFeedback } from "./feedback.js";
-// fix.ts — cmdFix, fixSpawn
-export { cmdFix, fixSpawn } from "./fix.js";
+// fix.ts — cmdFix, fixAgentsea
+export { cmdFix, fixAgentsea } from "./fix.js";
 // help.ts — cmdHelp
 export { cmdHelp } from "./help.js";
 // info.ts — cmdMatrix, cmdAgents, cmdClouds, cmdAgentInfo, cmdCloudInfo
@@ -85,7 +85,7 @@ export {
 } from "./shared.js";
 // status.ts — cmdStatus
 export { cmdStatus } from "./status.js";
-// tree.ts — cmdTree (recursive spawn tree view)
+// tree.ts — cmdTree (recursive agentsea tree view)
 export { cmdTree } from "./tree.js";
 // uninstall.ts — cmdUninstall
 export { cmdUninstall } from "./uninstall.js";

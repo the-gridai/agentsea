@@ -1,5 +1,5 @@
-// shared/spawn-skill.ts — Skill injection for recursive spawn
-// Writes agent-native instruction files teaching each agent how to use `spawn`.
+// shared/agentsea-skill.ts — Skill injection for recursive agentsea
+// Writes agent-native instruction files teaching each agent how to use `agentsea`.
 // Content is embedded directly so it works when installed via npm (no fs reads).
 
 import type { CloudRunner } from "./agent-setup.js";
@@ -13,7 +13,7 @@ import { logInfo, logWarn } from "./ui.js";
 
 /** YAML frontmatter skill (Claude Code, Codex CLI, OpenClaw). */
 const SKILL_FRONTMATTER = `---
-name: spawn
+name: agentsea
 description: Create child cloud VMs with AI coding agents using the ${AGENTSEA_CLI} CLI
 allowed-tools: Bash
 ---
@@ -21,7 +21,7 @@ allowed-tools: Bash
 `;
 
 /** Main skill body (shared by all agents except hermes). */
-const SKILL_BODY = `# Spawn — Create Child VMs
+const SKILL_BODY = `# Agentsea — Create Child VMs
 
 You have the \`${AGENTSEA_CLI}\` CLI installed. Use it to provision cloud VMs with AI agents.
 
@@ -59,11 +59,11 @@ ssh -o StrictHostKeyChecking=accept-new root@<ip> "bash -lc 'codex --quiet \\"yo
 
 - \`${AGENTSEA_CLI} list --json\` — see running children
 - \`${AGENTSEA_CLI} delete --name <name> --yes\` — tear down a child VM (headless)
-- \`${AGENTSEA_CLI} tree\` — see the full spawn tree
+- \`${AGENTSEA_CLI} tree\` — see the full agentsea tree
 
 ## Context
 
-- You are running inside a spawned VM (SPAWN_DEPTH is set)
+- You are running inside a spawned VM (AGENTSEA_DEPTH is set)
 - Cloud credentials are pre-configured — no auth prompts
 - The Grid subscription / usage is inherited from the parent VM (same THEGRID_API_KEY)
 `;
@@ -71,7 +71,7 @@ ssh -o StrictHostKeyChecking=accept-new root@<ip> "bash -lc 'codex --quiet \\"yo
 /** Short snippet for Hermes (appended to SOUL.md, 20K char cap). */
 const HERMES_SNIPPET = `
 
-## Spawn Capability
+## Agentsea Capability
 
 You have the \`${AGENTSEA_CLI}\` CLI for creating child cloud VMs with AI agents.
 Use \`${AGENTSEA_CLI} <agent> <cloud> --headless --output json --prompt "task"\` to delegate work.
@@ -91,17 +91,17 @@ interface SkillConfig {
 /** Per-agent skill configuration: remote path, content, and write mode. */
 const AGENT_SKILLS: Record<string, SkillConfig> = {
   claude: {
-    remotePath: "~/.claude/skills/spawn/SKILL.md",
+    remotePath: "~/.claude/skills/agentsea/SKILL.md",
     content: SKILL_FRONTMATTER + SKILL_BODY,
     append: false,
   },
   codex: {
-    remotePath: "~/.agents/skills/spawn/SKILL.md",
+    remotePath: "~/.agents/skills/agentsea/SKILL.md",
     content: SKILL_FRONTMATTER + SKILL_BODY,
     append: false,
   },
   openclaw: {
-    remotePath: "~/.openclaw/skills/spawn/SKILL.md",
+    remotePath: "~/.openclaw/skills/agentsea/SKILL.md",
     content: SKILL_FRONTMATTER + SKILL_BODY,
     append: false,
   },
@@ -111,7 +111,7 @@ const AGENT_SKILLS: Record<string, SkillConfig> = {
     append: false,
   },
   kilocode: {
-    remotePath: "~/.kilocode/rules/spawn.md",
+    remotePath: "~/.kilocode/rules/agentsea.md",
     content: SKILL_BODY,
     append: false,
   },
@@ -121,7 +121,7 @@ const AGENT_SKILLS: Record<string, SkillConfig> = {
     append: true,
   },
   cursor: {
-    remotePath: "~/.cursor/rules/spawn.md",
+    remotePath: "~/.cursor/rules/agentsea.md",
     content: SKILL_BODY,
     append: false,
   },
@@ -131,14 +131,14 @@ const AGENT_SKILLS: Record<string, SkillConfig> = {
     append: false,
   },
   pi: {
-    remotePath: "~/.pi/agent/skills/spawn/SKILL.md",
+    remotePath: "~/.pi/agent/skills/agentsea/SKILL.md",
     content: SKILL_BODY,
     append: false,
   },
 };
 
-/** Get the remote target path for a given agent's spawn skill file. */
-export function getSpawnSkillPath(agentName: string): string | undefined {
+/** Get the remote target path for a given agent's agentsea skill file. */
+export function getAgentseaSkillPath(agentName: string): string | undefined {
   return AGENT_SKILLS[agentName]?.remotePath;
 }
 
@@ -153,18 +153,18 @@ export function getSkillContent(agentName: string): string | undefined {
 }
 
 /**
- * Inject the spawn skill file onto a remote VM for the given agent.
+ * Inject the agentsea skill file onto a remote VM for the given agent.
  * Base64-encodes embedded content and writes to the agent's native
  * instruction file path on the remote.
  */
-export async function injectSpawnSkill(runner: CloudRunner, agentName: string): Promise<void> {
+export async function injectAgentseaSkill(runner: CloudRunner, agentName: string): Promise<void> {
   const config = AGENT_SKILLS[agentName];
   if (!config) {
-    logWarn(`No spawn skill file for agent: ${agentName}`);
+    logWarn(`No agentsea skill file for agent: ${agentName}`);
     return;
   }
 
-  validateScriptTemplate(config.content, `spawn-skill-${agentName}`);
+  validateScriptTemplate(config.content, `agentsea-skill-${agentName}`);
 
   const b64 = Buffer.from(config.content).toString("base64");
   if (!/^[A-Za-z0-9+/=]+$/.test(b64)) {
@@ -182,8 +182,8 @@ export async function injectSpawnSkill(runner: CloudRunner, agentName: string): 
   const result = await asyncTryCatchIf(isOperationalError, () => wrapSshCall(runner.runServer(cmd)));
 
   if (result.ok) {
-    logInfo(`Spawn skill injected: ${remotePath}`);
+    logInfo(`Agentsea skill injected: ${remotePath}`);
   } else {
-    logWarn("Spawn skill injection failed — agent will work without spawn instructions");
+    logWarn("Agentsea skill injection failed — agent will work without agentsea instructions");
   }
 }

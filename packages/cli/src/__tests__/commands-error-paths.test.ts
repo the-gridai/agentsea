@@ -128,7 +128,7 @@ describe("Commands Error Paths", () => {
   // ── cmdRun: unknown agent/cloud ───────────────────────────────────────
 
   describe("cmdRun - unknown agent or cloud", () => {
-    it("should exit with error and suggest spawn agents for unknown agent", async () => {
+    it("should exit with error and suggest agentsea agents for unknown agent", async () => {
       await expect(cmdRun("nonexistent", "sprite")).rejects.toThrow("process.exit");
       expect(processExitSpy).toHaveBeenCalledWith(1);
 
@@ -139,7 +139,7 @@ describe("Commands Error Paths", () => {
       expect(infoCalls.some((msg: string) => msg.includes("agentsea agents"))).toBe(true);
     });
 
-    it("should exit with error and suggest spawn clouds for unknown cloud", async () => {
+    it("should exit with error and suggest agentsea clouds for unknown cloud", async () => {
       await expect(cmdRun("claude", "nonexistent")).rejects.toThrow("process.exit");
       expect(processExitSpy).toHaveBeenCalledWith(1);
 
@@ -341,7 +341,7 @@ describe("Commands Error Paths", () => {
     });
 
     it("should show agent error and cloud-is-actually-agent error together", async () => {
-      // "spawn badagent codex" - badagent is unknown, codex is an agent not a cloud
+      // "agentsea badagent codex" - badagent is unknown, codex is an agent not a cloud
       await expect(cmdRun("badagent", "codex")).rejects.toThrow("process.exit");
 
       const errorCalls = mockLogError.mock.calls.map((c: unknown[]) => c.join(" "));
@@ -362,7 +362,7 @@ describe("Commands Error Paths", () => {
 
   describe("cmdRun - mismatched argument types", () => {
     it("should tell user when cloud arg is actually an agent", async () => {
-      // "spawn claude codex" - both are agents, not cloud
+      // "agentsea claude codex" - both are agents, not cloud
       await expect(cmdRun("claude", "codex")).rejects.toThrow("process.exit");
       expect(processExitSpy).toHaveBeenCalledWith(1);
 
@@ -372,7 +372,7 @@ describe("Commands Error Paths", () => {
     });
 
     it("should tell user when agent arg is actually a cloud (not swappable)", async () => {
-      // "spawn hetzner sprite" - both are clouds, swap detection won't fire
+      // "agentsea hetzner sprite" - both are clouds, swap detection won't fire
       // because sprite is not an agent
       await expect(cmdRun("hetzner", "sprite")).rejects.toThrow("process.exit");
       expect(processExitSpy).toHaveBeenCalledWith(1);

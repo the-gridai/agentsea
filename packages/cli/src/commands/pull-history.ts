@@ -1,12 +1,12 @@
-// commands/pull-history.ts — `spawn pull-history`: recursively pull child spawn history
+// commands/pull-history.ts — `agentsea pull-history`: recursively pull child agentsea history
 // Called automatically by the parent after a session ends, or manually.
 // SSHes into each active child, tells it to pull from ITS children first,
 // then downloads its history.json and merges into local history.
 
-import type { SpawnRecord } from "../history.js";
+import type { AgentseaRecord } from "../history.js";
 
 import * as v from "valibot";
-import { getActiveServers, mergeChildHistory, SpawnRecordSchema } from "../history.js";
+import { getActiveServers, mergeChildHistory, AgentseaRecordSchema } from "../history.js";
 import { validateConnectionIP, validateUsername } from "../security.js";
 import { parseJsonWith } from "../shared/parse.js";
 import { asyncTryCatch, tryCatch } from "../shared/result.js";
@@ -15,14 +15,14 @@ import { logDebug, logInfo } from "../shared/ui.js";
 
 const ChildHistorySchema = v.object({
   version: v.optional(v.number()),
-  records: v.array(SpawnRecordSchema),
+  records: v.array(AgentseaRecordSchema),
 });
 
 /**
  * Parse a child's history.json content and merge valid records into local history.
  * Exported for testing — the SSH transport is in cmdPullHistory/pullFromChild.
  */
-export function parseAndMergeChildHistory(json: string, parentSpawnId: string): number {
+export function parseAndMergeChildHistory(json: string, parentAgentseaId: string): number {
   if (!json.trim() || json.trim() === "{}") {
     return 0;
   }
@@ -32,7 +32,7 @@ export function parseAndMergeChildHistory(json: string, parentSpawnId: string): 
     return 0;
   }
 
-  const validRecords: SpawnRecord[] = [];
+  const validRecords: AgentseaRecord[] = [];
   for (const r of parsed.records) {
     if (r.id) {
       validRecords.push({
@@ -65,7 +65,7 @@ export function parseAndMergeChildHistory(json: string, parentSpawnId: string): 
   }
 
   if (validRecords.length > 0) {
-    mergeChildHistory(parentSpawnId, validRecords);
+    mergeChildHistory(parentAgentseaId, validRecords);
   }
   return validRecords.length;
 }
@@ -73,7 +73,7 @@ export function parseAndMergeChildHistory(json: string, parentSpawnId: string): 
 /**
  * Pull history from all active child VMs recursively.
  * For each active child:
- *   1. SSH in, run `spawn pull-history` (recurse into grandchildren)
+ *   1. SSH in, run `agentsea pull-history` (recurse into grandchildren)
  *   2. Download the child's history.json
  *   3. Merge into local history with parent_id links
  */
@@ -97,7 +97,7 @@ export async function cmdPullHistory(): Promise<void> {
     }
 
     const { ip, user } = record.connection;
-    const spawnId = record.id;
+    const agentseaId = record.id;
 
     const validation = tryCatch(() => {
       validateUsername(user);
@@ -108,11 +108,11 @@ export async function cmdPullHistory(): Promise<void> {
       continue;
     }
 
-    await pullFromChild(ip, user, spawnId, sshKeyOpts);
+    await pullFromChild(ip, user, agentseaId, sshKeyOpts);
   }
 }
 
-async function pullFromChild(ip: string, user: string, parentSpawnId: string, sshKeyOpts: string[]): Promise<void> {
+async function pullFromChild(ip: string, user: string, parentAgentseaId: string, sshKeyOpts: string[]): Promise<void> {
   const result = await asyncTryCatch(async () => {
     const sshBase = [
       "ssh",
@@ -130,7 +130,7 @@ async function pullFromChild(ip: string, user: string, parentSpawnId: string, ss
     const recurseProc = Bun.spawnSync(
       [
         ...sshBase,
-        'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"; spawn pull-history 2>/dev/null || true',
+        'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"; agentsea pull-history 2>/dev/null || true',
       ],
       {
         stdio: [
@@ -149,7 +149,7 @@ async function pullFromChild(ip: string, user: string, parentSpawnId: string, ss
     const catProc = Bun.spawnSync(
       [
         ...sshBase,
-        "cat ~/.spawn/history.json 2>/dev/null || cat ~/.config/spawn/history.json 2>/dev/null || echo '{}'",
+        "cat ~/.config/agentsea/history.json 2>/dev/null || echo '{}'",
       ],
       {
         stdio: [
@@ -166,7 +166,7 @@ async function pullFromChild(ip: string, user: string, parentSpawnId: string, ss
     }
 
     const json = new TextDecoder().decode(catProc.stdout);
-    const merged = parseAndMergeChildHistory(json, parentSpawnId);
+    const merged = parseAndMergeChildHistory(json, parentAgentseaId);
     if (merged > 0) {
       logInfo(`Pulled ${merged} record(s) from ${ip}`);
     }

@@ -6,7 +6,7 @@ Manual experiments to validate behavior when a single-agent deployment breaks or
 
 **Teardown helper:** After any partial or failed run, destroy orphaned droplets via the DigitalOcean control panel, or use:
 
-`agentsea delete --name <spawn-name> --yes` (non-interactive; see `agentsea help delete`).
+`agentsea delete --name <agentsea-name> --yes` (non-interactive; see `agentsea help delete`).
 
 ---
 
@@ -17,7 +17,7 @@ Manual experiments to validate behavior when a single-agent deployment breaks or
 | **Induce** | Start `agentsea <agent> digitalocean --headless --verbose`, then `pkill -9 -f "bun.*index.ts"` (or kill the PID from `ps`) during install or SSH setup. |
 | **Expect** | Process dies; droplet may already exist with partial setup. Stale `~/.config/agentsea/runs/headless-provision.lock` may block later runs — see [lib/provision.sh](lib/provision.sh) (holder PID cleanup). |
 | **Verify** | Next headless run either succeeds after lock cleanup or fails with a clear error; document any hung remote state. |
-| **Cleanup** | List DO droplets; delete name matching `SPAWN_NAME` / spawn prefix used in logs. |
+| **Cleanup** | List DO droplets; delete name matching `AGENTSEA_NAME` / agentsea prefix used in logs. |
 
 ---
 
@@ -25,7 +25,7 @@ Manual experiments to validate behavior when a single-agent deployment breaks or
 
 | Item | Detail |
 |------|--------|
-| **Induce** | `export DIGITALOCEAN_ACCESS_TOKEN=invalid` (or unset) and run headless spawn. |
+| **Induce** | `export DIGITALOCEAN_ACCESS_TOKEN=invalid` (or unset) and run headless agentsea. |
 | **Expect** | Fast failure from API (401/403) or CLI preflight; **no** droplet created if create never succeeds. |
 | **Log snippet goal** | Clear auth error string, no misleading "Success". |
 | **Cleanup** | None if no VM was created. |
@@ -36,7 +36,7 @@ Manual experiments to validate behavior when a single-agent deployment breaks or
 
 | Item | Detail |
 |------|--------|
-| **Induce** | Exhaust droplet quota or use an account at limit; run `e2e.sh` or headless spawn. |
+| **Induce** | Exhaust droplet quota or use an account at limit; run `e2e.sh` or headless agentsea. |
 | **Expect** | [lib/provision.sh](lib/provision.sh) retries up to 3 times when stderr matches droplet-limit patterns; logs show attempt count. |
 | **Cleanup** | Delete old test droplets to free quota. |
 
@@ -47,7 +47,7 @@ Manual experiments to validate behavior when a single-agent deployment breaks or
 | Item | Detail |
 |------|--------|
 | **Induce** | E2E path: `PROVISION_TIMEOUT` / per-agent timeout in [lib/common.sh](lib/common.sh) — shorten for testing so [lib/provision.sh](lib/provision.sh) kills the subshell mid-run. |
-| **Expect** | Log warns that provision timed out and process was killed; `exit_file` may reflect partial completion; remote `.spawnrc` may or may not exist. |
+| **Expect** | Log warns that provision timed out and process was killed; `exit_file` may reflect partial completion; remote `.agentsearc` may or may not exist. |
 | **Cleanup** | Inspect DO for the droplet name from logs; delete if abandoned. |
 
 ---
@@ -67,7 +67,7 @@ Manual experiments to validate behavior when a single-agent deployment breaks or
 
 | Item | Detail |
 |------|--------|
-| **Induce** | Use a DO account whose registered SSH key does not match `~/.ssh/spawn_ed25519` / keys the CLI tries (or simulate by wrong local key). |
+| **Induce** | Use a DO account whose registered SSH key does not match `~/.ssh/agentsea_ed25519` / keys the CLI tries (or simulate by wrong local key). |
 | **Expect** | SSH handshake or auth failure after IP is known; readiness may still show "SSH key ready" if that check only verifies DO account registration — note any product gap. |
 | **Cleanup** | Delete droplet from DO UI. |
 

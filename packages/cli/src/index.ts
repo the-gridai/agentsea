@@ -53,11 +53,11 @@ import { checkForUpdates } from "./update-check.js";
 const VERSION = pkg.version;
 
 // Initialize telemetry early — captures uncaught errors and exit flush.
-// Disabled with SPAWN_TELEMETRY=0.
+// Disabled with AGENTSEA_TELEMETRY=0.
 initTelemetry(VERSION);
 
-// Attribution: if the user installed via a tagged URL (SPAWN_REF=reddit|x|...),
-// the install script persisted the ref to ~/.config/spawn/.ref. Read it once
+// Attribution: if the user installed via a tagged URL (AGENTSEA_REF=reddit|x|...),
+// the install script persisted the ref to ~/.config/agentsea/.ref. Read it once
 // and attach to every telemetry event so PostHog can segment by acquisition channel.
 tryCatchIf(isFileError, () => {
   const ref = readFileSync(getInstallRefPath(), "utf8").trim();
@@ -150,17 +150,17 @@ function checkUnknownFlags(args: string[]): void {
     console.error(`    ${pc.cyan("--zone, --region")}    Set zone/region (e.g. us-east1-b, nyc3)`);
     console.error(`    ${pc.cyan("--size, --machine-type")}  Set instance size (e.g. e2-standard-4, s-2vcpu-2gb)`);
     console.error(`    ${pc.cyan("--model, -m <id>")}    Set the LLM model (e.g. openai/gpt-5.3-codex)`);
-    console.error(`    ${pc.cyan("--name")}              Set the spawn/resource name`);
+    console.error(`    ${pc.cyan("--name")}              Set the agentsea/resource name`);
     console.error(`    ${pc.cyan("--reauth")}            Force re-prompting for cloud credentials`);
     console.error(`    ${pc.cyan("--config <path>")}     Load config from JSON file`);
     console.error(`    ${pc.cyan("--steps <list>")}      Comma-separated setup steps to enable`);
-    console.error(`    ${pc.cyan("--repo <slug|url>")}  Clone a template repo and apply spawn.md`);
+    console.error(`    ${pc.cyan("--repo <slug|url>")}  Clone a template repo and apply agentsea.md`);
     console.error(`    ${pc.cyan("--beta tarball")}      Use pre-built tarball for agent install (repeatable)`);
     console.error(`    ${pc.cyan("--beta images")}       Use pre-built DO marketplace images (faster boot)`);
     console.error(`    ${pc.cyan("--beta parallel")}     Parallelize server boot with setup prompts`);
     console.error(`    ${pc.cyan("--beta docker")}       Use Docker CE app image on Hetzner/GCP (faster boot)`);
     console.error(`    ${pc.cyan("--beta sandbox")}      Run local agents in a Docker container (sandboxed)`);
-    console.error(`    ${pc.cyan("--beta recursive")}    Install spawn CLI on VM for recursive spawning`);
+    console.error(`    ${pc.cyan("--beta recursive")}    Install agentsea CLI on VM for recursive spawning`);
     console.error(`    ${pc.cyan("--help, -h")}          Show help information`);
     console.error(`    ${pc.cyan("--version, -v")}       Show version`);
     console.error();
@@ -171,12 +171,12 @@ function checkUnknownFlags(args: string[]): void {
     console.error(`    ${pc.cyan("-a, --agent")}         Agent running on the server`);
     console.error(`    ${pc.cyan("-c, --cloud")}         Cloud provider the server is on`);
     console.error(`    ${pc.cyan("-u, --user")}          SSH user (default: root)`);
-    console.error(`    ${pc.cyan("--name")}              Custom name for this linked spawn`);
+    console.error(`    ${pc.cyan("--name")}              Custom name for this linked agentsea`);
     console.error();
     console.error(`  For ${pc.cyan("agentsea list")}:`);
     console.error(`    ${pc.cyan("-a, --agent")}         Filter history by agent`);
     console.error(`    ${pc.cyan("-c, --cloud")}         Filter history by cloud`);
-    console.error(`    ${pc.cyan("--clear")}             Clear all spawn history`);
+    console.error(`    ${pc.cyan("--clear")}             Clear all agentsea history`);
     console.error();
     console.error(`  For ${pc.cyan("agentsea delete")}:`);
     console.error(`    ${pc.cyan("--name <name>")}       Filter by server name or ID`);
@@ -276,7 +276,7 @@ console.error(`\nUsage: ${pc.cyan("agentsea <agent> <cloud> --headless --output 
       prompt,
       debug,
       outputFormat,
-      spawnName: process.env.SPAWN_NAME,
+      agentseaName: process.env.AGENTSEA_NAME,
     });
     return;
   }
@@ -295,8 +295,8 @@ console.error(`\nUsage: ${pc.cyan("agentsea <agent> <cloud> --dry-run")}`);
   }
 
   // Check if the single argument is a cloud name before routing to agent-interactive.
-  // This fixes: `spawn digitalocean` telling users to run `spawn digitalocean` for
-  // setup instructions, but `spawn digitalocean` routing to "Unknown agent: digitalocean".
+  // This fixes: `agentsea digitalocean` telling users to run `agentsea digitalocean` for
+  // setup instructions, but `agentsea digitalocean` routing to "Unknown agent: digitalocean".
   const cloudCheckResult = await asyncTryCatchIf(isNetworkError, () => loadManifest());
   if (cloudCheckResult.ok) {
     const resolvedCloud = resolveCloudKey(cloudCheckResult.data, agent);
@@ -548,13 +548,13 @@ const CLEANUP_COMMANDS = new Set([
   "cleanup",
 ]);
 
-// resume handled separately for --recover / optional spawn-id
+// resume handled separately for --recover / optional agentsea-id
 const RESUME_COMMANDS = new Set([
   "resume",
   "continue",
 ]);
 
-// fix handled separately for optional positional spawn-id argument
+// fix handled separately for optional positional agentsea-id argument
 const FIX_COMMANDS = new Set([
   "fix",
   "repair",
@@ -567,7 +567,7 @@ const STATUS_COMMANDS = new Set([
   "ps",
 ]);
 
-// Common verb prefixes that users naturally try (e.g. "spawn run claude sprite")
+// Common verb prefixes that users naturally try (e.g. "agentsea run claude sprite")
 // These are not real subcommands -- we strip them and forward to the default handler
 const VERB_ALIASES = new Set([
   "run",
@@ -588,7 +588,7 @@ function warnExtraArgs(filteredArgs: string[], maxExpected: number): void {
 }
 
 /** Parse -a/--agent <agent> and -c/--cloud <cloud> filter flags from args.
- *  Also accepts a bare positional arg as a filter (e.g. "spawn list claude"). */
+ *  Also accepts a bare positional arg as a filter (e.g. "agentsea list claude"). */
 function parseListFilters(args: string[]): {
   agentFilter?: string;
   cloudFilter?: string;
@@ -618,7 +618,7 @@ console.error(`\nUsage: ${pc.cyan("agentsea list -c <cloud>")}`);
     }
   }
 
-  // Support bare positional filter: "spawn list claude" or "spawn list hetzner"
+  // Support bare positional filter: "agentsea list claude" or "agentsea list hetzner"
   if (!agentFilter && !cloudFilter && positional.length > 0) {
     agentFilter = positional[0];
   }
@@ -736,7 +736,7 @@ async function dispatchSubcommand(cmd: string, filteredArgs: string[]): Promise<
     return;
   }
 
-  // "spawn agents <name>" or "spawn clouds <name>" -> show info for that name
+  // "agentsea agents <name>" or "agentsea clouds <name>" -> show info for that name
   if ((cmd === "agents" || cmd === "clouds") && filteredArgs.length > 1 && !filteredArgs[1].startsWith("-")) {
     const name = filteredArgs[1];
     warnExtraArgs(filteredArgs, 2);
@@ -750,7 +750,7 @@ async function dispatchSubcommand(cmd: string, filteredArgs: string[]): Promise<
   await SUBCOMMANDS[cmd]();
 }
 
-/** Handle verb aliases like "spawn run claude sprite" -> "spawn claude sprite" */
+/** Handle verb aliases like "agentsea run claude sprite" -> "agentsea claude sprite" */
 async function dispatchVerbAlias(
   cmd: string,
   filteredArgs: string[],
@@ -780,7 +780,7 @@ console.error(`\nUsage: ${pc.cyan("agentsea <agent> <cloud>")}`);
   process.exit(1);
 }
 
-/** Handle slash notation: "spawn claude/hetzner" -> "spawn claude hetzner" */
+/** Handle slash notation: "agentsea claude/hetzner" -> "agentsea claude hetzner" */
 async function dispatchSlashNotation(
   cmd: string,
   prompt: string | undefined,
@@ -865,9 +865,9 @@ async function dispatchCommand(
       cmdHelp();
       return;
     }
-    // Optional positional argument: spawn fix [spawn-id]
-    const spawnId = filteredArgs[1] && !filteredArgs[1].startsWith("-") ? filteredArgs[1] : undefined;
-    await cmdFix(spawnId);
+    // Optional positional argument: agentsea fix [agentsea-id]
+    const agentseaId = filteredArgs[1] && !filteredArgs[1].startsWith("-") ? filteredArgs[1] : undefined;
+    await cmdFix(agentseaId);
     return;
   }
   if (STATUS_COMMANDS.has(cmd)) {
@@ -922,7 +922,7 @@ async function dispatchCommand(
 async function main(): Promise<void> {
   const rawArgs = process.argv.slice(2);
 
-  // ── `spawn pick` — bypass all flag parsing; used by bash scripts ──────────
+  // ── `agentsea pick` — bypass all flag parsing; used by bash scripts ──────────
   // Must be handled before expandEqualsFlags / resolvePrompt so that pick's
   // own --prompt flag is not mistakenly consumed by the top-level prompt logic.
   // Runs before initFeatureFlags() — this is a hot path called by shell
@@ -935,7 +935,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // ── `spawn feedback` — bypass flag parsing; rest of args are the message ───
+  // ── `agentsea feedback` — bypass flag parsing; rest of args are the message ───
   // Also runs before initFeatureFlags() for the same reason as `pick`.
   if (rawArgs[0] === "feedback") {
     await cmdFeedback(rawArgs.slice(1));
@@ -943,7 +943,7 @@ async function main(): Promise<void> {
   }
 
   // Fetch feature flags (1.5s timeout, fail-open). Must run before any code
-  // path that gates on a flag — currently the SPAWN_BETA composition for the
+  // path that gates on a flag — currently the AGENTSEA_BETA composition for the
   // `fast_provision` experiment. Placed AFTER the pick/feedback bypasses so
   // those fast paths never pay the flag-fetch cost.
   await initFeatureFlags();
@@ -973,11 +973,11 @@ async function main(): Promise<void> {
     filteredArgs.splice(debugIdx, 1);
   }
 
-  // Extract --verbose boolean flag — show full provisioning chatter on stderr (or set SPAWN_VERBOSE=1).
+  // Extract --verbose boolean flag — show full provisioning chatter on stderr (or set AGENTSEA_VERBOSE=1).
   const verboseIdx = filteredArgs.indexOf("--verbose");
   if (verboseIdx !== -1) {
     filteredArgs.splice(verboseIdx, 1);
-    process.env.SPAWN_VERBOSE = "1";
+    process.env.AGENTSEA_VERBOSE = "1";
   }
 
   // Extract --headless boolean flag
@@ -992,27 +992,27 @@ async function main(): Promise<void> {
   const custom = customIdx !== -1;
   if (custom) {
     filteredArgs.splice(customIdx, 1);
-    process.env.SPAWN_CUSTOM = "1";
+    process.env.AGENTSEA_CUSTOM = "1";
   }
 
   const setupPromptIdx = filteredArgs.indexOf("--setup-prompt");
   if (setupPromptIdx !== -1) {
     filteredArgs.splice(setupPromptIdx, 1);
-    process.env.SPAWN_SETUP_PROMPT = "1";
+    process.env.AGENTSEA_SETUP_PROMPT = "1";
   }
 
   // Extract --reauth boolean flag
   const reauthIdx = filteredArgs.indexOf("--reauth");
   if (reauthIdx !== -1) {
     filteredArgs.splice(reauthIdx, 1);
-    process.env.SPAWN_REAUTH = "1";
+    process.env.AGENTSEA_REAUTH = "1";
   }
 
   // Extract --fast boolean flag — enables images + tarballs + parallel setup
   const fastIdx = filteredArgs.indexOf("--fast");
   if (fastIdx !== -1) {
     filteredArgs.splice(fastIdx, 1);
-    process.env.SPAWN_FAST = "1";
+    process.env.AGENTSEA_FAST = "1";
   }
 
   // Extract all --beta <feature> flags (repeatable, opt-in to experimental features)
@@ -1026,7 +1026,7 @@ async function main(): Promise<void> {
     "skills",
   ]);
   const betaFeatures = extractAllFlagValues(filteredArgs, "--beta", "agentsea <agent> <cloud> --beta parallel");
-  const userOptedIntoBeta = betaFeatures.length > 0 || process.env.SPAWN_FAST === "1";
+  const userOptedIntoBeta = betaFeatures.length > 0 || process.env.AGENTSEA_FAST === "1";
   for (const flag of betaFeatures) {
     if (!VALID_BETA_FEATURES.has(flag)) {
       console.error(pc.red(`Unknown beta feature: ${pc.bold(flag)}`));
@@ -1037,12 +1037,12 @@ async function main(): Promise<void> {
       console.error(`  ${pc.cyan("docker")}      Use Docker CE app image on Hetzner/GCP (faster boot)`);
       console.error(`  ${pc.cyan("sandbox")}     Run local agents in a Docker container (sandboxed)`);
       console.error(`  ${pc.cyan("skills")}      Pre-install MCP servers and tools on the VM`);
-      console.error(`  ${pc.cyan("recursive")}   Install spawn CLI on VM for recursive spawning`);
+      console.error(`  ${pc.cyan("recursive")}   Install agentsea CLI on VM for recursive spawning`);
       process.exit(1);
     }
   }
   // --fast implies all beta features
-  if (process.env.SPAWN_FAST === "1") {
+  if (process.env.AGENTSEA_FAST === "1") {
     betaFeatures.push("tarball", "images", "parallel", "docker");
   }
 
@@ -1061,7 +1061,7 @@ async function main(): Promise<void> {
   }
 
   if (betaFeatures.length > 0) {
-    process.env.SPAWN_BETA = [
+    process.env.AGENTSEA_BETA = [
       ...new Set(betaFeatures),
     ].join(",");
   }
@@ -1091,8 +1091,8 @@ async function main(): Promise<void> {
   filteredArgs.splice(0, filteredArgs.length, ...configFilteredArgs);
 
   if (configPath) {
-    const { loadSpawnConfig } = await import("./shared/spawn-config.js");
-    const configResult = tryCatch(() => loadSpawnConfig(configPath));
+    const { loadAgentseaConfig } = await import("./shared/agentsea-config.js");
+    const configResult = tryCatch(() => loadAgentseaConfig(configPath));
     if (!configResult.ok) {
       console.error(pc.red(`Error loading config file: ${getErrorMessage(configResult.error)}`));
       process.exit(1);
@@ -1103,11 +1103,11 @@ async function main(): Promise<void> {
       if (config.model && !process.env.MODEL_ID) {
         process.env.MODEL_ID = config.model;
       }
-      if (config.steps && !process.env.SPAWN_ENABLED_STEPS) {
-        process.env.SPAWN_ENABLED_STEPS = config.steps.join(",");
+      if (config.steps && !process.env.AGENTSEA_ENABLED_STEPS) {
+        process.env.AGENTSEA_ENABLED_STEPS = config.steps.join(",");
       }
-      if (config.name && !process.env.SPAWN_NAME) {
-        process.env.SPAWN_NAME = config.name;
+      if (config.name && !process.env.AGENTSEA_NAME) {
+        process.env.AGENTSEA_NAME = config.name;
       }
       if (config.setup?.telegram_bot_token && !process.env.TELEGRAM_BOT_TOKEN) {
         process.env.TELEGRAM_BOT_TOKEN = config.setup.telegram_bot_token;
@@ -1129,7 +1129,7 @@ async function main(): Promise<void> {
   filteredArgs.splice(0, filteredArgs.length, ...stepsFilteredArgs);
   if (stepsFlag !== undefined) {
     // --steps "" means disable all optional steps
-    process.env.SPAWN_ENABLED_STEPS = stepsFlag;
+    process.env.AGENTSEA_ENABLED_STEPS = stepsFlag;
   }
 
   // Extract --output <format> flag
@@ -1160,10 +1160,10 @@ console.error(`\nUsage: ${pc.cyan("agentsea <agent> <cloud> --headless --output 
   );
   filteredArgs.splice(0, filteredArgs.length, ...nameFilteredArgs);
   if (nameFlag) {
-    process.env.SPAWN_NAME = nameFlag;
+    process.env.AGENTSEA_NAME = nameFlag;
   }
 
-  // Extract --repo <user/repo> flag — clone a template repo and apply spawn.md
+  // Extract --repo <user/repo> flag — clone a template repo and apply agentsea.md
   const [repoFlag, repoFilteredArgs] = extractFlagValue(
     filteredArgs,
     [
@@ -1173,7 +1173,7 @@ console.error(`\nUsage: ${pc.cyan("agentsea <agent> <cloud> --headless --output 
   );
   filteredArgs.splice(0, filteredArgs.length, ...repoFilteredArgs);
   if (repoFlag) {
-    process.env.SPAWN_REPO = repoFlag;
+    process.env.AGENTSEA_REPO = repoFlag;
   }
 
   // Extract --zone / --region <value> flag (maps to cloud-specific env vars)
@@ -1276,7 +1276,7 @@ console.error(`\nUsage: ${pc.cyan("agentsea <agent> <cloud> --headless --output 
 main().then(
   // Let the process exit naturally so fire-and-forget telemetry fetches
   // complete before the event loop drains. process.exit(0) would abort
-  // in-flight requests, silently dropping spawn_deleted and funnel events.
+  // in-flight requests, silently dropping agentsea_deleted and funnel events.
   () => {},
   (err) => {
     handleError(err);

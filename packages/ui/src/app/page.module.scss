@@ -22,7 +22,7 @@
   }
 }
 
-/* ─── Hero (Spawn-style centered stack) ─── */
+/* ─── Hero (Agentsea-style centered stack) ─── */
 .hero {
   text-align: center;
   padding: pad(12) 0 pad(14);
@@ -67,6 +67,9 @@
 .band {
   padding: pad(12) 0;
   border-top: 1px solid c(stroke-2);
+  // Keep the section heading clear of the sticky site header when scrolled to
+  // (via scrollIntoView on agent select or a ?agent= deep-link).
+  scroll-margin-top: 6rem;
 }
 
 .sectionHead {
@@ -131,7 +134,7 @@
   }
 }
 
-/* ─── Agent grid (Spawn pick list) ─── */
+/* ─── Agent grid (Agentsea pick list) ─── */
 .agentGrid {
   list-style: none;
   margin: 0;
@@ -849,7 +852,7 @@
   }
 }
 
-/* ─── Why grid (4-up like Spawn) ─── */
+/* ─── Why grid (4-up like Agentsea) ─── */
 .whyGrid {
   display: grid;
   gap: pad(4);

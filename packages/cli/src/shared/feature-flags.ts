@@ -6,12 +6,12 @@
 //
 // Behavior:
 //   - 1.5s timeout, fail-open (variants treated as missing — control wins)
-//   - On-disk cache at $SPAWN_HOME/feature-flags-cache.json with 1h TTL
+//   - On-disk cache at $AGENTSEA_HOME/feature-flags-cache.json with 1h TTL
 //   - Stale-while-revalidate:
 //       • fresh cache (<TTL)  → use cache, no network call
 //       • stale cache (≥TTL)  → use cache immediately, refresh in background
 //       • no cache            → await a sync fetch (first run only)
-//   - SPAWN_FEATURE_FLAGS_DISABLED=1 disables fetch + lookup entirely
+//   - AGENTSEA_FEATURE_FLAGS_DISABLED=1 disables fetch + lookup entirely
 //   - getFeatureFlag() captures a $feature_flag_called event the first time
 //     a key is read, so PostHog can attribute conversions
 
@@ -20,7 +20,7 @@ import { dirname, join } from "node:path";
 import * as v from "valibot";
 import { getInstallId } from "./install-id.js";
 import { parseJsonWith } from "./parse.js";
-import { getSpawnDir } from "./paths.js";
+import { getAgentseaDir } from "./paths.js";
 import { asyncTryCatch, tryCatch } from "./result.js";
 import { POSTHOG_DECIDE_URL, POSTHOG_PROJECT_API_KEY } from "./posthog-config.js";
 import { captureEvent } from "./telemetry.js";
@@ -54,11 +54,11 @@ let _backgroundRefresh: Promise<void> | null = null;
 const _exposed = new Set<string>();
 
 function getCachePath(): string {
-  return join(getSpawnDir(), "feature-flags-cache.json");
+  return join(getAgentseaDir(), "feature-flags-cache.json");
 }
 
 function isDisabled(): boolean {
-  return process.env.SPAWN_FEATURE_FLAGS_DISABLED === "1";
+  return process.env.AGENTSEA_FEATURE_FLAGS_DISABLED === "1";
 }
 
 /** Read the cache file. Returns the entry (including fetchedAt) or null if

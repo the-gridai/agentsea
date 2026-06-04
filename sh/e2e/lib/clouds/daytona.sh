@@ -2,7 +2,7 @@
 # e2e/lib/clouds/daytona.sh — Daytona cloud driver for multi-cloud E2E
 set -eo pipefail
 
-_DAYTONA_REPO_ROOT="${SPAWN_CLI_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)}"
+_DAYTONA_REPO_ROOT="${AGENTSEA_CLI_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)}"
 _DAYTONA_E2E_HELPER="${_DAYTONA_REPO_ROOT}/packages/cli/src/daytona/e2e.ts"
 _DAYTONA_SSH_HOST="ssh.app.daytona.io"
 

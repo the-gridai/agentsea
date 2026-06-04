@@ -11,7 +11,7 @@ describe("validatePromptFilePath", () => {
     expect(() => validatePromptFilePath("/home/user/prompt.txt")).not.toThrow();
     expect(() => validatePromptFilePath("/tmp/instructions.md")).not.toThrow();
     expect(() => validatePromptFilePath("/etc/hosts")).not.toThrow();
-    expect(() => validatePromptFilePath("/home/user/.config/spawn/prompt.txt")).not.toThrow();
+    expect(() => validatePromptFilePath("/home/user/.config/agentsea/prompt.txt")).not.toThrow();
   });
 
   it("should reject empty paths", () => {
@@ -119,7 +119,7 @@ describe("validatePromptFilePath", () => {
 
   describe("symlink bypass protection", () => {
     const home = process.env.HOME ?? "";
-    const testDir = join(home, ".spawn-test-symlinks");
+    const testDir = join(home, ".agentsea-test-symlinks");
     const sshDir = join(testDir, ".ssh");
     const envFile = join(testDir, ".env");
 

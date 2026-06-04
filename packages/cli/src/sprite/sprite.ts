@@ -9,7 +9,7 @@ import { getErrorMessage } from "@agentsea/sdk";
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
 import { getUserHome } from "../shared/paths.js";
 import { asyncTryCatch } from "../shared/result.js";
-import { killWithTimeout, sleep, spawnInteractive, validateRemotePath } from "../shared/ssh.js";
+import { killWithTimeout, sleep, agentseaInteractive, validateRemotePath } from "../shared/ssh.js";
 import {
   getServerNameFromEnv,
   logError,
@@ -18,7 +18,7 @@ import {
   logStepDone,
   logStepInline,
   logWarn,
-  promptSpawnNameShared,
+  promptAgentseaNameShared,
 } from "../shared/ui.js";
 
 // ─── Configurable Constants ──────────────────────────────────────────────────
@@ -272,7 +272,7 @@ function orgFlags(): string[] {
 // ─── Server Name ─────────────────────────────────────────────────────────────
 
 /** Set the active sprite name for subsequent runSprite/uploadFileSprite/
- *  downloadFileSprite calls. Used by reconnect-style flows (e.g. spawn export)
+ *  downloadFileSprite calls. Used by reconnect-style flows (e.g. agentsea export)
  *  that operate on an existing sprite without going through createSprite. */
 export function setSpriteName(name: string): void {
   if (!name || !/^[a-zA-Z0-9_.-]+$/.test(name)) {
@@ -281,8 +281,8 @@ export function setSpriteName(name: string): void {
   _state.name = name;
 }
 
-export async function promptSpawnName(): Promise<void> {
-  return promptSpawnNameShared("Sprite");
+export async function promptAgentseaName(): Promise<void> {
+  return promptAgentseaNameShared("Sprite");
 }
 
 export async function getServerName(): Promise<string> {
@@ -459,7 +459,7 @@ export async function setupShellEnvironment(): Promise<void> {
   await runSpriteSilent(`sed -i '/exec \\/usr\\/bin\\/zsh/d' ~/.bashrc ~/.bash_profile 2>/dev/null; true`);
 
   // Upload and append PATH config to .bashrc and .zshrc
-  const pathConfig = `\n# [spawn:path]\nexport PATH="\${HOME}/.npm-global/bin:\${HOME}/.local/bin:\${HOME}/.bun/bin:/.sprite/languages/bun/bin:\${PATH}"\n`;
+  const pathConfig = `\n# [agentsea:path]\nexport PATH="\${HOME}/.npm-global/bin:\${HOME}/.local/bin:\${HOME}/.bun/bin:/.sprite/languages/bun/bin:\${PATH}"\n`;
   const pathB64 = Buffer.from(pathConfig).toString("base64");
   await runSprite(
     `printf '%s' '${pathB64}' | base64 -d >> ~/.bashrc && printf '%s' '${pathB64}' | base64 -d >> ~/.zshrc`,
@@ -470,7 +470,7 @@ export async function setupShellEnvironment(): Promise<void> {
   // (e.g., `sprite exec ... bash -c CMD`) still works and sources PATH config.
   const zshResult = await asyncTryCatch(async () => runSpriteSilent("command -v zsh"));
   if (zshResult.ok) {
-    const bashProfile = "\n# [spawn:bash]\n[[ $- == *i* ]] && exec /usr/bin/zsh -l\n";
+    const bashProfile = "\n# [agentsea:bash]\n[[ $- == *i* ]] && exec /usr/bin/zsh -l\n";
     const bpB64 = Buffer.from(bashProfile).toString("base64");
     await runSprite(`printf '%s' '${bpB64}' | base64 -d >> ~/.bash_profile`);
   } else {
@@ -735,14 +735,14 @@ export async function installSpriteKeepAlive(): Promise<void> {
 
 /**
  * Launch an interactive session on the sprite.
- * Uses -tty for interactive mode, plain exec when SPAWN_PROMPT is set.
+ * Uses -tty for interactive mode, plain exec when AGENTSEA_PROMPT is set.
  *
  * The session command is base64-encoded and written to a temp file to avoid
  * quoting issues with multi-line restart loop scripts. If sprite-keep-running
  * is installed, it wraps the command to keep the sprite alive via Sprite's
  * /v1/tasks API for the duration of the session.
  */
-export async function interactiveSession(cmd: string, spawnFn?: (args: string[]) => number): Promise<number> {
+export async function interactiveSession(cmd: string, agentseaFn?: (args: string[]) => number): Promise<number> {
   if (!cmd || /\0/.test(cmd)) {
     throw new Error("Invalid command: must be non-empty and must not contain null bytes");
   }
@@ -753,7 +753,7 @@ export async function interactiveSession(cmd: string, spawnFn?: (args: string[])
 
   // Write cmd to a temp file and exec with keep-alive wrapper if available
   const sessionScript = [
-    "_f=$(mktemp /tmp/spawn_XXXXXX.sh)",
+    "_f=$(mktemp /tmp/agentsea_XXXXXX.sh)",
     `printf '%s' '${cmdB64}' | base64 -d > "$_f"`,
     'chmod +x "$_f"',
     "trap 'rm -f \"$_f\"' EXIT INT TERM",
@@ -764,7 +764,7 @@ export async function interactiveSession(cmd: string, spawnFn?: (args: string[])
     "fi",
   ].join("\n");
 
-  const args = process.env.SPAWN_PROMPT
+  const args = process.env.AGENTSEA_PROMPT
     ? [
         spriteCmd,
         ...orgFlags(),
@@ -789,8 +789,8 @@ export async function interactiveSession(cmd: string, spawnFn?: (args: string[])
         sessionScript,
       ];
 
-  const spawn = spawnFn ?? spawnInteractive;
-  const exitCode = spawn(args);
+  const agentsea = agentseaFn ?? agentseaInteractive;
+  const exitCode = agentsea(args);
 
   // Post-session summary
   process.stderr.write("\n");

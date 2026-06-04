@@ -46,7 +46,7 @@ describe("junie-config", () => {
   });
 
   it("exports launch shell prefix with JUNIE_MODEL for BYOK skip", () => {
-    expect(JUNIE_LAUNCH_SHELL_PREFIX.includes("source ~/.spawnrc")).toBe(true);
+    expect(JUNIE_LAUNCH_SHELL_PREFIX.includes("source ~/.agentsearc")).toBe(true);
     expect(JUNIE_LAUNCH_SHELL_PREFIX.includes(`JUNIE_MODEL=${JUNIE_GRID_CUSTOM_MODEL}`)).toBe(true);
   });
 });

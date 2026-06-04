@@ -1,14 +1,14 @@
 #!/bin/bash
-# e2e/lib/provision.sh — Provision an agent VM via spawn CLI (cloud-agnostic)
+# e2e/lib/provision.sh — Provision an agent VM via agentsea CLI (cloud-agnostic)
 set -eo pipefail
 
 # ---------------------------------------------------------------------------
 # provision_agent AGENT APP_NAME LOG_DIR
 #
-# Runs spawn in headless mode with a timeout. The provision process hangs on
+# Runs agentsea in headless mode with a timeout. The provision process hangs on
 # the interactive SSH session (step 12 of the orchestration), so we kill it
 # after PROVISION_TIMEOUT seconds. The install itself usually succeeds; we
-# verify via instance existence and .spawnrc presence afterward.
+# verify via instance existence and .agentsearc presence afterward.
 #
 # Uses cloud driver functions:
 #   cloud_headless_env  — cloud-specific env var exports
@@ -45,10 +45,10 @@ provision_agent() {
   local stderr_file="${log_dir}/${app_name}.stderr"
 
   # Resolve CLI entry point
-  # SPAWN_CLI_DIR overrides auto-resolution — use this to force local source code
+  # AGENTSEA_CLI_DIR overrides auto-resolution — use this to force local source code
   local cli_entry
-  if [ -n "${SPAWN_CLI_DIR:-}" ]; then
-    cli_entry="${SPAWN_CLI_DIR}/packages/cli/src/index.ts"
+  if [ -n "${AGENTSEA_CLI_DIR:-}" ]; then
+    cli_entry="${AGENTSEA_CLI_DIR}/packages/cli/src/index.ts"
   else
     cli_entry="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/packages/cli/src/index.ts"
   fi
@@ -81,12 +81,12 @@ provision_agent() {
   # Environment for headless provisioning
   # MODEL_ID bypasses interactive model selection (must be a real The Grid catalogue id).
   (
-    export SPAWN_NON_INTERACTIVE=1
-    export SPAWN_SKIP_GITHUB_AUTH=1
-    export SPAWN_SKIP_API_VALIDATION=1
-    export SPAWN_NO_UPDATE_CHECK=1
+    export AGENTSEA_NON_INTERACTIVE=1
+    export AGENTSEA_SKIP_GITHUB_AUTH=1
+    export AGENTSEA_SKIP_API_VALIDATION=1
+    export AGENTSEA_NO_UPDATE_CHECK=1
     export BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
-    export SPAWN_CLI_DIR="${SPAWN_CLI_DIR:-}"
+    export AGENTSEA_CLI_DIR="${AGENTSEA_CLI_DIR:-}"
     export MODEL_ID="${MODEL_ID:-agent-standard}"
     export THEGRID_API_KEY="${THEGRID_API_KEY}"
 
@@ -221,14 +221,14 @@ CLOUD_ENV
 
   log_ok "Instance ${app_name} verified"
 
-  # Wait for install to complete (.spawnrc is written near the end)
+  # Wait for install to complete (.agentsearc is written near the end)
   local effective_install_wait
   effective_install_wait=$(cloud_install_wait)
-  log_step "Waiting for install to complete (polling .spawnrc, up to ${effective_install_wait}s)..."
+  log_step "Waiting for install to complete (polling .agentsearc, up to ${effective_install_wait}s)..."
   local install_waited=0
   local install_ok=0
   while [ "${install_waited}" -lt "${effective_install_wait}" ]; do
-    if cloud_exec "${app_name}" "test -f ~/.spawnrc" >/dev/null 2>&1; then
+    if cloud_exec "${app_name}" "test -f ~/.agentsearc" >/dev/null 2>&1; then
       install_ok=1
       break
     fi
@@ -237,18 +237,18 @@ CLOUD_ENV
   done
 
   if [ "${install_ok}" -eq 1 ]; then
-    # Settle time for agent binary install to finish after .spawnrc is written
+    # Settle time for agent binary install to finish after .agentsearc is written
     sleep 5
-    log_ok "Install completed (.spawnrc found)"
+    log_ok "Install completed (.agentsearc found)"
     return 0
   fi
 
-  # Fallback: CLI was killed before writing .spawnrc (provision timeout race).
-  # Construct .spawnrc manually via SSH using available env vars.
-  log_warn ".spawnrc not found after ${effective_install_wait}s — attempting manual creation"
+  # Fallback: CLI was killed before writing .agentsearc (provision timeout race).
+  # Construct .agentsearc manually via SSH using available env vars.
+  log_warn ".agentsearc not found after ${effective_install_wait}s — attempting manual creation"
   local api_key="${THEGRID_API_KEY:-}"
   if [ -z "${api_key}" ]; then
-    log_err "Cannot create .spawnrc fallback — THEGRID_API_KEY not set"
+    log_err "Cannot create .agentsearc fallback — THEGRID_API_KEY not set"
     return 1
   fi
 
@@ -266,7 +266,7 @@ CLOUD_ENV
   env_tmp=$(mktemp)
   trap 'rm -f "${env_tmp}"' RETURN
   {
-    printf '%s\n' "# [spawn:env]"
+    printf '%s\n' "# [agentsea:env]"
     printf 'export IS_SANDBOX=%q\n' "1"
     printf 'export THEGRID_API_KEY=%q\n' "${api_key}"
     if [ -n "${THEGRID_API_URL:-}" ]; then
@@ -333,7 +333,7 @@ CLOUD_ENV
 
   # SECURITY: Split into two cloud_exec calls to separate data from commands.
   # Step 1 writes the validated base64 payload to a remote temp file.
-  # Step 2 decodes from that file and sets up .spawnrc + shell rc sourcing.
+  # Step 2 decodes from that file and sets up .agentsearc + shell rc sourcing.
   # This avoids embedding variable data in a shell command string that contains
   # control flow (for loops, conditionals), eliminating command injection risk
   # even if the base64 validation were ever bypassed.
@@ -345,32 +345,32 @@ CLOUD_ENV
   # which cannot break out of single quotes or cause shell injection.
   # The remote command re-validates the data as defense-in-depth.
   local b64_tmp
-  b64_tmp=$(cloud_exec "${app_name}" "mktemp -t spawnrc.b64.XXXXXX" 2>/dev/null | tr -d '[:space:]')
+  b64_tmp=$(cloud_exec "${app_name}" "mktemp -t agentsearc.b64.XXXXXX" 2>/dev/null | tr -d '[:space:]')
   if [ -z "${b64_tmp}" ]; then
-    log_err "Failed to create remote temp file for .spawnrc payload"
+    log_err "Failed to create remote temp file for .agentsearc payload"
     return 1
   fi
   # Assign to remote variable and re-validate base64 on remote side before writing.
   if ! cloud_exec "${app_name}" "_B64='${env_b64}'; printf '%s' \"\$_B64\" | grep -qE '^[A-Za-z0-9+/=]+$' && printf '%s' \"\$_B64\" > '${b64_tmp}' || exit 1" >/dev/null 2>&1; then
-    log_err "Failed to write .spawnrc payload to remote temp file"
+    log_err "Failed to write .agentsearc payload to remote temp file"
     return 1
   fi
 
   # Step 2: Decode from the temp file and set up shell rc sourcing.
   # The only interpolated variable is b64_tmp (a mktemp path, safe characters only).
-  if cloud_exec "${app_name}" "base64 -d < '${b64_tmp}' > ~/.spawnrc && chmod 600 ~/.spawnrc && rm -f '${b64_tmp}' && \
+  if cloud_exec "${app_name}" "base64 -d < '${b64_tmp}' > ~/.agentsearc && chmod 600 ~/.agentsearc && rm -f '${b64_tmp}' && \
     for _rc in ~/.bashrc ~/.profile ~/.bash_profile; do \
-    grep -q 'source ~/.spawnrc' \"\$_rc\" 2>/dev/null || printf '%s\n' '[ -f ~/.spawnrc ] && source ~/.spawnrc' >> \"\$_rc\"; done" >/dev/null 2>&1; then
-    log_ok "Manual .spawnrc created successfully"
+    grep -q 'source ~/.agentsearc' \"\$_rc\" 2>/dev/null || printf '%s\n' '[ -f ~/.agentsearc ] && source ~/.agentsearc' >> \"\$_rc\"; done" >/dev/null 2>&1; then
+    log_ok "Manual .agentsearc created successfully"
   else
-    log_err "Failed to create manual .spawnrc"
+    log_err "Failed to create manual .agentsearc"
     return 1
   fi
 
   # Verify the agent binary is present — the provision timeout may have killed
   # the CLI before the agent install completed (tarball extract or npm install).
   # If missing, attempt a direct install on the remote VM.
-  # Non-fatal: .spawnrc was created, so the agent can be installed manually later.
+  # Non-fatal: .agentsearc was created, so the agent can be installed manually later.
   _ensure_agent_binary "${app_name}" "${agent}" || log_warn "Agent binary verification/install failed — agent may need manual install"
   return 0
 }

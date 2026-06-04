@@ -42,7 +42,7 @@ const JUNIE_LITELLM_HEALTH_CHECK =
   `curl -sf "http://127.0.0.1:${JUNIE_LITELLM_PORT}/health/liveliness" >/dev/null 2>&1`;
 
 export const JUNIE_LAUNCH_SHELL_PREFIX = [
-  "source ~/.spawnrc 2>/dev/null",
+  "source ~/.agentsearc 2>/dev/null",
   "source ~/.zshrc 2>/dev/null",
   `export JUNIE_MODEL=${JUNIE_GRID_CUSTOM_MODEL}`,
 ].join("; ");
@@ -86,7 +86,7 @@ export function buildJunieGridModelProfile(
     baseUrl: JUNIE_LITELLM_CHAT_URL,
     id,
     apiType: "OpenAICompletion",
-    // Local LiteLLM accepts the key; upstream auth uses THEGRID_API_KEY from ~/.spawnrc in the wrapper.
+    // Local LiteLLM accepts the key; upstream auth uses THEGRID_API_KEY from ~/.agentsearc in the wrapper.
     apiKey,
     // Without fasterModel, Junie falls back to built-in OpenAI models for helper tasks ? 403.
     fasterModel: { id },
@@ -146,7 +146,7 @@ export async function startJunieLiteLlmProxy(runner: CloudRunner): Promise<void>
 
   const wrapperScript = [
     "#!/bin/bash",
-    'source "$HOME/.spawnrc" 2>/dev/null',
+    'source "$HOME/.agentsearc" 2>/dev/null',
     'export PATH="$HOME/.local/bin:$HOME/.litellm-venv/bin:$PATH"',
     "export THEGRID_API_KEY",
     `exec "$HOME/.litellm-venv/bin/litellm" --config "$HOME/.junie/litellm.yaml" --host 127.0.0.1 --port ${JUNIE_LITELLM_PORT}`,
@@ -178,9 +178,9 @@ export async function startJunieLiteLlmProxy(runner: CloudRunner): Promise<void>
   const unitB64 = Buffer.from(unitFile).toString("base64");
 
   const checkLines = [
-    "source ~/.spawnrc 2>/dev/null",
+    "source ~/.agentsearc 2>/dev/null",
     'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.litellm-venv/bin:$PATH"',
-    'test -n "$THEGRID_API_KEY" || { echo "THEGRID_API_KEY missing from ~/.spawnrc" >&2; exit 1; }',
+    'test -n "$THEGRID_API_KEY" || { echo "THEGRID_API_KEY missing from ~/.agentsearc" >&2; exit 1; }',
     "export THEGRID_API_KEY",
     'test -s "$HOME/.junie/litellm.yaml" || { echo "Missing ~/.junie/litellm.yaml" >&2; exit 1; }',
   ];

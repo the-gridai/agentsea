@@ -11,7 +11,7 @@ import { dirname } from "node:path";
 import { getErrorMessage, isString } from "@agentsea/sdk";
 import { parseJsonObj } from "./parse.js";
 import { gridInferenceModelsUrl } from "./grid-api.js";
-import { getSpawnCloudConfigPath } from "./paths.js";
+import { getAgentseaCloudConfigPath } from "./paths.js";
 import { asyncTryCatchIf, isFileError, isNetworkError, tryCatch } from "./result.js";
 import { logDebug, logError, logInfo, logWarn, logAlwaysInfo, prompt, retryOrQuit } from "./ui.js";
 import { LEGACY_SAVED_API_KEY_CONFIG_STEM } from "./vendor-routing.js";
@@ -30,8 +30,7 @@ export async function verifyTheGridApiKey(apiKey: string): Promise<boolean> {
     return false;
   }
   if (
-    process.env.GRID_SPAWN_SKIP_API_VALIDATION ||
-    process.env.SPAWN_SKIP_API_VALIDATION ||
+    process.env.AGENTSEA_SKIP_API_VALIDATION ||
     process.env.BUN_ENV === "test" ||
     process.env.NODE_ENV === "test"
   ) {
@@ -107,7 +106,7 @@ async function tryOauthFlow(callbackPort = 5180, agentSlug?: string, cloudSlug?:
 /** Save THEGRID_API_KEY for reuse (optional gated by setup steps). */
 async function saveTheGridApiKey(key: string): Promise<void> {
   const result = await asyncTryCatchIf(isFileError, async () => {
-    const configPath = getSpawnCloudConfigPath("thegrid");
+    const configPath = getAgentseaCloudConfigPath("thegrid");
     mkdirSync(dirname(configPath), {
       recursive: true,
       mode: 0o700,
@@ -141,7 +140,7 @@ export function hasSavedTheGridKey(): boolean {
 export function loadSavedTheGridApiKey(): string | null {
   for (const slug of ["thegrid", LEGACY_SAVED_API_KEY_CONFIG_STEM]) {
     const result = tryCatch(() => {
-      const configPath = getSpawnCloudConfigPath(slug);
+      const configPath = getAgentseaCloudConfigPath(slug);
       const data = parseJsonObj(readFileSync(configPath, "utf-8"));
       if (!data) {
         return null;
@@ -199,7 +198,7 @@ export async function getOrPromptApiKey(agentSlug?: string, cloudSlug?: string):
   }
 
   // 2. Check saved key from a previous run (unless forcing re-auth via --reauth).
-  if (process.env.SPAWN_REAUTH !== "1") {
+  if (process.env.AGENTSEA_REAUTH !== "1") {
     const savedKey = loadSavedTheGridApiKey();
     if (savedKey) {
       logAlwaysInfo("Using saved Grid API key");

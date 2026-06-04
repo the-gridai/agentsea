@@ -3,9 +3,9 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 import { writeClipboard } from "./clipboard";
-import styles from "./spawn-copy-block.module.scss";
+import styles from "./agentsea-copy-block.module.scss";
 
-export type SpawnCopyBlockProps = {
+export type AgentseaCopyBlockProps = {
   code: string;
   className?: string;
   stretch?: boolean;
@@ -13,7 +13,7 @@ export type SpawnCopyBlockProps = {
 
 type CopyState = "idle" | "copied" | "failed";
 
-export const SpawnCopyBlock = memo(function SpawnCopyBlockComp({ code, className, stretch }: SpawnCopyBlockProps) {
+export const AgentseaCopyBlock = memo(function AgentseaCopyBlockComp({ code, className, stretch }: AgentseaCopyBlockProps) {
   const [state, setState] = useState<CopyState>("idle");
   const timeoutRef = useRef<number | null>(null);
 

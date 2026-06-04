@@ -1,4 +1,4 @@
-// shared/ssh-keys.ts — Spawn-owned SSH key with legacy fallback for back-compat
+// shared/ssh-keys.ts — Agentsea-owned SSH key with legacy fallback for back-compat
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getSshDir } from "./paths.js";
@@ -10,7 +10,7 @@ import { logInfo, logStep } from "./ui.js";
 export interface SshKeyPair {
   privPath: string;
   pubPath: string;
-  /** Base name, e.g. "spawn_ed25519" or "id_rsa" */
+  /** Base name, e.g. "agentsea_ed25519" or "id_rsa" */
   name: string;
   /** Key algorithm, e.g. "ED25519", "RSA" */
   type: string;
@@ -18,11 +18,11 @@ export interface SshKeyPair {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-/** Filename of the spawn-managed key under ~/.ssh/. */
-export const SPAWN_KEY_NAME = "spawn_ed25519";
+/** Filename of the agentsea-managed key under ~/.ssh/. */
+export const AGENTSEA_KEY_NAME = "agentsea_ed25519";
 
 /** Default key filenames OpenSSH auto-tries; used as legacy -i fallbacks
- * so droplets provisioned by older Spawn versions stay reachable. */
+ * so droplets provisioned by older Agentsea versions stay reachable. */
 const LEGACY_KEY_NAMES = [
   "id_ed25519",
   "id_rsa",
@@ -34,12 +34,12 @@ const MAX_KEYS = 3;
 
 // ─── Module-level cache ─────────────────────────────────────────────────────
 
-let cachedSpawnKey: SshKeyPair | null = null;
+let cachedAgentseaKey: SshKeyPair | null = null;
 let cachedKeys: SshKeyPair[] | null = null;
 
 /** Reset the module-level cache (for testing). */
 export function _resetCache(): void {
-  cachedSpawnKey = null;
+  cachedAgentseaKey = null;
   cachedKeys = null;
 }
 
@@ -126,7 +126,7 @@ export function verifyKeyPair(privPath: string, pubPath: string): "match" | "mis
 /**
  * Repair a stale `.pub` file by rewriting it from the matching private key.
  *
- * The original `.pub` is preserved as `<pubPath>.spawn-backup-<timestamp>` so
+ * The original `.pub` is preserved as `<pubPath>.agentsea-backup-<timestamp>` so
  * the user can inspect what was replaced. Returns the backup path on success,
  * or null if the private key couldn't be read or the filesystem write failed.
  */
@@ -136,7 +136,7 @@ export function repairPubFromPriv(privPath: string, pubPath: string): string | n
     return null;
   }
 
-  const backupPath = `${pubPath}.spawn-backup-${Date.now()}`;
+  const backupPath = `${pubPath}.agentsea-backup-${Date.now()}`;
   const result = tryCatchIf(isFileError, () => {
     renameSync(pubPath, backupPath);
     writeFileSync(pubPath, derived, {
@@ -205,21 +205,21 @@ export function getSshFingerprint(pubPath: string): string {
   );
 }
 
-// ─── Spawn Key Management ───────────────────────────────────────────────────
+// ─── Agentsea Key Management ───────────────────────────────────────────────────
 
 /**
- * Ensure the spawn-managed ed25519 key exists at ~/.ssh/spawn_ed25519 and
+ * Ensure the agentsea-managed ed25519 key exists at ~/.ssh/agentsea_ed25519 and
  * return it. Generated on first use, then cached. The custom filename avoids
- * clobbering the user's personal `id_ed25519` and keeps Spawn's key isolated
+ * clobbering the user's personal `id_ed25519` and keeps Agentsea's key isolated
  * from the rest of their SSH setup.
  */
-export function getSpawnKey(): SshKeyPair {
-  if (cachedSpawnKey) {
-    return cachedSpawnKey;
+export function getAgentseaKey(): SshKeyPair {
+  if (cachedAgentseaKey) {
+    return cachedAgentseaKey;
   }
 
   const sshDir = getSshDir();
-  const privPath = `${sshDir}/${SPAWN_KEY_NAME}`;
+  const privPath = `${sshDir}/${AGENTSEA_KEY_NAME}`;
   const pubPath = `${privPath}.pub`;
 
   mkdirSync(sshDir, {
@@ -228,16 +228,16 @@ export function getSpawnKey(): SshKeyPair {
   });
 
   if (existsSync(privPath) && existsSync(pubPath)) {
-    cachedSpawnKey = {
+    cachedAgentseaKey = {
       privPath,
       pubPath,
-      name: SPAWN_KEY_NAME,
+      name: AGENTSEA_KEY_NAME,
       type: getKeyType(pubPath),
     };
-    return cachedSpawnKey;
+    return cachedAgentseaKey;
   }
 
-  logStep("Generating Spawn SSH key...");
+  logStep("Generating Agentsea SSH key...");
   const result = Bun.spawnSync(
     [
       "ssh-keygen",
@@ -248,7 +248,7 @@ export function getSpawnKey(): SshKeyPair {
       "-N",
       "",
       "-C",
-      "spawn",
+      "agentsea",
     ],
     {
       stdio: [
@@ -261,31 +261,31 @@ export function getSpawnKey(): SshKeyPair {
   if (result.exitCode !== 0) {
     // Race: another process may have created the key between our check and ssh-keygen.
     if (existsSync(privPath) && existsSync(pubPath)) {
-      cachedSpawnKey = {
+      cachedAgentseaKey = {
         privPath,
         pubPath,
-        name: SPAWN_KEY_NAME,
+        name: AGENTSEA_KEY_NAME,
         type: getKeyType(pubPath),
       };
-      return cachedSpawnKey;
+      return cachedAgentseaKey;
     }
-    throw new Error("Spawn SSH key generation failed");
+    throw new Error("Agentsea SSH key generation failed");
   }
-  logInfo(`Spawn SSH key generated at ~/.ssh/${SPAWN_KEY_NAME}`);
+  logInfo(`Agentsea SSH key generated at ~/.ssh/${AGENTSEA_KEY_NAME}`);
 
-  cachedSpawnKey = {
+  cachedAgentseaKey = {
     privPath,
     pubPath,
-    name: SPAWN_KEY_NAME,
+    name: AGENTSEA_KEY_NAME,
     type: "ED25519",
   };
-  return cachedSpawnKey;
+  return cachedAgentseaKey;
 }
 
 /**
  * Discover pre-existing default-named keys (id_ed25519, id_rsa, id_ecdsa) in
- * ~/.ssh/, excluding the spawn-managed key. Used as -i fallbacks so droplets
- * provisioned by older Spawn versions (which registered the user's personal
+ * ~/.ssh/, excluding the agentsea-managed key. Used as -i fallbacks so droplets
+ * provisioned by older Agentsea versions (which registered the user's personal
  * keys with the cloud account) remain SSH-reachable.
  *
  * Stale .pub files are auto-repaired against their .priv (the .priv is
@@ -301,7 +301,7 @@ export function discoverLegacyKeys(): SshKeyPair[] {
 
   const pairs: SshKeyPair[] = [];
   for (const baseName of LEGACY_KEY_NAMES) {
-    if (baseName === SPAWN_KEY_NAME) {
+    if (baseName === AGENTSEA_KEY_NAME) {
       continue;
     }
     const privPath = `${sshDir}/${baseName}`;
@@ -333,12 +333,12 @@ export function discoverLegacyKeys(): SshKeyPair[] {
 // ─── Main Entry Point ───────────────────────────────────────────────────────
 
 /**
- * Return the keys to offer when SSHing to a Spawn-managed VM.
+ * Return the keys to offer when SSHing to a Agentsea-managed VM.
  *
- * - First entry is always the spawn-managed key (generated if missing) — this
+ * - First entry is always the agentsea-managed key (generated if missing) — this
  *   is what new VMs are provisioned with.
  * - Followed by any pre-existing default-named keys as legacy -i fallbacks
- *   so VMs provisioned by older Spawn versions remain reachable.
+ *   so VMs provisioned by older Agentsea versions remain reachable.
  * - Capped at MAX_KEYS so we stay under a typical sshd MaxAuthTries (6).
  *
  * Cached at module level so subsequent calls return instantly.
@@ -348,10 +348,10 @@ export async function ensureSshKeys(): Promise<SshKeyPair[]> {
     return cachedKeys;
   }
 
-  const spawnKey = getSpawnKey();
+  const agentseaKey = getAgentseaKey();
   const legacy = discoverLegacyKeys();
   cachedKeys = [
-    spawnKey,
+    agentseaKey,
     ...legacy,
   ].slice(0, MAX_KEYS);
   return cachedKeys;

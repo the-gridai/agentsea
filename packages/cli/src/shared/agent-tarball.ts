@@ -131,8 +131,8 @@ export async function tryTarballInstall(
 
   // Arch detection + URL selection + download + extract + verify marker
   const markerCheck = [
-    "if [ -f /root/.spawn-tarball ]; then true",
-    'elif [ -f "$HOME/.spawn-tarball" ]; then true',
+    "if [ -f /root/.agentsea-tarball ]; then true",
+    'elif [ -f "$HOME/.agentsea-tarball" ]; then true',
     "else false; fi",
   ].join("; ");
 

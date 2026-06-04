@@ -320,7 +320,7 @@ describe("cmdRun - display name resolution", () => {
   // ── validateImplementation: no implemented clouds ──────────────────
 
   describe("validateImplementation - no implemented clouds", () => {
-    it("should show 'no implemented cloud providers' and suggest 'spawn matrix'", async () => {
+    it("should show 'no implemented cloud providers' and suggest 'agentsea matrix'", async () => {
       await setManifestAndScript(noCloudManifest);
 
       await asyncTryCatch(() => cmdRun("codex", "sprite"));

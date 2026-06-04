@@ -5,7 +5,7 @@
 # Requires: jq or bun, curl, REPO_ROOT set, log() function defined by caller
 #
 # Functions:
-#   load_cloud_keys_from_config  — Load keys from ~/.config/spawn/{cloud}.json into env
+#   load_cloud_keys_from_config  — Load keys from ~/.config/agentsea/{cloud}.json into env
 #     _parse_cloud_auths         — Extract cloud auth specs from manifest.json
 #     _try_load_env_var          — Load a single env var from config file
 #     _load_cloud_credentials    — Load all env vars for one cloud provider
@@ -52,7 +52,7 @@ for (const [key, cloud] of Object.entries(m.clouds || {})) {
                 if [[ -n "${active_account}" ]]; then
                     eval "${_loaded_var}=\$(( ${_loaded_var} + 1 ))"
                     # Load GCP_PROJECT from config file if not already set
-                    local gcp_config="${HOME}/.config/spawn/gcp.json"
+                    local gcp_config="${HOME}/.config/agentsea/gcp.json"
                     if [[ -z "${GCP_PROJECT:-}" ]] && [[ -f "${gcp_config}" ]]; then
                         local project
                         if command -v jq &>/dev/null; then
@@ -186,7 +186,7 @@ _load_cloud_credentials() {
     local env_vars
     env_vars=$(printf '%s' "${auth_string}" | tr '+,' '\n' | sed 's/^ *//;s/ *$//')
 
-    local config_file="${HOME}/.config/spawn/${cloud_key}.json"
+    local config_file="${HOME}/.config/agentsea/${cloud_key}.json"
     local all_loaded=true
 
     while IFS= read -r var_name; do
@@ -199,7 +199,7 @@ _load_cloud_credentials() {
     [[ "${all_loaded}" == "true" ]]
 }
 
-# Load cloud API keys from ~/.config/spawn/{cloud}.json into environment
+# Load cloud API keys from ~/.config/agentsea/{cloud}.json into environment
 # Reads manifest.json to determine which clouds need API-token auth
 # Skips CLI-based auth (sprite login, aws configure, etc.)
 # Sets MISSING_KEY_PROVIDERS with space-separated list of clouds that have no keys

@@ -1,4 +1,4 @@
-// shared/ssh-runner.ts — Generic SSH-based CloudRunner for use by `spawn fix`
+// shared/ssh-runner.ts — Generic SSH-based CloudRunner for use by `agentsea fix`
 // and other commands that need to run commands on an existing VM.
 
 import type { CloudRunner } from "./agent-setup.js";

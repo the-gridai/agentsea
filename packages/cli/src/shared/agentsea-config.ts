@@ -1,4 +1,4 @@
-// shared/spawn-config.ts — Load and validate --config JSON files
+// shared/agentsea-config.ts — Load and validate --config JSON files
 
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
@@ -6,29 +6,29 @@ import * as v from "valibot";
 import { parseJsonWith } from "./parse.js";
 import { logWarn } from "./ui.js";
 
-const SpawnConfigSetupSchema = v.object({
+const AgentseaConfigSetupSchema = v.object({
   telegram_bot_token: v.optional(v.string()),
   github_token: v.optional(v.string()),
 });
 
-const SpawnConfigSchema = v.object({
+const AgentseaConfigSchema = v.object({
   model: v.optional(v.string()),
   steps: v.optional(v.array(v.string())),
   name: v.optional(v.string()),
-  setup: v.optional(SpawnConfigSetupSchema),
+  setup: v.optional(AgentseaConfigSetupSchema),
 });
 
-type SpawnConfig = v.InferOutput<typeof SpawnConfigSchema>;
+type AgentseaConfig = v.InferOutput<typeof AgentseaConfigSchema>;
 
 /** Maximum config file size (1 MB) */
 const MAX_CONFIG_SIZE = 1024 * 1024;
 
 /**
- * Load and validate a spawn config file.
+ * Load and validate a agentsea config file.
  * Returns null on parse failure (with warning to stderr).
  * Throws on missing file or security violations.
  */
-export function loadSpawnConfig(filePath: string): SpawnConfig | null {
+export function loadAgentseaConfig(filePath: string): AgentseaConfig | null {
   // Security: reject null bytes before any filesystem operations
   if (filePath.includes("\0")) {
     throw new Error("Config file path contains null bytes");
@@ -45,7 +45,7 @@ export function loadSpawnConfig(filePath: string): SpawnConfig | null {
   }
 
   const content = readFileSync(resolved, "utf-8");
-  const parsed = parseJsonWith(content, SpawnConfigSchema);
+  const parsed = parseJsonWith(content, AgentseaConfigSchema);
 
   if (!parsed) {
     logWarn(`Invalid config file: ${resolved} — ignoring`);

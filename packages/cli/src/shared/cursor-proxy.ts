@@ -86,8 +86,8 @@ const server = http.createServer((req, res) => {
         res.writeHead(200, {"content-type":"application/json"});
         res.end(JSON.stringify({
           accessToken: "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJzcGF3bl9wcm94eSJ9.ok",
-          refreshToken: "spawn-proxy-refresh",
-          authId: "user_spawn_proxy",
+          refreshToken: "agentsea-proxy-refresh",
+          authId: "user_agentsea_proxy",
         }));
         return;
       }
@@ -297,16 +297,16 @@ const CURSOR_DOMAINS = [
 // ── Deployment ──────────────────────────────────────────────────────────────
 
 /**
- * Remote shell: materialize ~/.cursor/proxy/proxy.env from ~/.spawnrc.
- * .spawnrc uses `export KEY='value'` lines — never grep ^KEY= (misses the export prefix).
+ * Remote shell: materialize ~/.cursor/proxy/proxy.env from ~/.agentsearc.
+ * .agentsearc uses `export KEY='value'` lines — never grep ^KEY= (misses the export prefix).
  */
 export function cursorProxyEnvFileScript(): string {
   return [
     "mkdir -p ~/.cursor/proxy",
     "set -a",
-    ". ~/.spawnrc 2>/dev/null || true",
+    ". ~/.agentsearc 2>/dev/null || true",
     "set +a",
-    'if [ -z "${THEGRID_API_KEY:-}" ]; then echo "THEGRID_API_KEY missing from ~/.spawnrc" >&2; exit 1; fi',
+    'if [ -z "${THEGRID_API_KEY:-}" ]; then echo "THEGRID_API_KEY missing from ~/.agentsearc" >&2; exit 1; fi',
     'GRID_MODEL_ID="${GRID_MODEL_ID:-agent-standard}"',
     'GRID_MODEL_DISPLAY_NAME="${GRID_MODEL_DISPLAY_NAME:-}"',
     "printf 'THEGRID_API_KEY=%s\\nGRID_MODEL_ID=%s\\nGRID_MODEL_DISPLAY_NAME=%s\\n' \\",
@@ -318,7 +318,7 @@ export function cursorProxyEnvFileScript(): string {
 /**
  * Deploy the Cursor proxy infrastructure onto the remote VM.
  * Installs Caddy, uploads proxy scripts, writes Caddyfile, configures /etc/hosts.
- * Proxy scripts read GRID_MODEL_ID from the environment (written to ~/.spawnrc during provision).
+ * Proxy scripts read GRID_MODEL_ID from the environment (written to ~/.agentsearc during provision).
  */
 export async function setupCursorProxy(runner: CloudRunner, modelId?: string): Promise<void> {
   logStep("Deploying Cursor→The Grid proxy...");

@@ -9,7 +9,7 @@ const CODEX_LITELLM_PORT = 4141;
 
 const wrapperScript = [
   "#!/bin/bash",
-  'source "$HOME/.spawnrc" 2>/dev/null',
+  'source "$HOME/.agentsearc" 2>/dev/null',
   'export PATH="$HOME/.local/bin:$HOME/.litellm-venv/bin:$PATH"',
   'export PYTHONPATH="$HOME/.codex"',
   "export THEGRID_API_KEY",

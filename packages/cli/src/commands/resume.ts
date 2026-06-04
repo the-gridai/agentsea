@@ -1,6 +1,6 @@
 // agentsea resume - continue provisioning from last recorded phase
 
-import type { SpawnRecord } from "../history.js";
+import type { AgentseaRecord } from "../history.js";
 
 import * as p from "@clack/prompts";
 import { getErrorMessage } from "@agentsea/sdk";
@@ -9,8 +9,8 @@ import {
   isProvisioningIncomplete,
   listProvisionCheckpoints,
   loadHistory,
-  patchSpawnRecord,
-  upsertSpawnRecord,
+  patchAgentseaRecord,
+  upsertAgentseaRecord,
 } from "../history.js";
 import { loadManifest } from "../manifest.js";
 import { asyncTryCatch } from "../shared/result.js";
@@ -19,7 +19,7 @@ import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
 import { buildRecordLabel, buildRecordSubtitle } from "./list.js";
 import { handleCancel, isInteractiveTTY } from "./shared.js";
 
-function findIncompleteFromHistory(): SpawnRecord[] {
+function findIncompleteFromHistory(): AgentseaRecord[] {
   return loadHistory().filter(isProvisioningIncomplete);
 }
 
@@ -34,20 +34,20 @@ export function recoverProvisionCheckpoints(): number {
     if (historyIds.has(rec.id)) {
       continue;
     }
-    upsertSpawnRecord(rec);
+    upsertAgentseaRecord(rec);
     historyIds.add(rec.id);
     n++;
   }
   return n;
 }
 
-export async function cmdResume(spawnId?: string, opts?: { recoverOnly?: boolean }): Promise<void> {
+export async function cmdResume(agentseaId?: string, opts?: { recoverOnly?: boolean }): Promise<void> {
   if (opts?.recoverOnly) {
     const n = recoverProvisionCheckpoints();
     if (n === 0) {
       p.log.info("No new provision checkpoints to import into history.");
     } else {
-      p.log.success(`Imported ${n} spawn record(s) from ~/.config/agentsea/runs/.`);
+      p.log.success(`Imported ${n} agentsea record(s) from ~/.config/agentsea/runs/.`);
       p.log.info("Run " + pc.cyan(`${AGENTSEA_CLI} resume`) + " to continue provisioning.");
     }
     return;
@@ -67,15 +67,15 @@ export async function cmdResume(spawnId?: string, opts?: { recoverOnly?: boolean
 
   const candidates = findIncompleteFromHistory();
 
-  let record: SpawnRecord | undefined;
+  let record: AgentseaRecord | undefined;
 
-  if (spawnId) {
+  if (agentseaId) {
     record = candidates.find(
-      (r) => r.id === spawnId || r.name === spawnId || r.connection?.server_name === spawnId,
+      (r) => r.id === agentseaId || r.name === agentseaId || r.connection?.server_name === agentseaId,
     );
     if (!record) {
       p.log.error(
-        `No incomplete spawn matched ${pc.bold(spawnId)}. Try ` +
+        `No incomplete agentsea matched ${pc.bold(agentseaId)}. Try ` +
           pc.cyan(`${AGENTSEA_CLI} list`) +
           " or " +
           pc.cyan(`${AGENTSEA_CLI} resume --recover`) +
@@ -90,12 +90,12 @@ export async function cmdResume(spawnId?: string, opts?: { recoverOnly?: boolean
     p.log.info("If a VM was created but history was lost, run " + pc.cyan(`${AGENTSEA_CLI} resume --recover`) + " first.");
     return;
   } else if (!isInteractiveTTY()) {
-    p.log.error(`${AGENTSEA_CLI} resume needs a spawn id when multiple incomplete spawns exist.`);
-    p.log.info("Usage: " + pc.cyan(AGENTSEA_CLI + " resume <spawn-id>"));
+    p.log.error(`${AGENTSEA_CLI} resume needs a agentsea id when multiple incomplete spawns exist.`);
+    p.log.info("Usage: " + pc.cyan(AGENTSEA_CLI + " resume <agentsea-id>"));
     process.exit(1);
   } else {
     const choice = await p.select({
-      message: "Select a spawn to resume",
+      message: "Select a agentsea to resume",
       options: candidates.map((r) => ({
         value: r.id,
         label: buildRecordLabel(r),
@@ -109,7 +109,7 @@ export async function cmdResume(spawnId?: string, opts?: { recoverOnly?: boolean
   }
 
   if (!record) {
-    p.log.error("Spawn not found.");
+    p.log.error("Agentsea not found.");
     process.exit(1);
   }
 
@@ -118,7 +118,7 @@ export async function cmdResume(spawnId?: string, opts?: { recoverOnly?: boolean
   const runResult = await asyncTryCatch(() => resumeOrchestrationFromRecord(record!, manifest, undefined));
   if (!runResult.ok) {
     const msg = getErrorMessage(runResult.error);
-    patchSpawnRecord(record.id, {
+    patchAgentseaRecord(record.id, {
       provision_status: "failed",
       provision_error: msg.replace(/\s+/g, " ").trim().slice(0, 400),
     });

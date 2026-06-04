@@ -65,9 +65,9 @@ export async function setupT3Settings(runner: CloudRunner, modelId?: string): Pr
   logInfo(`T3 Code settings written (${selectedModel}, codex provider)`);
 }
 
-/** Shell prefix: spawn env, codex on PATH, nudge Codex LiteLLM proxy if preLaunch/systemd missed it. */
+/** Shell prefix: agentsea env, codex on PATH, nudge Codex LiteLLM proxy if preLaunch/systemd missed it. */
 export const T3_LAUNCH_SHELL_PREFIX = [
-  "source ~/.spawnrc 2>/dev/null",
+  "source ~/.agentsearc 2>/dev/null",
   "source ~/.zshrc 2>/dev/null",
   'export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.litellm-venv/bin:$HOME/.bun/bin:/usr/local/bin:$PATH"',
   "export THEGRID_API_KEY OPENAI_API_KEY",

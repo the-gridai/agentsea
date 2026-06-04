@@ -1,4 +1,4 @@
-import type { SpawnRecord } from "../history.js";
+import type { AgentseaRecord } from "../history.js";
 import type { AgentConfig } from "./agents.js";
 import type { CloudOrchestrator } from "./orchestrate.js";
 
@@ -20,5 +20,5 @@ export interface CloudProvider {
   localMainEntrypoint: string;
   capabilities?: CloudProviderCapabilities;
   createOrchestrator?: (agentName: string, agent: AgentConfig) => CloudOrchestrator;
-  buildResumeOrchestrator?: (record: SpawnRecord) => Promise<CloudOrchestrator | null>;
+  buildResumeOrchestrator?: (record: AgentseaRecord) => Promise<CloudOrchestrator | null>;
 }

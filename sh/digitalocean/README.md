@@ -72,14 +72,14 @@ bash <(curl -fsSL https://spawn.thegrid.ai/digitalocean/t3code.sh)
 | `DO_DROPLET_NAME` | Name for the created droplet | auto-generated |
 | `DO_REGION` | Datacenter region (see regions below) | `nyc3` |
 | `DO_DROPLET_SIZE` | Droplet size slug (see sizes below) | `s-2vcpu-2gb` |
-| `SPAWN_JSON_READINESS` | Set to `1` with `SPAWN_NON_INTERACTIVE=1` to print machine-readable JSON when readiness is blocked | — |
-| `SPAWN_CLI_DIR` | Absolute path to the Spawn repo root when developing locally — makes the cloud shim run `packages/cli/src/{cloud}/main.ts` instead of downloading a release bundle | — |
+| `AGENTSEA_JSON_READINESS` | Set to `1` with `AGENTSEA_NON_INTERACTIVE=1` to print machine-readable JSON when readiness is blocked | — |
+| `AGENTSEA_CLI_DIR` | Absolute path to the Agentsea repo root when developing locally — makes the cloud shim run `packages/cli/src/{cloud}/main.ts` instead of downloading a release bundle | — |
 
 ### Pre-flight readiness
 
-Before region/size selection, the CLI checks DigitalOcean account state (`GET /v2/account`), SSH keys registered on your account, and **`THEGRID_API_KEY`**. If something blocks deployment (unverified email, locked or warning billing status, droplet quota, missing SSH registration, or an invalid Grid API key), you get guided steps and a readiness checklist. With **`--headless`** / **`SPAWN_NON_INTERACTIVE=1`**, a **missing Spawn SSH key** triggers a one-shot attempt to **POST the managed public key** (`~/.ssh/spawn_ed25519.pub` by default) to `/v2/account/keys` before exiting. Billing issues open the billing page: `https://cloud.digitalocean.com/account/billing`.
+Before region/size selection, the CLI checks DigitalOcean account state (`GET /v2/account`), SSH keys registered on your account, and **`THEGRID_API_KEY`**. If something blocks deployment (unverified email, locked or warning billing status, droplet quota, missing SSH registration, or an invalid Grid API key), you get guided steps and a readiness checklist. With **`--headless`** / **`AGENTSEA_NON_INTERACTIVE=1`**, a **missing Agentsea SSH key** triggers a one-shot attempt to **POST the managed public key** (`~/.ssh/agentsea_ed25519.pub` by default) to `/v2/account/keys` before exiting. Billing issues open the billing page: `https://cloud.digitalocean.com/account/billing`.
 
-OAuth tokens requested by the CLI include `tag:create` so droplets can be tagged `spawn` for attribution. If your token cannot create tags, the CLI retries creation without the tag.
+OAuth tokens requested by the CLI include `tag:create` so droplets can be tagged `agentsea` for attribution. If your token cannot create tags, the CLI retries creation without the tag.
 
 ### Available Regions
 

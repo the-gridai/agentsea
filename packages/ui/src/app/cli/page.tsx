@@ -4,7 +4,7 @@ import { loadManifest } from "@agentsea/sdk/node";
 
 import { agentImageFromSlug, resolveLaunchCloud } from "../landing-from-manifest";
 import { SiteHeader } from "../site-header";
-import { SpawnLaunchView } from "../spawn-launch-view";
+import { AgentseaLaunchView } from "../agentsea-launch-view";
 import { CliReference } from "./cli-reference";
 import styles from "./page.module.scss";
 
@@ -76,7 +76,7 @@ export default async function CliGuidePage({ searchParams }: CliGuidePageProps) 
       <SiteHeader />
       <main className={styles["main"]}>
         {launch && agentSlug && agentMeta ? (
-          <SpawnLaunchView
+          <AgentseaLaunchView
             agentSlug={agentSlug}
             agentName={agentMeta.name}
             agentImage={agentImageFromSlug(agentSlug)}

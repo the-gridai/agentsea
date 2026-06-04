@@ -10,11 +10,11 @@ import {
   AGENTSEA_PUBLIC_ORIGIN,
   THE_GRID_EXTERNAL_URL,
 } from "./home-public-constants";
-import { SpawnCopyBlock } from "./spawn-copy-block";
+import { AgentseaCopyBlock } from "./agentsea-copy-block";
 import { WHY_AGENTSEA_CARDS } from "./why-agentsea-cards";
-import styles from "./spawn-launch-view.module.scss";
+import styles from "./agentsea-launch-view.module.scss";
 
-export type SpawnLaunchViewProps = {
+export type AgentseaLaunchViewProps = {
   agentSlug: string;
   agentName: string;
   agentImage: string | null;
@@ -33,7 +33,7 @@ function cloudSummaryLogo(cloudSlug: string) {
   );
 }
 
-function buildSpawnSnippet(agentSlug: string, cloudSlug: string): string {
+function buildAgentseaSnippet(agentSlug: string, cloudSlug: string): string {
   return `# Install AgentSea
 curl -fsSL ${AGENTSEA_INSTALL_URL} | bash
 
@@ -87,14 +87,14 @@ function hoodSteps(cloudSlug: string) {
   ];
 }
 
-export const SpawnLaunchView = memo(function SpawnLaunchViewComp({
+export const AgentseaLaunchView = memo(function AgentseaLaunchViewComp({
   agentSlug,
   agentName,
   agentImage,
   cloudSlug,
   cloudName,
-}: SpawnLaunchViewProps) {
-  const spawnSnippet = buildSpawnSnippet(agentSlug, cloudSlug);
+}: AgentseaLaunchViewProps) {
+  const agentseaSnippet = buildAgentseaSnippet(agentSlug, cloudSlug);
   const steps = hoodSteps(cloudSlug);
 
   const withoutCliSnippet = `bash <(curl -fsSL ${AGENTSEA_PUBLIC_ORIGIN}/${cloudSlug}/${agentSlug}.sh)`;
@@ -111,8 +111,8 @@ agentsea matrix                        # Agent x cloud matrix`;
         </Link>
       </nav>
 
-      <section className={styles["hero"]} aria-labelledby="spawn-title">
-        <h1 id="spawn-title" className={styles["hero__title"]}>
+      <section className={styles["hero"]} aria-labelledby="agentsea-title">
+        <h1 id="agentsea-title" className={styles["hero__title"]}>
           Launch {agentName} on {cloudName}
         </h1>
         <div className={styles["pickRow"]}>
@@ -152,24 +152,24 @@ agentsea matrix                        # Agent x cloud matrix`;
         </div>
       </section>
 
-      <section className={styles["band"]} aria-labelledby="spawn-step-title">
+      <section className={styles["band"]} aria-labelledby="agentsea-step-title">
         <div className={styles["sectionHead"]}>
           <span className={styles["sectionHead__index"]} aria-hidden>
             3
           </span>
-          <h2 id="spawn-step-title" className={styles["sectionHead__title"]}>
+          <h2 id="agentsea-step-title" className={styles["sectionHead__title"]}>
             Launch
           </h2>
         </div>
 
-        <SpawnCopyBlock code={spawnSnippet} />
+        <AgentseaCopyBlock code={agentseaSnippet} />
 
-        <p className={styles["spawnFoot"]}>
-          <Link href="/" className={styles["spawnFoot__link"]}>
+        <p className={styles["agentseaFoot"]}>
+          <Link href="/" className={styles["agentseaFoot__link"]}>
             &larr; Pick another agent
           </Link>
           {" | "}
-          <Link href={`/?agent=${encodeURIComponent(agentSlug)}`} className={styles["spawnFoot__link"]}>
+          <Link href={`/?agent=${encodeURIComponent(agentSlug)}`} className={styles["agentseaFoot__link"]}>
             Change provider
           </Link>
         </p>
@@ -196,11 +196,11 @@ agentsea matrix                        # Agent x cloud matrix`;
           <div className={styles["hoodCodeGrid"]}>
             <div className={styles["hoodCodeCard"]}>
               <h3 className={styles["hoodCodeCard__title"]}>CLI reference</h3>
-              <SpawnCopyBlock code={cliRefSnippet} stretch />
+              <AgentseaCopyBlock code={cliRefSnippet} stretch />
             </div>
             <div className={styles["hoodCodeCard"]}>
               <h3 className={styles["hoodCodeCard__title"]}>Without the CLI</h3>
-              <SpawnCopyBlock code={withoutCliSnippet} stretch />
+              <AgentseaCopyBlock code={withoutCliSnippet} stretch />
             </div>
           </div>
         </div>

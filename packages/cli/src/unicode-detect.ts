@@ -6,12 +6,12 @@
 
 const shouldForceAscii = (): boolean => {
   // Explicit user override to enable Unicode
-  if (process.env.SPAWN_UNICODE === "1") {
+  if (process.env.AGENTSEA_UNICODE === "1") {
     return false;
   }
 
   // Explicit user override to force ASCII
-  if (process.env.SPAWN_NO_UNICODE === "1" || process.env.SPAWN_ASCII === "1") {
+  if (process.env.AGENTSEA_NO_UNICODE === "1" || process.env.AGENTSEA_ASCII === "1") {
     return true;
   }
 
@@ -33,8 +33,8 @@ const shouldForceAscii = (): boolean => {
 
 const forceAscii = shouldForceAscii();
 
-// Debug logging (only if SPAWN_DEBUG is set)
-if (process.env.SPAWN_DEBUG === "1") {
+// Debug logging (only if AGENTSEA_DEBUG is set)
+if (process.env.AGENTSEA_DEBUG === "1") {
   console.error("[unicode-detect] TERM:", process.env.TERM);
   console.error("[unicode-detect] SSH_CONNECTION:", process.env.SSH_CONNECTION);
   console.error("[unicode-detect] SSH_CLIENT:", process.env.SSH_CLIENT);

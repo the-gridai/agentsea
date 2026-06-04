@@ -10,7 +10,7 @@ import { handleBillingError, isBillingError, showNonBillingError } from "../shar
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
 import { getPackagesForTier, NODE_INSTALL_CMD, needsBun, needsNode } from "../shared/cloud-init.js";
 import { parseJsonObj } from "../shared/parse.js";
-import { getSpawnCloudConfigPath } from "../shared/paths.js";
+import { getAgentseaCloudConfigPath } from "../shared/paths.js";
 import { asyncTryCatch, asyncTryCatchIf, isNetworkError, unwrapOr } from "../shared/result.js";
 import {
   awaitRemoteProcess,
@@ -22,11 +22,11 @@ import {
   scpQuietArgs,
   waitForSsh as sharedWaitForSsh,
   sleep,
-  spawnInteractive,
+  agentseaInteractive,
   validateRemotePath,
   waitForSshSnapshotBoot,
 } from "../shared/ssh.js";
-import { ensureSshKeys, getSpawnKey, getSshFingerprint, getSshKeyOpts, SPAWN_KEY_NAME } from "../shared/ssh-keys.js";
+import { ensureSshKeys, getAgentseaKey, getSshFingerprint, getSshKeyOpts, AGENTSEA_KEY_NAME } from "../shared/ssh-keys.js";
 import {
   getServerNameFromEnv,
   jsonEscape,
@@ -39,7 +39,7 @@ import {
   logStepInline,
   logWarn,
   prompt,
-  promptSpawnNameShared,
+  promptAgentseaNameShared,
   retryOrQuit,
   sanitizeTermValue,
   selectFromList,
@@ -159,7 +159,7 @@ async function hetznerGetAll(endpoint: string, key: string): Promise<Record<stri
 // ─── Token Persistence ───────────────────────────────────────────────────────
 
 async function saveTokenToConfig(token: string): Promise<void> {
-  const configPath = getSpawnCloudConfigPath("hetzner");
+  const configPath = getAgentseaCloudConfigPath("hetzner");
   const dir = dirname(configPath);
   mkdirSync(dir, {
     recursive: true,
@@ -248,26 +248,26 @@ export async function ensureHcloudToken(): Promise<void> {
 
 // ─── SSH Key Management ──────────────────────────────────────────────────────
 
-/** Register the spawn-managed key with Hetzner if not already present.
- * Only the spawn key is uploaded — the user's personal keys stay private. */
+/** Register the agentsea-managed key with Hetzner if not already present.
+ * Only the agentsea key is uploaded — the user's personal keys stay private. */
 export async function ensureSshKey(): Promise<void> {
-  const spawnKey = getSpawnKey();
-  const fingerprint = getSshFingerprint(spawnKey.pubPath);
+  const agentseaKey = getAgentseaKey();
+  const fingerprint = getSshFingerprint(agentseaKey.pubPath);
   if (!fingerprint) {
-    logWarn(`Could not determine fingerprint for SSH key '${spawnKey.name}'`);
+    logWarn(`Could not determine fingerprint for SSH key '${agentseaKey.name}'`);
     return;
   }
-  const pubKey = readFileSync(spawnKey.pubPath, "utf-8").trim();
+  const pubKey = readFileSync(agentseaKey.pubPath, "utf-8").trim();
 
   const sshKeys = await hetznerGetAll("/ssh_keys", "ssh_keys");
   const alreadyRegistered = sshKeys.some((k) => k.fingerprint === fingerprint);
   if (alreadyRegistered) {
-    logInfo(`SSH key '${spawnKey.name}' already registered with Hetzner`);
+    logInfo(`SSH key '${agentseaKey.name}' already registered with Hetzner`);
     return;
   }
 
-  logStep(`Registering SSH key '${spawnKey.name}' with Hetzner...`);
-  const keyName = `spawn-${spawnKey.name}-${Date.now()}`;
+  logStep(`Registering SSH key '${agentseaKey.name}' with Hetzner...`);
+  const keyName = `agentsea-${agentseaKey.name}-${Date.now()}`;
   const body = JSON.stringify({
     name: keyName,
     public_key: pubKey,
@@ -276,7 +276,7 @@ export async function ensureSshKey(): Promise<void> {
   if (!regResult.ok) {
     const errMsg = getErrorMessage(regResult.error);
     if (/uniqueness_error|not unique|already/.test(errMsg)) {
-      logInfo(`SSH key '${spawnKey.name}' already registered (different name)`);
+      logInfo(`SSH key '${agentseaKey.name}' already registered (different name)`);
       return;
     }
     throw regResult.error;
@@ -286,13 +286,13 @@ export async function ensureSshKey(): Promise<void> {
   const regErrMsg = isString(regError?.message) ? regError.message : "";
   if (regErrMsg) {
     if (/already|uniqueness|not unique/.test(regErrMsg)) {
-      logInfo(`SSH key '${spawnKey.name}' already registered (different name)`);
+      logInfo(`SSH key '${agentseaKey.name}' already registered (different name)`);
       return;
     }
-    logError(`Failed to register SSH key '${spawnKey.name}': ${regErrMsg}`);
+    logError(`Failed to register SSH key '${agentseaKey.name}': ${regErrMsg}`);
     throw new Error("SSH key registration failed");
   }
-  logInfo(`SSH key '${spawnKey.name}' registered with Hetzner`);
+  logInfo(`SSH key '${agentseaKey.name}' registered with Hetzner`);
 }
 
 // ─── Cloud Init Userdata ────────────────────────────────────────────────────
@@ -433,11 +433,11 @@ export async function promptServerType(): Promise<string> {
     return process.env.HETZNER_SERVER_TYPE;
   }
 
-  if (process.env.SPAWN_CUSTOM !== "1") {
+  if (process.env.AGENTSEA_CUSTOM !== "1") {
     return DEFAULT_SERVER_TYPE;
   }
 
-  if (process.env.SPAWN_NON_INTERACTIVE === "1") {
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
     return DEFAULT_SERVER_TYPE;
   }
 
@@ -465,7 +465,7 @@ export async function promptLocation(excludeLocations?: string[]): Promise<strin
   }
 
   // Non-custom and non-interactive modes: pick the first available default
-  if ((process.env.SPAWN_CUSTOM !== "1" || process.env.SPAWN_NON_INTERACTIVE === "1") && !excludeLocations?.length) {
+  if ((process.env.AGENTSEA_CUSTOM !== "1" || process.env.AGENTSEA_NON_INTERACTIVE === "1") && !excludeLocations?.length) {
     // Prefer DEFAULT_LOCATION if it exists in the list, otherwise first available
     const hasDefault = locations.some((l) => l.id === DEFAULT_LOCATION);
     return hasDefault ? DEFAULT_LOCATION : locations[0].id;
@@ -544,12 +544,12 @@ export async function createServer(
     throw new Error("Invalid location");
   }
 
-  // Attach only the spawn-managed key (look it up by fingerprint among the
+  // Attach only the agentsea-managed key (look it up by fingerprint among the
   // account's keys). User's other registered keys stay off the server.
-  const spawnFingerprint = getSshFingerprint(getSpawnKey().pubPath);
+  const agentseaFingerprint = getSshFingerprint(getAgentseaKey().pubPath);
   const allKeys = await hetznerGetAll("/ssh_keys", "ssh_keys");
   const sshKeyIds: number[] = allKeys
-    .filter((k) => k.fingerprint === spawnFingerprint)
+    .filter((k) => k.fingerprint === agentseaFingerprint)
     .map((k) => (isNumber(k.id) ? k.id : 0))
     .filter(Boolean);
   const userdata = getCloudInitUserdata(tier);
@@ -579,7 +579,7 @@ export async function createServer(
     if (!createResult.ok) {
       const errMsg = getErrorMessage(createResult.error);
 
-      if (isLocationUnavailableError(errMsg) && process.env.SPAWN_NON_INTERACTIVE !== "1") {
+      if (isLocationUnavailableError(errMsg) && process.env.AGENTSEA_NON_INTERACTIVE !== "1") {
         failedLocations.push(loc);
         logWarn(`Location '${loc}' is currently unavailable. Please pick a different location.`);
         const newLoc = await promptLocation(failedLocations);
@@ -624,7 +624,7 @@ export async function createServer(
       // Location unavailable — let user re-pick
       if (
         (isLocationUnavailableError(errMsg) || isLocationUnavailableError(errCode)) &&
-        process.env.SPAWN_NON_INTERACTIVE !== "1"
+        process.env.AGENTSEA_NON_INTERACTIVE !== "1"
       ) {
         failedLocations.push(loc);
         logWarn(`Location '${loc}' is currently unavailable. Please pick a different location.`);
@@ -855,7 +855,7 @@ export async function interactiveSession(cmd: string, ip?: string): Promise<numb
 
   const keyOpts = getSshKeyOpts(await ensureSshKeys());
 
-  const exitCode = spawnInteractive([
+  const exitCode = agentseaInteractive([
     "ssh",
     ...SSH_INTERACTIVE_OPTS,
     ...keyOpts,
@@ -875,7 +875,7 @@ export async function interactiveSession(cmd: string, ip?: string): Promise<numb
   logInfo(`  ${AGENTSEA_CLI} delete`);
   logInfo("To reconnect:");
   logInfo(`  ${AGENTSEA_CLI} last`);
-  logInfo(`  or: ssh -i ~/.ssh/${SPAWN_KEY_NAME} root@${serverIp}`);
+  logInfo(`  or: ssh -i ~/.ssh/${AGENTSEA_KEY_NAME} root@${serverIp}`);
 
   return exitCode;
 }
@@ -886,8 +886,8 @@ export async function getServerName(): Promise<string> {
   return getServerNameFromEnv("HETZNER_SERVER_NAME");
 }
 
-export async function promptSpawnName(): Promise<void> {
-  return promptSpawnNameShared("Hetzner server");
+export async function promptAgentseaName(): Promise<void> {
+  return promptAgentseaNameShared("Hetzner server");
 }
 
 // ─── Lifecycle ───────────────────────────────────────────────────────────────

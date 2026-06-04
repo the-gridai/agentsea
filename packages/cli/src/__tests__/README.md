@@ -1,6 +1,6 @@
 # CLI tests (`bun:test`)
 
-AgentSea mirrors [openrouter/spawn](https://github.com/OpenRouterTeam/spawn): **Bun's built-in test runner** (`bun:test`). Do not use Vitest for this package.
+AgentSea mirrors [openrouter/agentsea](https://github.com/OpenRouterTeam/agentsea): **Bun's built-in test runner** (`bun:test`). Do not use Vitest for this package.
 
 ```bash
 cd packages/cli
@@ -12,13 +12,13 @@ npm run test:cli
 
 ## Preload sandbox
 
-[`preload.ts`](./preload.ts) runs before every file via [`../bunfig.toml`](../bunfig.toml). It redirects `HOME`, `XDG_*`, `SPAWN_HOME`, sets `GRID_SPAWN_ROOT` to an empty sandbox dir, assigns `THEGRID_API_KEY` when unset, and **`process.chdir`** into that sandbox so `resolveBundledShRepoRoot` cannot discover the real checkout via cwd walk-up.
+[`preload.ts`](./preload.ts) runs before every file via [`../bunfig.toml`](../bunfig.toml). It redirects `HOME`, `XDG_*`, `AGENTSEA_HOME`, sets `AGENTSEA_ROOT` to an empty sandbox dir, assigns `THEGRID_API_KEY` when unset, and **`process.chdir`** into that sandbox so `resolveBundledShRepoRoot` cannot discover the real checkout via cwd walk-up.
 
 [`fs-sandbox.test.ts`](./fs-sandbox.test.ts) asserts the sandbox prefix.
 
 ## Helpers
 
-[`test-helpers.ts`](./test-helpers.ts) — `createMockManifest`, `mockClackPrompts`, `mockBunSpawn`, `setupTestEnvironment` / `teardownTestEnvironment` (manifest disk cache lives under `agentsea/` inside `XDG_CACHE_HOME`).
+[`test-helpers.ts`](./test-helpers.ts) — `createMockManifest`, `mockClackPrompts`, `mockBunAgentsea`, `setupTestEnvironment` / `teardownTestEnvironment` (manifest disk cache lives under `agentsea/` inside `XDG_CACHE_HOME`).
 
 ## P1 coverage (implemented)
 
@@ -41,6 +41,6 @@ Port / add tests comparable to openrouter for:
 - OAuth (`oauth-*.test.ts`)
 - SSH (`ssh*.test.ts`, `ssh-runner.test.ts`)
 - Per-command coverage (`cmd-*-cov.test.ts`)
-- Specialized: `agent-setup-cov`, `agent-tarball`, `recursive-spawn`, `spawn-config`, `spawn-md`, `spawn-skill`, `star-prompt`, `update-check`, `auto-update`, `feature-flags`, `lifecycle-telemetry`, `billing-guidance`, `cursor-proxy`, etc.
+- Specialized: `agent-setup-cov`, `agent-tarball`, `recursive-agentsea`, `agentsea-config`, `agentsea-md`, `agentsea-skill`, `star-prompt`, `update-check`, `auto-update`, `feature-flags`, `lifecycle-telemetry`, `billing-guidance`, `cursor-proxy`, etc.
 - **posthog-config** (agentsea-only)
 - UI / Next.js tests (skipped by initial scope)

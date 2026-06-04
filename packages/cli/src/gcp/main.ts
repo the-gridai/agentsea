@@ -23,7 +23,7 @@ import {
   getServerName,
   interactiveSession,
   promptMachineType,
-  promptSpawnName,
+  promptAgentseaName,
   promptZone,
   resolveProject,
   runServer,
@@ -47,7 +47,7 @@ async function main() {
   let useDocker = false;
 
   // Check if --beta docker is active
-  const betaFeatures = (process.env.SPAWN_BETA ?? "").split(",");
+  const betaFeatures = (process.env.AGENTSEA_BETA ?? "").split(",");
   if (betaFeatures.includes("docker")) {
     useDocker = true;
   }
@@ -67,7 +67,7 @@ async function main() {
           downloadFile,
         },
     async authenticate() {
-      await promptSpawnName();
+      await promptAgentseaName();
       await ensureGcloudCli();
       await authenticate();
       await resolveProject();
@@ -104,7 +104,7 @@ async function main() {
 
       // Pull and start the agent Docker container after the server is ready
       if (useDocker) {
-        const image = `${DOCKER_REGISTRY}/spawn-${agentName}:latest`;
+        const image = `${DOCKER_REGISTRY}/agentsea-${agentName}:latest`;
         logStep(`Pulling Docker image ${image}...`);
         await runServer(`docker pull ${image}`, 300);
         logStep("Starting agent container...");

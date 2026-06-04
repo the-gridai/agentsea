@@ -5,8 +5,8 @@ import {
   getCacheDir,
   getCacheFile,
   getHistoryPath,
-  getSpawnCloudConfigPath,
-  getSpawnDir,
+  getAgentseaCloudConfigPath,
+  getAgentseaDir,
   getSshDir,
   getTmpDir,
   getUpdateFailedPath,
@@ -40,80 +40,80 @@ describe("paths", () => {
     });
   });
 
-  describe("getSpawnDir", () => {
+  describe("getAgentseaDir", () => {
     it("returns ~/.config/agentsea by default", () => {
-      delete process.env.SPAWN_HOME;
-      delete process.env.GRID_SPAWN_HOME;
-      expect(getSpawnDir()).toBe(join(getUserHome(), ".config", "agentsea"));
+      delete process.env.AGENTSEA_HOME;
+      delete process.env.AGENTSEA_HOME;
+      expect(getAgentseaDir()).toBe(join(getUserHome(), ".config", "agentsea"));
     });
 
-    it("uses GRID_SPAWN_HOME when set to valid absolute path", () => {
+    it("uses AGENTSEA_HOME when set to valid absolute path", () => {
       const testPath = join(getUserHome(), ".custom-agentsea");
-      delete process.env.SPAWN_HOME;
-      process.env.GRID_SPAWN_HOME = testPath;
-      expect(getSpawnDir()).toBe(testPath);
+      delete process.env.AGENTSEA_HOME;
+      process.env.AGENTSEA_HOME = testPath;
+      expect(getAgentseaDir()).toBe(testPath);
     });
 
-    it("uses SPAWN_HOME when GRID_SPAWN_HOME unset (legacy)", () => {
-      delete process.env.GRID_SPAWN_HOME;
-      const testPath = join(getUserHome(), ".legacy-spawn");
-      process.env.SPAWN_HOME = testPath;
-      expect(getSpawnDir()).toBe(testPath);
+    it("uses AGENTSEA_HOME when AGENTSEA_HOME unset (legacy)", () => {
+      delete process.env.AGENTSEA_HOME;
+      const testPath = join(getUserHome(), ".legacy-agentsea");
+      process.env.AGENTSEA_HOME = testPath;
+      expect(getAgentseaDir()).toBe(testPath);
     });
 
-    it("rejects relative GRID_SPAWN_HOME", () => {
-      delete process.env.SPAWN_HOME;
-      process.env.GRID_SPAWN_HOME = "relative/path";
-      expect(() => getSpawnDir()).toThrow("must be an absolute path");
+    it("rejects relative AGENTSEA_HOME", () => {
+      delete process.env.AGENTSEA_HOME;
+      process.env.AGENTSEA_HOME = "relative/path";
+      expect(() => getAgentseaDir()).toThrow("must be an absolute path");
     });
 
-    it("rejects dot-relative GRID_SPAWN_HOME", () => {
-      delete process.env.SPAWN_HOME;
-      process.env.GRID_SPAWN_HOME = "./local/dir";
-      expect(() => getSpawnDir()).toThrow("must be an absolute path");
+    it("rejects dot-relative AGENTSEA_HOME", () => {
+      delete process.env.AGENTSEA_HOME;
+      process.env.AGENTSEA_HOME = "./local/dir";
+      expect(() => getAgentseaDir()).toThrow("must be an absolute path");
     });
 
-    it("resolves .. segments in absolute GRID_SPAWN_HOME within home", () => {
-      delete process.env.SPAWN_HOME;
+    it("resolves .. segments in absolute AGENTSEA_HOME within home", () => {
+      delete process.env.AGENTSEA_HOME;
       const pathWithDots = join(getUserHome(), "foo", "..", "bar");
-      process.env.GRID_SPAWN_HOME = pathWithDots;
-      expect(getSpawnDir()).toBe(join(getUserHome(), "bar"));
+      process.env.AGENTSEA_HOME = pathWithDots;
+      expect(getAgentseaDir()).toBe(join(getUserHome(), "bar"));
     });
 
-    it("rejects GRID_SPAWN_HOME outside home directory", () => {
-      delete process.env.SPAWN_HOME;
-      process.env.GRID_SPAWN_HOME = "/tmp/agentsea";
-      expect(() => getSpawnDir()).toThrow("must be within your home directory");
+    it("rejects AGENTSEA_HOME outside home directory", () => {
+      delete process.env.AGENTSEA_HOME;
+      process.env.AGENTSEA_HOME = "/tmp/agentsea";
+      expect(() => getAgentseaDir()).toThrow("must be within your home directory");
     });
 
-    it("accepts home directory itself as GRID_SPAWN_HOME", () => {
-      delete process.env.SPAWN_HOME;
-      process.env.GRID_SPAWN_HOME = getUserHome();
-      expect(getSpawnDir()).toBe(getUserHome());
+    it("accepts home directory itself as AGENTSEA_HOME", () => {
+      delete process.env.AGENTSEA_HOME;
+      process.env.AGENTSEA_HOME = getUserHome();
+      expect(getAgentseaDir()).toBe(getUserHome());
     });
   });
 
   describe("getHistoryPath", () => {
-    it("returns history.json inside spawn dir", () => {
-      delete process.env.SPAWN_HOME;
-      delete process.env.GRID_SPAWN_HOME;
+    it("returns history.json inside agentsea dir", () => {
+      delete process.env.AGENTSEA_HOME;
+      delete process.env.AGENTSEA_HOME;
       expect(getHistoryPath()).toBe(join(getUserHome(), ".config", "agentsea", "history.json"));
     });
   });
 
-  describe("getSpawnCloudConfigPath", () => {
+  describe("getAgentseaCloudConfigPath", () => {
     it("returns ~/.config/agentsea/{cloud}.json", () => {
-      delete process.env.SPAWN_HOME;
-      delete process.env.GRID_SPAWN_HOME;
       delete process.env.AGENTSEA_HOME;
-      expect(getSpawnCloudConfigPath("aws")).toBe(join(getUserHome(), ".config", "agentsea", "aws.json"));
+      delete process.env.AGENTSEA_HOME;
+      delete process.env.AGENTSEA_HOME;
+      expect(getAgentseaCloudConfigPath("aws")).toBe(join(getUserHome(), ".config", "agentsea", "aws.json"));
     });
 
     it("works for different cloud names", () => {
-      delete process.env.SPAWN_HOME;
-      delete process.env.GRID_SPAWN_HOME;
       delete process.env.AGENTSEA_HOME;
-      expect(getSpawnCloudConfigPath("hetzner")).toBe(join(getUserHome(), ".config", "agentsea", "hetzner.json"));
+      delete process.env.AGENTSEA_HOME;
+      delete process.env.AGENTSEA_HOME;
+      expect(getAgentseaCloudConfigPath("hetzner")).toBe(join(getUserHome(), ".config", "agentsea", "hetzner.json"));
     });
   });
 
@@ -138,8 +138,8 @@ describe("paths", () => {
 
   describe("getUpdateFailedPath", () => {
     it("returns ~/.config/agentsea/.update-failed", () => {
-      delete process.env.SPAWN_HOME;
-      delete process.env.GRID_SPAWN_HOME;
+      delete process.env.AGENTSEA_HOME;
+      delete process.env.AGENTSEA_HOME;
       delete process.env.AGENTSEA_HOME;
       expect(getUpdateFailedPath()).toBe(join(getUserHome(), ".config", "agentsea", ".update-failed"));
     });

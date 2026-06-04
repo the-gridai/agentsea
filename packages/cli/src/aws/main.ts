@@ -22,7 +22,7 @@ import {
   interactiveSession,
   promptBundle,
   promptRegion,
-  promptSpawnName,
+  promptAgentseaName,
   runServer,
   uploadFile,
   waitForCloudInit,
@@ -48,7 +48,7 @@ async function main() {
       downloadFile,
     },
     async authenticate() {
-      await promptSpawnName();
+      await promptAgentseaName();
       await ensureAwsCli();
       await authenticate();
       await promptRegion();

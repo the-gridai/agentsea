@@ -69,7 +69,7 @@ _digitalocean_validate_env() {
 # _digitalocean_headless_env APP AGENT
 #
 # Prints export lines for headless provisioning environment variables.
-# These are consumed by the spawn CLI when running in non-interactive mode.
+# These are consumed by the agentsea CLI when running in non-interactive mode.
 # ---------------------------------------------------------------------------
 _digitalocean_headless_env() {
   local app="$1"
@@ -155,10 +155,10 @@ _digitalocean_provision_verify() {
 # Executes a command on the droplet via SSH as root.
 # Reads the IP from $LOG_DIR/$APP.ip.
 #
-# Uses the same identity order as the CLI (spawn_ed25519, then legacy keys),
+# Uses the same identity order as the CLI (agentsea_ed25519, then legacy keys),
 # capped at 3 — see packages/cli/src/shared/ssh-keys.ts (ensureSshKeys).
-# Droplets are provisioned with the spawn-managed public key; without -i,
-# BatchMode SSH often has no matching key and .spawnrc polling never succeeds.
+# Droplets are provisioned with the agentsea-managed public key; without -i,
+# BatchMode SSH often has no matching key and .agentsearc polling never succeeds.
 # ---------------------------------------------------------------------------
 _digitalocean_exec() {
   local app="$1"
@@ -202,7 +202,7 @@ _digitalocean_exec() {
   local ssh_id_args=()
   local _k
   local _id_count=0
-  for _k in "${HOME}/.ssh/spawn_ed25519" "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/id_rsa" "${HOME}/.ssh/id_ecdsa"; do
+  for _k in "${HOME}/.ssh/agentsea_ed25519" "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/id_rsa" "${HOME}/.ssh/id_ecdsa"; do
     [ -f "${_k}" ] || continue
     ssh_id_args+=(-i "${_k}")
     _id_count=$((_id_count + 1))

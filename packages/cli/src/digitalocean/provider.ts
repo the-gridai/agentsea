@@ -1,4 +1,4 @@
-import type { SpawnRecord, VMConnection } from "../history.js";
+import type { AgentseaRecord, VMConnection } from "../history.js";
 import type { AgentConfig } from "../shared/agents.js";
 import type { CloudProvider } from "../shared/cloud-provider.js";
 import type { CloudOrchestrator } from "../shared/orchestrate.js";
@@ -14,7 +14,7 @@ import {
   interactiveSession,
   promptDoRegion,
   promptDropletSize,
-  promptSpawnName,
+  promptAgentseaName,
   runServer,
   slugRamGb,
   uploadFile,
@@ -52,7 +52,7 @@ export function createDigitalOceanOrchestrator(agentName: string, agent: AgentCo
       downloadFile,
     },
     async authenticate() {
-      await promptSpawnName();
+      await promptAgentseaName();
     },
     async ensureReadyBeforeSizing() {
       await runDigitalOceanReadinessGate({
@@ -71,7 +71,7 @@ export function createDigitalOceanOrchestrator(agentName: string, agent: AgentCo
     },
     async createServer(name: string) {
       // Use pre-built marketplace image when --beta images is active
-      const betaFeatures = (process.env.SPAWN_BETA ?? "").split(",");
+      const betaFeatures = (process.env.AGENTSEA_BETA ?? "").split(",");
       if (betaFeatures.includes("images")) {
         const slug = MARKETPLACE_IMAGES[agentName];
         if (slug) {
@@ -99,7 +99,7 @@ export function createDigitalOceanOrchestrator(agentName: string, agent: AgentCo
   return cloud;
 }
 
-export async function buildDigitalOceanResumeOrchestrator(record: SpawnRecord): Promise<CloudOrchestrator | null> {
+export async function buildDigitalOceanResumeOrchestrator(record: AgentseaRecord): Promise<CloudOrchestrator | null> {
   const conn = record.connection;
   if (!conn?.ip || conn.deleted) {
     return null;

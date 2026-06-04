@@ -328,7 +328,7 @@ describe("picker.ts coverage", () => {
       // Open succeeds but stty -g fails
       const openSpy = spyOn(fs, "openSync").mockReturnValue(99);
       const closeSpy = spyOn(fs, "closeSync").mockImplementation(() => {});
-      const spawnSyncSpy = spyOn(child_process, "spawnSync").mockReturnValue({
+      const agentseaSyncSpy = spyOn(child_process, "spawnSync").mockReturnValue({
         status: 1,
         stdout: null,
         stderr: null,
@@ -358,7 +358,7 @@ describe("picker.ts coverage", () => {
 
       openSpy.mockRestore();
       closeSpy.mockRestore();
-      spawnSyncSpy.mockRestore();
+      agentseaSyncSpy.mockRestore();
       stderrSpy.mockRestore();
       readSpy.mockRestore();
     });
@@ -373,7 +373,7 @@ describe("picker.ts coverage", () => {
      *   call 3 → stty size (returns terminalSize, e.g. "24 80")
      *   call N → stty restore (any subsequent call, returns null stdout)
      */
-    function makeSttySpawnSyncSpy(savedSettings = "saved", terminalSize = "24 80") {
+    function makeSttyAgentseaSyncSpy(savedSettings = "saved", terminalSize = "24 80") {
       let callCount = 0;
       return spyOn(child_process, "spawnSync").mockImplementation(() => {
         callCount++;
@@ -419,12 +419,12 @@ describe("picker.ts coverage", () => {
     }
 
     it("falls back when raw mode fails", () => {
-      let spawnCallCount = 0;
+      let agentseaCallCount = 0;
       const openSpy = spyOn(fs, "openSync").mockReturnValue(99);
       const closeSpy = spyOn(fs, "closeSync").mockImplementation(() => {});
-      const spawnSyncSpy = spyOn(child_process, "spawnSync").mockImplementation(() => {
-        spawnCallCount++;
-        if (spawnCallCount === 1) {
+      const agentseaSyncSpy = spyOn(child_process, "spawnSync").mockImplementation(() => {
+        agentseaCallCount++;
+        if (agentseaCallCount === 1) {
           // stty -g succeeds
           return {
             status: 0,
@@ -466,7 +466,7 @@ describe("picker.ts coverage", () => {
 
       openSpy.mockRestore();
       closeSpy.mockRestore();
-      spawnSyncSpy.mockRestore();
+      agentseaSyncSpy.mockRestore();
       stderrSpy.mockRestore();
       readSpy.mockRestore();
     });
@@ -476,7 +476,7 @@ describe("picker.ts coverage", () => {
       const openSpy = spyOn(fs, "openSync").mockReturnValue(99);
       const closeSpy = spyOn(fs, "closeSync").mockImplementation(() => {});
       const writeSpy = spyOn(fs, "writeSync").mockImplementation(() => 0);
-      const spawnSyncSpy = makeSttySpawnSyncSpy();
+      const agentseaSyncSpy = makeSttyAgentseaSyncSpy();
       const readSpy = spyOn(fs, "readSync").mockImplementation((fd, buf: Buffer) => {
         readCallCount++;
         if (readCallCount === 1) {
@@ -507,7 +507,7 @@ describe("picker.ts coverage", () => {
       openSpy.mockRestore();
       closeSpy.mockRestore();
       writeSpy.mockRestore();
-      spawnSyncSpy.mockRestore();
+      agentseaSyncSpy.mockRestore();
       readSpy.mockRestore();
     });
 
@@ -516,7 +516,7 @@ describe("picker.ts coverage", () => {
       const openSpy = spyOn(fs, "openSync").mockReturnValue(99);
       const closeSpy = spyOn(fs, "closeSync").mockImplementation(() => {});
       const writeSpy = spyOn(fs, "writeSync").mockImplementation(() => 0);
-      const spawnSyncSpy = makeSttySpawnSyncSpy();
+      const agentseaSyncSpy = makeSttyAgentseaSyncSpy();
       const readSpy = spyOn(fs, "readSync").mockImplementation((fd, buf: Buffer) => {
         readCallCount++;
         if (readCallCount === 1) {
@@ -555,7 +555,7 @@ describe("picker.ts coverage", () => {
       openSpy.mockRestore();
       closeSpy.mockRestore();
       writeSpy.mockRestore();
-      spawnSyncSpy.mockRestore();
+      agentseaSyncSpy.mockRestore();
       readSpy.mockRestore();
     });
 
@@ -564,7 +564,7 @@ describe("picker.ts coverage", () => {
       const openSpy = spyOn(fs, "openSync").mockReturnValue(99);
       const closeSpy = spyOn(fs, "closeSync").mockImplementation(() => {});
       const writeSpy = spyOn(fs, "writeSync").mockImplementation(() => 0);
-      const spawnSyncSpy = makeSttySpawnSyncSpy();
+      const agentseaSyncSpy = makeSttyAgentseaSyncSpy();
       const readSpy = spyOn(fs, "readSync").mockImplementation((fd, buf: Buffer) => {
         readCallCount++;
         if (readCallCount === 1) {
@@ -590,7 +590,7 @@ describe("picker.ts coverage", () => {
       openSpy.mockRestore();
       closeSpy.mockRestore();
       writeSpy.mockRestore();
-      spawnSyncSpy.mockRestore();
+      agentseaSyncSpy.mockRestore();
       readSpy.mockRestore();
     });
 
@@ -599,7 +599,7 @@ describe("picker.ts coverage", () => {
       const openSpy = spyOn(fs, "openSync").mockReturnValue(99);
       const closeSpy = spyOn(fs, "closeSync").mockImplementation(() => {});
       const writeSpy = spyOn(fs, "writeSync").mockImplementation(() => 0);
-      const spawnSyncSpy = makeSttySpawnSyncSpy("saved", "24 120");
+      const agentseaSyncSpy = makeSttyAgentseaSyncSpy("saved", "24 120");
       const readSpy = spyOn(fs, "readSync").mockImplementation((fd, buf: Buffer) => {
         readCallCount++;
         if (readCallCount === 1) {
@@ -633,7 +633,7 @@ describe("picker.ts coverage", () => {
       openSpy.mockRestore();
       closeSpy.mockRestore();
       writeSpy.mockRestore();
-      spawnSyncSpy.mockRestore();
+      agentseaSyncSpy.mockRestore();
       readSpy.mockRestore();
     });
 
@@ -642,7 +642,7 @@ describe("picker.ts coverage", () => {
       const openSpy = spyOn(fs, "openSync").mockReturnValue(99);
       const closeSpy = spyOn(fs, "closeSync").mockImplementation(() => {});
       const writeSpy = spyOn(fs, "writeSync").mockImplementation(() => 0);
-      const spawnSyncSpy = makeSttySpawnSyncSpy();
+      const agentseaSyncSpy = makeSttyAgentseaSyncSpy();
       const readSpy = spyOn(fs, "readSync").mockImplementation((fd, buf: Buffer) => {
         readCallCount++;
         if (readCallCount === 1) {
@@ -673,7 +673,7 @@ describe("picker.ts coverage", () => {
       openSpy.mockRestore();
       closeSpy.mockRestore();
       writeSpy.mockRestore();
-      spawnSyncSpy.mockRestore();
+      agentseaSyncSpy.mockRestore();
       readSpy.mockRestore();
     });
 
@@ -682,7 +682,7 @@ describe("picker.ts coverage", () => {
       const openSpy = spyOn(fs, "openSync").mockReturnValue(99);
       const closeSpy = spyOn(fs, "closeSync").mockImplementation(() => {});
       const writeSpy = spyOn(fs, "writeSync").mockImplementation(() => 0);
-      const spawnSyncSpy = makeSttySpawnSyncSpy();
+      const agentseaSyncSpy = makeSttyAgentseaSyncSpy();
       const readSpy = spyOn(fs, "readSync").mockImplementation((fd, buf: Buffer) => {
         readCallCount++;
         if (readCallCount === 1) {
@@ -718,7 +718,7 @@ describe("picker.ts coverage", () => {
       openSpy.mockRestore();
       closeSpy.mockRestore();
       writeSpy.mockRestore();
-      spawnSyncSpy.mockRestore();
+      agentseaSyncSpy.mockRestore();
       readSpy.mockRestore();
     });
   });

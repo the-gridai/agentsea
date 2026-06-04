@@ -3,7 +3,7 @@
 import type { ReadinessBlockerCode, ReadinessState } from "./readiness.js";
 
 import pc from "picocolors";
-import { isSpawnVerbose } from "../shared/verbosity.js";
+import { isAgentseaVerbose } from "../shared/verbosity.js";
 
 /** Display order: DO → email → SSH → payment → Grid API key → capacity. */
 export const READINESS_CHECKLIST_ROWS: {
@@ -79,7 +79,7 @@ function rowBullet(status: ChecklistLineStatus): string {
 export function renderReadinessChecklist(state: ReadinessState): void {
   const allReady = state.status === "READY";
 
-  if (!isSpawnVerbose()) {
+  if (!isAgentseaVerbose()) {
     process.stderr.write("\n");
     if (allReady) {
       process.stderr.write(pc.green("DigitalOcean ready — account checks passed") + "\n");

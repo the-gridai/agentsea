@@ -20,7 +20,7 @@ import {
   getVmConnection,
   installSpriteKeepAlive,
   interactiveSession,
-  promptSpawnName,
+  promptAgentseaName,
   runSprite,
   setupShellEnvironment,
   startLocalKeepAlive,
@@ -53,7 +53,7 @@ async function main() {
       downloadFile: downloadFileSprite,
     },
     async authenticate() {
-      await promptSpawnName();
+      await promptAgentseaName();
       await ensureSpriteCli();
       await ensureSpriteAuthenticated();
     },
@@ -71,9 +71,9 @@ async function main() {
     },
     getServerName,
     async waitForReady() {},
-    async interactiveSession(cmd: string, spawnFn?: (args: string[]) => number) {
+    async interactiveSession(cmd: string, agentseaFn?: (args: string[]) => number) {
       stopLocalKeepAlive();
-      return interactiveSession(cmd, spawnFn);
+      return interactiveSession(cmd, agentseaFn);
     },
   };
 

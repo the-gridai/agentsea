@@ -335,7 +335,7 @@ export async function cmdAgentInfo(agent: string, preloadedManifest?: Manifest):
       auth: cloudDef.auth,
       authVars: parseAuthEnvVars(cloudDef.auth),
       cloudUrl: cloudDef.url,
-      spawnCmd: `agentsea ${agentKey} ${exampleCloud}`,
+      agentseaCmd: `agentsea ${agentKey} ${exampleCloud}`,
     });
   }
 
@@ -386,7 +386,7 @@ export async function cmdCloudInfo(cloud: string, preloadedManifest?: Manifest):
     auth: c.auth,
     authVars,
     cloudUrl: c.url,
-    spawnCmd: exampleAgent ? `agentsea ${exampleAgent} ${cloudKey}` : undefined,
+    agentseaCmd: exampleAgent ? `agentsea ${exampleAgent} ${cloudKey}` : undefined,
   });
 
   const allAgents = agentKeys(manifest);

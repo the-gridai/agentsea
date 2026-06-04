@@ -6,7 +6,7 @@ import { createConsoleMocks, createMockManifest, mockClackPrompts, restoreMocks 
 /**
  * Tests for cmdInteractive() in commands/interactive.ts.
  *
- * cmdInteractive is the primary user entry point (invoked with bare `spawn`).
+ * cmdInteractive is the primary user entry point (invoked with bare `agentsea`).
  * It has zero test coverage for:
  * - User cancels agent selection (Ctrl+C at first prompt)
  * - User cancels cloud selection (Ctrl+C at second prompt)
@@ -57,14 +57,14 @@ describe("cmdInteractive", () => {
   let consoleMocks: ReturnType<typeof createConsoleMocks>;
   let originalFetch: typeof global.fetch;
   let processExitSpy: ReturnType<typeof spyOn>;
-  let originalSpawnHome: string | undefined;
+  let originalAgentseaHome: string | undefined;
 
   beforeEach(async () => {
     consoleMocks = createConsoleMocks();
 
     // Isolate from host history so getActiveServers() returns []
-    originalSpawnHome = process.env.SPAWN_HOME;
-    process.env.SPAWN_HOME = `${process.env.HOME ?? ""}/.spawn-test-${Date.now()}`;
+    originalAgentseaHome = process.env.AGENTSEA_HOME;
+    process.env.AGENTSEA_HOME = `${process.env.HOME ?? ""}/.agentsea-test-${Date.now()}`;
     mockLogError.mockClear();
     mockLogInfo.mockClear();
     mockLogStep.mockClear();
@@ -97,10 +97,10 @@ describe("cmdInteractive", () => {
     global.fetch = originalFetch;
     processExitSpy.mockRestore();
     restoreMocks(consoleMocks.log, consoleMocks.error);
-    if (originalSpawnHome === undefined) {
-      delete process.env.SPAWN_HOME;
+    if (originalAgentseaHome === undefined) {
+      delete process.env.AGENTSEA_HOME;
     } else {
-      process.env.SPAWN_HOME = originalSpawnHome;
+      process.env.AGENTSEA_HOME = originalAgentseaHome;
     }
   });
 
@@ -233,7 +233,7 @@ describe("cmdInteractive", () => {
       expect(errorCalls.some((msg: string) => msg.includes("Codex"))).toBe(true);
     });
 
-    it("should suggest 'spawn matrix' when no clouds available", async () => {
+    it("should suggest 'agentsea matrix' when no clouds available", async () => {
       const noCloudManifest = {
         ...mockManifest,
         matrix: {
@@ -280,7 +280,7 @@ describe("cmdInteractive", () => {
       await cmdInteractive();
 
       const introArg = mockIntro.mock.calls[0]?.[0] ?? "";
-      expect(introArg).toContain("spawn");
+      expect(introArg).toContain("agentsea");
     });
 
     it("should show launch step with agent and cloud names", async () => {
@@ -345,7 +345,7 @@ describe("cmdInteractive", () => {
       await cmdInteractive();
 
       const outroArg = mockOutro.mock.calls[0]?.[0] ?? "";
-      expect(outroArg).toContain("spawn script");
+      expect(outroArg).toContain("agentsea script");
     });
 
     it("should work with codex agent on sprite cloud", async () => {

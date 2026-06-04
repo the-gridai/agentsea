@@ -26,11 +26,11 @@ From repo root:
 - `bun` and `node` installed.
 - `THEGRID_API_KEY` set.
 - One DO token set: `DIGITALOCEAN_ACCESS_TOKEN` or `DIGITALOCEAN_API_TOKEN` or `DO_API_TOKEN`.
-- SSH key available to the runner and registered in DO (`~/.ssh/spawn_ed25519` preferred).
+- SSH key available to the runner and registered in DO (`~/.ssh/agentsea_ed25519` preferred).
 - `packages/cli/src/index.ts` present (local CLI source run path).
 
 Recommended:
-- `SPAWN_VERBOSE=1` for richer diagnostics.
+- `AGENTSEA_VERBOSE=1` for richer diagnostics.
 - `MODEL_ID` set to a valid The Grid catalog model where applicable.
 
 ## 3) Choose agent under test
@@ -64,7 +64,7 @@ test -n "${DIGITALOCEAN_ACCESS_TOKEN:-${DIGITALOCEAN_API_TOKEN:-${DO_API_TOKEN:-
 Optional SSH sanity:
 
 ```bash
-test -f ~/.ssh/spawn_ed25519
+test -f ~/.ssh/agentsea_ed25519
 ```
 
 ## 5) Happy-path full run (single agent, full checks)
@@ -120,7 +120,7 @@ Use `TIER_D_FAILURE_SCENARIOS.md` for deliberate resilience tests (timeouts, bad
 `e2e.sh` performs teardown automatically per agent. If a run is interrupted:
 
 ```bash
-agentsea delete --name <spawn-name> --yes
+agentsea delete --name <agentsea-name> --yes
 ```
 
 If needed, remove stale headless lock:

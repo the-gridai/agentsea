@@ -35,7 +35,7 @@ async function main() {
   }
 
   // Check if --beta sandbox is active
-  const betaFeatures = (process.env.SPAWN_BETA ?? "").split(",");
+  const betaFeatures = (process.env.AGENTSEA_BETA ?? "").split(",");
   const useSandbox = betaFeatures.includes("sandbox");
 
   const baseRunner = {
@@ -59,7 +59,7 @@ async function main() {
 
   // Warn about security implications of installing OpenClaw locally
   // (skip warning in sandbox mode — the container provides isolation)
-  if (agentName === "openclaw" && !useSandbox && process.env.SPAWN_NON_INTERACTIVE !== "1") {
+  if (agentName === "openclaw" && !useSandbox && process.env.AGENTSEA_NON_INTERACTIVE !== "1") {
     process.stderr.write("\n");
     logWarn("⚠  Local installation warning");
     logWarn(`   This will install ${agent.name} directly on your machine.`);

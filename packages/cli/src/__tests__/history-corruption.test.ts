@@ -1,9 +1,9 @@
-import type { SpawnRecord } from "../history.js";
+import type { AgentseaRecord } from "../history.js";
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadHistory, saveSpawnRecord } from "../history.js";
+import { loadHistory, saveAgentseaRecord } from "../history.js";
 
 describe("history corruption recovery", () => {
   let testDir: string;
@@ -11,14 +11,14 @@ describe("history corruption recovery", () => {
   let consoleErrorSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    testDir = join(process.env.HOME ?? "", `.spawn-test-corrupt-${Date.now()}-${Math.random()}`);
+    testDir = join(process.env.HOME ?? "", `.agentsea-test-corrupt-${Date.now()}-${Math.random()}`);
     mkdirSync(testDir, {
       recursive: true,
     });
     originalEnv = {
       ...process.env,
     };
-    process.env.SPAWN_HOME = testDir;
+    process.env.AGENTSEA_HOME = testDir;
     consoleErrorSpy = spyOn(console, "error").mockImplementation(() => {});
   });
 
@@ -37,7 +37,7 @@ describe("history corruption recovery", () => {
 
   describe("atomic writes", () => {
     it("does not leave .tmp file behind after save", () => {
-      saveSpawnRecord({
+      saveAgentseaRecord({
         agent: "claude",
         cloud: "sprite",
         timestamp: "2026-01-01T00:00:00.000Z",
@@ -103,7 +103,7 @@ describe("history corruption recovery", () => {
 
   describe("archive recovery", () => {
     it("recovers from most recent valid archive", () => {
-      const archiveRecords: SpawnRecord[] = [
+      const archiveRecords: AgentseaRecord[] = [
         {
           id: "archived-1",
           agent: "claude",
@@ -120,7 +120,7 @@ describe("history corruption recovery", () => {
     });
 
     it("picks most recent archive when multiple exist", () => {
-      const oldRecords: SpawnRecord[] = [
+      const oldRecords: AgentseaRecord[] = [
         {
           id: "old-1",
           agent: "codex",
@@ -128,7 +128,7 @@ describe("history corruption recovery", () => {
           timestamp: "2026-01-01T00:00:00.000Z",
         },
       ];
-      const newRecords: SpawnRecord[] = [
+      const newRecords: AgentseaRecord[] = [
         {
           id: "new-1",
           agent: "claude",
@@ -146,7 +146,7 @@ describe("history corruption recovery", () => {
     });
 
     it("skips corrupted archives and falls back to older ones", () => {
-      const goodRecords: SpawnRecord[] = [
+      const goodRecords: AgentseaRecord[] = [
         {
           id: "good-1",
           agent: "codex",
@@ -266,7 +266,7 @@ describe("history corruption recovery", () => {
 
   describe("save after corruption", () => {
     it("preserves recovered records alongside new record", () => {
-      const archiveRecords: SpawnRecord[] = [
+      const archiveRecords: AgentseaRecord[] = [
         {
           id: "archived-1",
           agent: "claude",
@@ -277,7 +277,7 @@ describe("history corruption recovery", () => {
       writeFileSync(join(testDir, "history-2026-01-15.json"), JSON.stringify(archiveRecords));
       writeFileSync(join(testDir, "history.json"), "corrupted{{{");
 
-      saveSpawnRecord({
+      saveAgentseaRecord({
         agent: "codex",
         cloud: "hetzner",
         timestamp: "2026-01-20T00:00:00.000Z",
@@ -301,7 +301,7 @@ describe("history corruption recovery", () => {
     });
 
     it("warns on archive recovery", () => {
-      const archiveRecords: SpawnRecord[] = [
+      const archiveRecords: AgentseaRecord[] = [
         {
           id: "a1",
           agent: "claude",

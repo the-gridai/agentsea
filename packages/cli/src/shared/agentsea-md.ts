@@ -1,6 +1,6 @@
-// shared/spawn-md.ts — Parse and apply spawn.md template files
+// shared/agentsea-md.ts — Parse and apply agentsea.md template files
 //
-// spawn.md lives at the root of a user's repo and declares the "recipe" for
+// agentsea.md lives at the root of a user's repo and declares the "recipe" for
 // setting up an agent: custom auth flows, MCP servers, and setup commands.
 // It never contains actual secrets — env values are placeholders like
 // ${MY_TOKEN} and the user fills them in at replay time.
@@ -12,10 +12,10 @@ import { asyncTryCatch, tryCatch } from "./result.js";
 import { logInfo, logStep, logWarn, openBrowser } from "./ui.js";
 
 // ── YAML frontmatter parsing ───────────────────────────────────────────────
-// spawn.md uses a subset of YAML in the frontmatter (between --- delimiters).
+// agentsea.md uses a subset of YAML in the frontmatter (between --- delimiters).
 // We parse it with a minimal hand-rolled parser to avoid adding a YAML dep.
 
-/** Split spawn.md content into { frontmatter, body } */
+/** Split agentsea.md content into { frontmatter, body } */
 function splitFrontmatter(content: string): {
   frontmatter: string;
   body: string;
@@ -76,7 +76,7 @@ function getFromRecord(target: Record<string, unknown> | unknown[], key: string)
 }
 
 /**
- * Minimal YAML-to-JSON parser for spawn.md frontmatter.
+ * Minimal YAML-to-JSON parser for agentsea.md frontmatter.
  * Handles: scalars, arrays of scalars, arrays of objects, nested objects.
  * Does NOT handle: anchors, tags, multi-line strings. Intentionally simple.
  */
@@ -258,52 +258,52 @@ const McpServerEntrySchema = v.object({
   env: v.optional(v.record(v.string(), v.string())),
 });
 
-export const SpawnMdSchema = v.object({
+export const AgentseaMdSchema = v.object({
   name: v.optional(v.string()),
   description: v.optional(v.string()),
   // Built-in steps (github, auto-update, etc.) go in the CLI --steps flag,
-  // not here.  spawn.md only handles custom setup that Spawn doesn't know about.
+  // not here.  agentsea.md only handles custom setup that Agentsea doesn't know about.
   setup: v.optional(v.array(SetupStepSchema)),
   mcp_servers: v.optional(v.array(McpServerEntrySchema)),
   setup_commands: v.optional(v.array(v.string())),
 });
 
-export type SpawnMdConfig = v.InferOutput<typeof SpawnMdSchema>;
+export type AgentseaMdConfig = v.InferOutput<typeof AgentseaMdSchema>;
 type SetupStep = v.InferOutput<typeof SetupStepSchema>;
 type McpServerEntry = v.InferOutput<typeof McpServerEntrySchema>;
 
 // ── Parsing ────────────────────────────────────────────────────────────────
 
-/** Parse spawn.md content into a typed config. Returns null on parse failure. */
-export function parseSpawnMd(content: string): SpawnMdConfig | null {
+/** Parse agentsea.md content into a typed config. Returns null on parse failure. */
+export function parseAgentseaMd(content: string): AgentseaMdConfig | null {
   const { frontmatter } = splitFrontmatter(content);
   if (!frontmatter) {
     return null;
   }
 
   const raw = parseYamlFrontmatter(frontmatter);
-  const result = v.safeParse(SpawnMdSchema, raw);
+  const result = v.safeParse(AgentseaMdSchema, raw);
   if (!result.success) {
-    logWarn("spawn.md has invalid frontmatter — ignoring");
+    logWarn("agentsea.md has invalid frontmatter — ignoring");
     return null;
   }
   return result.output;
 }
 
-// ── Applying spawn.md on a VM ──────────────────────────────────────────────
+// ── Applying agentsea.md on a VM ──────────────────────────────────────────────
 
-/** Read and parse spawn.md from a remote VM */
-export async function readRemoteSpawnMd(runner: CloudRunner): Promise<SpawnMdConfig | null> {
-  const catResult = await captureCommand(runner, "cat ~/project/spawn.md 2>/dev/null");
+/** Read and parse agentsea.md from a remote VM */
+export async function readRemoteAgentseaMd(runner: CloudRunner): Promise<AgentseaMdConfig | null> {
+  const catResult = await captureCommand(runner, "cat ~/project/agentsea.md 2>/dev/null");
   if (catResult) {
-    return parseSpawnMd(catResult);
+    return parseAgentseaMd(catResult);
   }
   return null;
 }
 
 /** Run a command on the remote and capture its stdout */
 async function captureCommand(runner: CloudRunner, cmd: string): Promise<string | null> {
-  const tmpFile = `/tmp/spawn-capture-${Date.now()}`;
+  const tmpFile = `/tmp/agentsea-capture-${Date.now()}`;
   const { readFileSync, unlinkSync } = await import("node:fs");
   const result = await asyncTryCatch(async () => {
     await runner.runServer(`${cmd} > ${tmpFile} 2>/dev/null; true`);
@@ -322,12 +322,12 @@ async function captureCommand(runner: CloudRunner, cmd: string): Promise<string 
 }
 
 /**
- * Apply custom setup steps from spawn.md onto a running VM.
+ * Apply custom setup steps from agentsea.md onto a running VM.
  * Built-in `steps` (github, auto-update, etc.) are handled by the existing
  * postInstall infrastructure — this function only handles the `setup` array,
  * `mcp_servers`, and `setup_commands`.
  */
-export async function applySpawnMdSetup(runner: CloudRunner, config: SpawnMdConfig, agentName: string): Promise<void> {
+export async function applyAgentseaMdSetup(runner: CloudRunner, config: AgentseaMdConfig, agentName: string): Promise<void> {
   if (config.setup && config.setup.length > 0) {
     logStep("Running template setup steps...");
     for (const step of config.setup) {
@@ -391,14 +391,14 @@ async function applySetupStep(runner: CloudRunner, step: SetupStep): Promise<voi
         const escapedName = step.name.replace(/[^A-Za-z0-9_]/g, "");
         const b64Val = Buffer.from(value).toString("base64");
         await runner.runServer(
-          `mkdir -p /etc/spawn && printf 'export %s="%s"\\n' '${escapedName}' "$(echo '${b64Val}' | base64 -d)" >> /etc/spawn/secrets && chmod 600 /etc/spawn/secrets`,
+          `mkdir -p /etc/agentsea && printf 'export %s="%s"\\n' '${escapedName}' "$(echo '${b64Val}' | base64 -d)" >> /etc/agentsea/secrets && chmod 600 /etc/agentsea/secrets`,
         );
         await runner.runServer(
-          `grep -q '/etc/spawn/secrets' ~/.bashrc 2>/dev/null || echo 'source /etc/spawn/secrets 2>/dev/null' >> ~/.bashrc`,
+          `grep -q '/etc/agentsea/secrets' ~/.bashrc 2>/dev/null || echo 'source /etc/agentsea/secrets 2>/dev/null' >> ~/.bashrc`,
         );
         logInfo(`    ${step.name} saved`);
       } else {
-        logWarn(`    No value provided for ${step.name} — set it later in /etc/spawn/secrets`);
+        logWarn(`    No value provided for ${step.name} — set it later in /etc/agentsea/secrets`);
       }
       break;
     }
@@ -417,7 +417,7 @@ async function applySetupStep(runner: CloudRunner, step: SetupStep): Promise<voi
   }
 }
 
-/** Install MCP servers from spawn.md template into agent config */
+/** Install MCP servers from agentsea.md template into agent config */
 async function installMcpServersFromTemplate(
   runner: CloudRunner,
   servers: McpServerEntry[],

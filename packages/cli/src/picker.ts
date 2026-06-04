@@ -4,7 +4,7 @@
  * Two modes:
  *   pickToTTY(config)  — renders arrow-key UI to /dev/tty, writes result to
  *                        stdout.  Works even when stdout is captured by bash
- *                        `result=$(spawn pick ...)` and stdin is piped.
+ *                        `result=$(agentsea pick ...)` and stdin is piped.
  *   pickFallback(config) — numbered list on stderr for non-TTY environments.
  *
  * Input format (stdin lines or --options strings):
@@ -14,7 +14,7 @@
  *
  * Usage from bash:
  *   zone=$(printf 'us-central1-a\tIowa\nus-east1-b\tVirginia' \
- *            | spawn pick --prompt "Select zone" --default "us-central1-a")
+ *            | agentsea pick --prompt "Select zone" --default "us-central1-a")
  */
 
 import { spawnSync } from "node:child_process";

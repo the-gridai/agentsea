@@ -8,7 +8,7 @@ import { tryCatch } from "@agentsea/sdk";
 import { DOCKER_CONTAINER_NAME, DOCKER_REGISTRY } from "../shared/orchestrate.js";
 import { getUserHome } from "../shared/paths.js";
 import { getLocalShell } from "../shared/shell.js";
-import { spawnInteractive } from "../shared/ssh.js";
+import { agentseaInteractive } from "../shared/ssh.js";
 import { logInfo, logStep } from "../shared/ui.js";
 
 // ─── Validation ─────────────────────────────────────────────────────────────
@@ -164,7 +164,7 @@ export function downloadFile(remotePath: string, localPath: string): void {
 export async function interactiveSession(cmd: string): Promise<number> {
   validateCommand(cmd);
   const [shell, flag] = getLocalShell();
-  return spawnInteractive([
+  return agentseaInteractive([
     shell,
     flag,
     cmd,
@@ -251,7 +251,7 @@ function installOrbStackViaDmg(): boolean {
   const arch = uname.stdout.toString().trim() === "arm64" ? "arm64" : "amd64";
   const dmgUrl = `https://orbstack.dev/download/stable/latest/${arch}`;
 
-  const tempDir = mkdtempSync(join(tmpdir(), "spawn-orbstack-"));
+  const tempDir = mkdtempSync(join(tmpdir(), "agentsea-orbstack-"));
   const dmgPath = join(tempDir, "OrbStack.dmg");
   const mountPoint = join(tempDir, "mnt");
   let attached = false;
@@ -555,7 +555,7 @@ export async function pullAndStartContainer(agentName: string): Promise<void> {
     },
   );
 
-  const image = `${DOCKER_REGISTRY}/spawn-${agentName}:latest`;
+  const image = `${DOCKER_REGISTRY}/agentsea-${agentName}:latest`;
   logStep(`Pulling Docker image ${image}...`);
   await runLocalArgs([
     "docker",
@@ -578,7 +578,7 @@ export async function pullAndStartContainer(agentName: string): Promise<void> {
 /** Launch an interactive session inside the Docker container. */
 export async function dockerInteractiveSession(cmd: string): Promise<number> {
   validateCommand(cmd);
-  return spawnInteractive([
+  return agentseaInteractive([
     "docker",
     "exec",
     "-it",
