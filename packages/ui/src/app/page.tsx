@@ -7,13 +7,13 @@ import { HomeLaunchFlow } from "./home-launch-flow";
 import { WHY_AGENTSEA_CARDS } from "./why-agentsea-cards";
 import {
   AGENTSEA_INSTALL_URL,
-  AGENTSEA_OPENCLAW_DO_ONELINER,
+  AGENTSEA_PUBLIC_ORIGIN,
   isAgentSeaCdnConfigured,
   THE_GRID_EXTERNAL_URL,
 } from "./home-public-constants";
 import { homeAgentCloudAvailability, homeAgentsFromManifest, homeCloudOptionsFromManifest } from "./landing-from-manifest";
 import { SiteHeader } from "./site-header";
-import { AgentseaCopyBlock } from "./agentsea-copy-block";
+import { WithoutCli, WithoutCliSection } from "./agentsea-without-cli";
 import styles from "./page.module.scss";
 
 import { loadManifest } from "@agentsea/sdk/node";
@@ -25,8 +25,6 @@ agentsea ls                            # List your deployments`;
 const CURL_PIPE_SNIPPET = `bash <(curl -fsSL ${AGENTSEA_INSTALL_URL})`;
 
 const INSTALL_SNIPPET = `curl -fsSL ${AGENTSEA_INSTALL_URL} | bash`;
-
-const WITHOUT_CLI_SNIPPET = `bash <(curl -fsSL ${AGENTSEA_OPENCLAW_DO_ONELINER})`;
 
 export default async function HomePage() {
   const manifest = await loadManifest(false);
@@ -55,15 +53,14 @@ export default async function HomePage() {
             />
           </Suspense>
           {isAgentSeaCdnConfigured && (
-            <section className={styles["band"]} aria-labelledby="without-cli-title">
-              <h2 id="without-cli-title" className={styles["h2"]}>
-                Without the CLI
-              </h2>
-              <p className={styles["lede"]}>One curl command. No global install.</p>
-              <div className={styles["withoutCliCopy"]}>
-                <AgentseaCopyBlock code={WITHOUT_CLI_SNIPPET} />
-              </div>
-            </section>
+            <Suspense fallback={<WithoutCliSection origin={AGENTSEA_PUBLIC_ORIGIN} />}>
+              <WithoutCli
+                origin={AGENTSEA_PUBLIC_ORIGIN}
+                agents={agents}
+                cloudOptions={cloudOptions}
+                agentCloudAvailability={agentCloudAvailability}
+              />
+            </Suspense>
           )}
 
           <section className={styles["band"]} aria-labelledby="hood-title">

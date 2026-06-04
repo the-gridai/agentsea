@@ -22,9 +22,6 @@ export const isAgentSeaCdnConfigured = AGENTSEA_PUBLIC_ORIGIN !== AGENTSEA_PUBLI
 
 export const AGENTSEA_INSTALL_URL = `${AGENTSEA_PUBLIC_ORIGIN}/install.sh`;
 
-/** One-liner bootstrap example (DigitalOcean × OpenClaw). */
-export const AGENTSEA_OPENCLAW_DO_ONELINER = `${AGENTSEA_PUBLIC_ORIGIN}/digitalocean/openclaw.sh`;
-
 /** Websocket placeholder base (agentsea detail, etc.). */
 export function agentSeaWsOrigin(): string {
   return AGENTSEA_PUBLIC_ORIGIN.replace(/^http/, "ws");
