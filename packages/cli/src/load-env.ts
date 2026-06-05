@@ -79,4 +79,34 @@ export function loadAgentSeaDotenv(): void {
 /** @deprecated Use loadAgentSeaDotenv */
 export const loadGridAgentseaDotenv = loadAgentSeaDotenv;
 
+/**
+ * Canonical credential env vars and the alternate spellings we accept as a
+ * fallback. Grid / Cortex repos commonly export the same consumption key as
+ * THEGRID_INFERENCE_API_KEY, so accepting it here means those users don't have
+ * to add a second `export THEGRID_API_KEY=...` before running the CLI.
+ */
+const ENV_ALIASES: Record<string, string[]> = {
+  THEGRID_API_KEY: ["THEGRID_INFERENCE_API_KEY"],
+};
+
+/**
+ * Fill canonical credential vars from known aliases when unset. Never overrides
+ * a value the user set explicitly (canonical always wins). Exported for tests.
+ */
+export function applyEnvAliases(): void {
+  for (const [canonical, alts] of Object.entries(ENV_ALIASES)) {
+    if (process.env[canonical]?.trim()) {
+      continue;
+    }
+    for (const alt of alts) {
+      if (process.env[alt]?.trim()) {
+        process.env[canonical] = process.env[alt];
+        logEnvDiag(`Using ${alt} as ${canonical} (alias fallback)`);
+        break;
+      }
+    }
+  }
+}
+
 loadAgentSeaDotenv();
+applyEnvAliases();

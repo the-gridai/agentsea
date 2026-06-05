@@ -14,7 +14,15 @@ import {
   resolveProject as gcpResolveProject,
 } from "../gcp/gcp.js";
 import { ensureHcloudToken, destroyServer as hetznerDestroyServer } from "../hetzner/hetzner.js";
-import { getActiveServers, loadHistory, markRecordDeleted, mergeChildHistory, AgentseaRecordSchema } from "../history.js";
+import {
+  getActiveLocalRecords,
+  getActiveServers,
+  loadHistory,
+  markRecordDeleted,
+  mergeChildHistory,
+  removeRecord,
+  AgentseaRecordSchema,
+} from "../history.js";
 import { loadManifest } from "../manifest.js";
 import {
   validateConnectionIP,
@@ -90,8 +98,13 @@ async function ensureDeleteCredentials(record: AgentseaRecord): Promise<void> {
 /** Execute server deletion for a given record using TypeScript cloud modules */
 async function execDeleteServer(record: AgentseaRecord): Promise<boolean> {
   const conn = record.connection;
-  if (!conn?.cloud || conn.cloud === "local") {
+  if (!conn?.cloud) {
     return false;
+  }
+  // Local runs have no cloud VM to destroy — pruning the history row is the
+  // delete operation for them (matches the picker's "Remove from history").
+  if (conn.cloud === "local") {
+    return removeRecord(record);
   }
 
   const id = conn.server_id || conn.server_name || "";
@@ -209,11 +222,14 @@ export async function confirmAndDelete(
   deleteHandler?: (record: AgentseaRecord) => Promise<boolean>,
 ): Promise<boolean> {
   const conn = record.connection!;
-  const label = conn.server_name || conn.server_id || conn.ip;
+  const isLocal = conn.cloud === "local";
+  const label = conn.server_name || conn.server_id || conn.ip || record.name || record.id;
   const cloudLabel = manifest?.clouds[conn.cloud!]?.name || conn.cloud;
 
   const confirmed = await p.confirm({
-    message: `Delete server "${label}" on ${cloudLabel}? This will permanently destroy the server and all data on it.`,
+    message: isLocal
+      ? `Remove local ${record.agent} run "${label}" from history?`
+      : `Delete server "${label}" on ${cloudLabel}? This will permanently destroy the server and all data on it.`,
     initialValue: false,
   });
 
@@ -260,7 +276,7 @@ export async function confirmAndDelete(
   s.clear();
   if (success) {
     const detail = lastMessage ? `: ${lastMessage}` : "";
-    p.log.success(`Server "${label}" deleted${detail}`);
+    p.log.success(isLocal ? `Local run "${label}" removed from history` : `Server "${label}" deleted${detail}`);
     // Lifecycle telemetry: lifetime hours + final login count.
     trackAgentseaDeleted(record);
   } else {
@@ -400,7 +416,13 @@ export async function cmdDelete(
   agentFilter = resolved.agentFilter;
   cloudFilter = resolved.cloudFilter;
 
-  const servers = getActiveServers();
+  // Include local runs: they have no cloud VM but still leave history rows the
+  // user expects `delete` to clear (issue #21 — "No active servers to delete"
+  // while `list` still showed local entries).
+  const servers = [
+    ...getActiveServers(),
+    ...getActiveLocalRecords(),
+  ];
 
   let filtered = servers;
   if (agentFilter) {
@@ -447,11 +469,12 @@ export async function cmdDelete(
       process.exit(1);
     }
     for (const record of filtered) {
+      const isLocal = record.connection?.cloud === "local";
       const label = record.connection?.server_name || record.name || record.id;
       await ensureDeleteCredentials(record);
       const ok = await execDeleteServer(record);
       if (ok) {
-        p.log.success(`Server "${label}" deleted`);
+        p.log.success(isLocal ? `Local run "${label}" removed from history` : `Server "${label}" deleted`);
         // Lifecycle telemetry: headless path also fires the event.
         trackAgentseaDeleted(record);
       }

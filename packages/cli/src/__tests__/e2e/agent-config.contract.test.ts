@@ -144,6 +144,13 @@ describe("agent config contract (createCloudAgents, no cloud)", () => {
     expect(typeof agents.pi.configure).toBe("function");
   });
 
+  it("opencode targets The Grid via a custom provider config (not built-in providers)", () => {
+    // Without a configure step OpenCode routes the Grid key to its default
+    // provider and 403s with "Forbidden: blocked by a gateway or proxy" (#21).
+    expect(agents.opencode.modelDefault).toBe("agent-standard");
+    expect(typeof agents.opencode.configure).toBe("function");
+  });
+
   it("t3code installs Codex CLI and routes it to The Grid via LiteLLM proxy", () => {
     expect(agents.t3code.modelDefault).toBe("agent-standard");
     expect(typeof agents.t3code.configure).toBe("function");
