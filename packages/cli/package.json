@@ -1,6 +1,6 @@
 {
   "name": "@agentsea/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "agentsea CLI — cloud agent provisioning for The Grid (static manifest + your cloud accounts).",
   "type": "module",

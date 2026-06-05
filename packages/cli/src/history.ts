@@ -704,6 +704,39 @@ export function getActiveServers(): AgentseaRecord[] {
   return records.filter((r) => r.connection?.cloud && r.connection.cloud !== "local" && !r.connection.deleted);
 }
 
+/**
+ * Active local-run history entries (cloud === "local", not soft-deleted).
+ * These have no cloud VM to destroy; `delete` uses them so it can prune local
+ * runs from history instead of reporting "No active servers to delete".
+ */
+export function getActiveLocalRecords(): AgentseaRecord[] {
+  const records = loadHistory();
+  return records.filter((r) => r.connection?.cloud === "local" && !r.connection.deleted);
+}
+
+/**
+ * For local runs, find an existing active (non-deleted) local record matching
+ * the same agent + name so a retry can reuse its id and upsert the same row
+ * instead of appending a duplicate (issue #21 — retries created multiple rows,
+ * including duplicate names). Returns the newest match, or undefined.
+ */
+export function findReusableLocalRecordId(agent: string, name?: string): string | undefined {
+  const wanted = (name ?? "").trim();
+  const matches = loadHistory().filter(
+    (r) =>
+      !!r.id &&
+      r.agent === agent &&
+      r.cloud === "local" &&
+      !r.connection?.deleted &&
+      (r.name ?? "").trim() === wanted,
+  );
+  if (matches.length === 0) {
+    return undefined;
+  }
+  matches.sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""));
+  return matches[0]!.id;
+}
+
 /** Merge child agentsea records into local history.
  *  Sets parent_id on each child record and deduplicates by agentsea ID. */
 export function mergeChildHistory(parentAgentseaId: string, childRecords: AgentseaRecord[]): void {

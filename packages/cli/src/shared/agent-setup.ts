@@ -1401,6 +1401,50 @@ async function setupPiConfig(runner: CloudRunner, _apiKey: string, modelId?: str
 }
 
 /**
+ * OpenCode resolves models from ~/.config/opencode/opencode.json. Without a
+ * custom provider it falls back to its built-in providers and routes the Grid
+ * key to the wrong endpoint, surfacing "Forbidden: blocked by a gateway or
+ * proxy" (issue #21). We register an OpenAI-compatible provider pointed at The
+ * Grid's inference base and select it as the default model so headless prompt
+ * runs work out of the box. The key is read from THEGRID_API_KEY via OpenCode's
+ * `{env:...}` interpolation (set in ~/.agentsearc), so it never lands on disk.
+ */
+async function setupOpenCodeConfig(runner: CloudRunner, modelId?: string): Promise<void> {
+  logStep("Configuring OpenCode for The Grid...");
+
+  const selectedModel =
+    typeof modelId === "string" && modelId.trim() && validateModelId(modelId.trim())
+      ? modelId.trim()
+      : GRID_INFERENCE_DEFAULT_MODEL_ID;
+
+  const config = {
+    $schema: "https://opencode.ai/config.json",
+    model: `${OPENCLAW_GRID_PROVIDER_ID}/${selectedModel}`,
+    provider: {
+      [OPENCLAW_GRID_PROVIDER_ID]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "The Grid",
+        options: {
+          baseURL: resolveGridInferenceApiBase(),
+          apiKey: "{env:THEGRID_API_KEY}",
+        },
+        models: {
+          [selectedModel]: {
+            name: `The Grid (${selectedModel})`,
+          },
+        },
+      },
+    },
+  };
+
+  await runner.runServer("mkdir -p ~/.config/opencode");
+  await uploadConfigFile(runner, `${JSON.stringify(config, null, 2)}\n`, "$HOME/.config/opencode/opencode.json");
+  await runner.runServer("chmod 600 ~/.config/opencode/opencode.json");
+
+  logInfo(`OpenCode configured (provider: ${OPENCLAW_GRID_PROVIDER_ID}, model: ${selectedModel})`);
+}
+
+/**
  * Local-mode launch for a LiteLLM-style proxy.
  *
  * Installs the wrapper into ~/.local/bin, launches it via runner.startService
@@ -2132,8 +2176,15 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
       configure: (_apiKey, modelId, _enabledSteps) => setupCodexConfig(runner, modelId),
       preLaunch: () => startCodexLiteLlmProxy(runner),
       launchCmd: () => "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; codex",
+      // Newer Codex CLIs dropped `--ask-for-approval` from `codex exec` (it errors
+      // with "unexpected argument"). Probe `--help` and only pass the flag when the
+      // installed binary still accepts it; `--sandbox danger-full-access` already
+      // keeps the exec run non-interactive on versions that removed it.
       promptCmd: (prompt) =>
-        `source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; codex exec --sandbox danger-full-access --ask-for-approval=never ${shellQuote(prompt)} < /dev/null`,
+        "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; " +
+        '_cx_flags="--sandbox danger-full-access"; ' +
+        "codex exec --help 2>/dev/null | grep -q -- '--ask-for-approval' && _cx_flags=\"$_cx_flags --ask-for-approval=never\"; " +
+        `codex exec $_cx_flags ${shellQuote(prompt)} < /dev/null`,
       updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + "npm install -g $_NPM_G_FLAGS @openai/codex@latest",
     },
 
@@ -2180,11 +2231,13 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
     opencode: {
       name: "OpenCode",
       cloudInitTier: "minimal",
+      modelDefault: VENDOR_CHAT_MODEL_DEFAULT,
       preProvision: detectGithubAuth,
       install: () => installAgent(runner, "OpenCode", openCodeInstallCmd()),
       envVars: (apiKey) => [
         `THEGRID_API_KEY=${apiKey}`,
       ],
+      configure: (_apiKey, modelId) => setupOpenCodeConfig(runner, modelId),
       launchCmd: () => "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; opencode",
       promptCmd: (prompt) =>
         `source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; opencode --prompt ${shellQuote(prompt)}`,

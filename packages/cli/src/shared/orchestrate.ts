@@ -13,6 +13,7 @@ import pc from "picocolors";
 import * as v from "valibot";
 import {
   deleteProvisionCheckpoint,
+  findReusableLocalRecordId,
   generateAgentseaId,
   mergeChildHistory,
   patchAgentseaRecord,
@@ -578,7 +579,16 @@ export async function runOrchestration(
       await cloud.ensureReadyBeforeSizing();
     }
 
-    const agentseaId = generateAgentseaId();
+    // Local runs reuse the prior row for the same agent+name so retries upsert
+    // instead of piling up duplicate history entries (issue #21).
+    let agentseaId = generateAgentseaId();
+    if (isLocalRuntime(cloud)) {
+      const localName = process.env.AGENTSEA_NAME_KEBAB || process.env.AGENTSEA_NAME || undefined;
+      const reuseId = findReusableLocalRecordId(agentName, localName);
+      if (reuseId) {
+        agentseaId = reuseId;
+      }
+    }
     failureAgentseaId = agentseaId;
     const stubTs = new Date().toISOString();
     writeProvisionCheckpoint({
