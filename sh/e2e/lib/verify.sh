@@ -249,7 +249,9 @@ input_test_codex() {
     cat /tmp/.e2e-prompt | base64 -d > /tmp/.e2e-plain-prompt; \
     rm -rf /tmp/e2e-test && mkdir -p /tmp/e2e-test && cd /tmp/e2e-test && git init -q; \
     PROMPT=\$(cat /tmp/.e2e-plain-prompt); \
-    timeout \"\$_TIMEOUT\" codex exec --sandbox danger-full-access --ask-for-approval=never \"\$PROMPT\" < /dev/null" 2>&1) || true
+    _cx_flags=\"--sandbox danger-full-access\"; \
+    codex exec --help 2>/dev/null | grep -q -- '--ask-for-approval' && _cx_flags=\"\$_cx_flags --ask-for-approval=never\"; \
+    timeout \"\$_TIMEOUT\" codex exec \$_cx_flags \"\$PROMPT\" < /dev/null" 2>&1) || true
   _log_input_response "codex" "${output}"
 
   if printf '%s' "${output}" | tr -d '\r' | grep -qFx "${INPUT_TEST_MARKER}"; then
