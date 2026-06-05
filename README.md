@@ -2,7 +2,7 @@
 
 > **CLI-first agent VM launcher**, static-manifest Agentsea-style architecture for **The Grid**: static repo-root **`manifest.json`**, **`agentsea`** provisions against **your** cloud accounts, **`sh/<cloud>/<agent>.sh`** userdata, local history under **`~/.config/agentsea/`** — **no Agentsea web UI, no Agentsea HTTP API.**
 
-Authenticate with **`THEGRID_API_KEY`** (Grid platform) plus per-cloud tokens (`DIGITALOCEAN_TOKEN`, `HCLOUD_TOKEN`, …). The repo ships a static manifest + per-cloud userdata scripts; CDN defaults to **`https://spawn.thegrid.ai`** via **`AGENTSEA_CDN`**. See **`todo.md`** for first-party image slugs and other items to wire up.
+Authenticate with **`THEGRID_API_KEY`** (Grid platform) plus per-cloud tokens (`DIGITALOCEAN_TOKEN`, `HCLOUD_TOKEN`, …). The repo ships a static manifest + per-cloud userdata scripts; the CDN origin is resolved per environment (dev `https://agentsea.dev.thegrid.ai`, staging `https://agentsea.staging.thegrid.ai`, prod `https://agentsea.thegrid.ai`) — pinned by `install.sh` and overridable via **`AGENTSEA_CDN`**. See **`todo.md`** for first-party image slugs and other items to wire up.
 
 ## Status
 

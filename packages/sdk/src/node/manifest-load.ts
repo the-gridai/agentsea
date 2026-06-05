@@ -14,6 +14,7 @@ import {
   unwrapOr,
 } from "../result";
 import { getErrorMessage, isPlainObject } from "../type-guards";
+import { getCdnOrigin } from "./cdn";
 import { getManifestCacheDir, getManifestCacheFile } from "./paths";
 
 export const REPO = "Spectral-Finance/agentsea" as const;
@@ -21,12 +22,13 @@ export const RAW_BASE = `https://raw.githubusercontent.com/${REPO}/main` as cons
 export const VERSION_URL =
   `https://github.com/${REPO}/releases/download/cli-latest/version` as const;
 
-function defaultAgentseaCdn(): string {
-  return process.env.AGENTSEA_CDN ?? "https://spawn.thegrid.ai";
-}
-
-/** Primary CDN URL for bootstrap shell scripts (`{CDN}/{cloud}/{agent}.sh`). */
-export const AGENTSEA_CDN = defaultAgentseaCdn() as string;
+/**
+ * Primary CDN origin for bootstrap shell scripts (`{CDN}/{cloud}/{agent}.sh`).
+ * Resolved via env var → install-time pin → built-in default, so it tracks the
+ * environment the CLI was installed from. Prefer calling {@link getCdnOrigin}
+ * directly where the value may change at runtime.
+ */
+export const AGENTSEA_CDN: string = getCdnOrigin();
 
 const FETCH_TIMEOUT = 3_000;
 
