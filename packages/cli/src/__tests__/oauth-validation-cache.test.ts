@@ -11,11 +11,13 @@ describe("verifyTheGridApiKey validation cache", () => {
   const prevSkip = process.env.AGENTSEA_SKIP_API_VALIDATION;
   const prevApiKey = process.env.THEGRID_API_KEY;
   const prevIsTTY = process.stderr.isTTY;
+  const prevForce = process.env.AGENTSEA_FORCE_GRID_API_KEY_NETWORK_VALIDATION;
 
   beforeEach(() => {
     fetchCalls = 0;
-    delete process.env.NODE_ENV;
-    delete process.env.BUN_ENV;
+    process.env.NODE_ENV = "production";
+    process.env.BUN_ENV = "production";
+    process.env.AGENTSEA_FORCE_GRID_API_KEY_NETWORK_VALIDATION = "1";
     delete process.env.AGENTSEA_SKIP_API_VALIDATION;
     delete process.env.THEGRID_API_KEY;
     resetGridApiKeyValidationCacheForTests();
@@ -47,6 +49,11 @@ describe("verifyTheGridApiKey validation cache", () => {
       process.env.THEGRID_API_KEY = prevApiKey;
     } else {
       delete process.env.THEGRID_API_KEY;
+    }
+    if (prevForce !== undefined) {
+      process.env.AGENTSEA_FORCE_GRID_API_KEY_NETWORK_VALIDATION = prevForce;
+    } else {
+      delete process.env.AGENTSEA_FORCE_GRID_API_KEY_NETWORK_VALIDATION;
     }
     Object.defineProperty(process.stderr, "isTTY", { value: prevIsTTY, configurable: true });
   });

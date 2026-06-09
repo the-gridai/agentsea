@@ -117,11 +117,9 @@ export async function verifyTheGridApiKey(apiKey: string): Promise<boolean> {
     logWarn(format.message);
     return false;
   }
-  if (
-    process.env.AGENTSEA_SKIP_API_VALIDATION ||
-    process.env.BUN_ENV === "test" ||
-    process.env.NODE_ENV === "test"
-  ) {
+  const inTestEnv = process.env.BUN_ENV === "test" || process.env.NODE_ENV === "test";
+  const forceNetworkValidation = process.env.AGENTSEA_FORCE_GRID_API_KEY_NETWORK_VALIDATION === "1";
+  if (process.env.AGENTSEA_SKIP_API_VALIDATION || (inTestEnv && !forceNetworkValidation)) {
     return true;
   }
 
