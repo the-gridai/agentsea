@@ -23,7 +23,7 @@ export type HomeAgentPickProps = {
 
 function agentCardDisabledReason(a: HomeAgentVm): string | null {
   if (a.disabled) {
-    return "Unavailable";
+    return "Coming soon";
   }
   if (!a.available) {
     return "Coming soon";

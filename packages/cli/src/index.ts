@@ -281,12 +281,11 @@ console.error(`\nUsage: ${pc.cyan("agentsea <agent> <cloud> --headless --output 
     return;
   }
   if (cloud) {
-    // Auto-fallback to headless in non-interactive shells (CI, devcontainers,
-    // piped stdin). The interactive session needs a TTY, so without this an
-    // `agentsea <agent> <cloud> -p "..."` invocation fails with "stdin is not a
-    // terminal" after a full provision (issue #21). Dry-run only prints a
-    // preview, so it stays on the normal path.
-    if (!dryRun && !isInteractiveTTY()) {
+    // Auto-fallback to headless only when there is no terminal (CI, scripts).
+    // `curl … | bash` leaves stdin piped but stdout is still the user's terminal;
+    // install.sh reattaches /dev/tty before exec. If stdout is a TTY, run
+    // interactively so cloud/API credential prompts work.
+    if (!dryRun && !isInteractiveTTY() && !process.stdout.isTTY) {
       console.error(
         pc.yellow("No interactive terminal detected — running headless. Use --headless to silence this notice."),
       );

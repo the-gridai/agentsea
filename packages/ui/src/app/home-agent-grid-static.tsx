@@ -7,7 +7,7 @@ import styles from "./page.module.scss";
 
 function agentCardDisabledReason(a: HomeAgentVm): string | null {
   if (a.disabled) {
-    return "Unavailable";
+    return "Coming soon";
   }
   if (!a.available) {
     return "Coming soon";

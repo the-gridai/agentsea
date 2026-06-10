@@ -330,6 +330,11 @@ launch_agentsea_if_requested() {
     log_step "Install complete — starting agentsea ${AGENTSEA_LAUNCH_AGENT} ${AGENTSEA_LAUNCH_CLOUD}..."
     echo ""
     export PATH="${INSTALL_DIR}:${BUN_INSTALL}/bin:${HOME}/.local/bin:/usr/local/bin:${PATH}"
+    # curl | bash pipes the script on stdin; after install, reattach the user's TTY
+    # so agentsea can prompt for DigitalOcean / Grid API keys interactively.
+    if [ -r /dev/tty ]; then
+        exec 0</dev/tty
+    fi
     AGENTSEA_NO_UPDATE_CHECK=1 exec "${bin}" "${AGENTSEA_LAUNCH_AGENT}" "${AGENTSEA_LAUNCH_CLOUD}"
 }
 
