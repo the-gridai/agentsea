@@ -1,5 +1,12 @@
-import type { Manifest } from "@agentsea/sdk";
-import { agentKeys, cloudKeys, matrixStatus } from "@agentsea/sdk";
+import type { Metadata } from "next";
+import type { AgentSortMode, Manifest } from "@agentsea/sdk";
+import {
+  agentKeys,
+  allAgentKeys,
+  cloudKeys,
+  DEFAULT_AGENT_SORT_MODE,
+  matrixStatus,
+} from "@agentsea/sdk";
 
 import {
   CHAT_VERIFIED_AGENT_SLUGS,
@@ -11,6 +18,15 @@ import {
 const CHAT_VERIFIED_ORDER = new Map<string, number>(
   CHAT_VERIFIED_AGENT_SLUGS.map((slug, i) => [slug, i]),
 );
+
+export { DEFAULT_AGENT_SORT_MODE };
+export type { AgentSortMode };
+
+export const AGENT_SORT_OPTIONS: ReadonlyArray<{ value: AgentSortMode; label: string }> = [
+  { value: "recommended", label: "Recommended" },
+  { value: "github-stars", label: "GitHub stars" },
+  { value: "name", label: "Name" },
+];
 
 /** First cloud key (manifest order) with an implemented matrix cell for this agent, or null. */
 export function firstImplementedCloudForAgent(m: Manifest, agentSlug: string): string | null {
@@ -26,6 +42,73 @@ export function isCloudImplementedForAgent(m: Manifest, cloud: string, agentSlug
   return matrixStatus(m, cloud, agentSlug) === "implemented";
 }
 
+/** Cloud slugs included in sitemap and static `/{agent}/{cloud}` routes. */
+export const INDEXED_CLOUD_SLUGS = [
+  "local",
+  "digitalocean",
+  "hetzner",
+  "aws",
+  "gcp",
+  "daytona",
+  "sprite",
+] as const;
+
+export function agentCloudPath(agentSlug: string, cloudSlug: string): string {
+  return `/${agentSlug}/${cloudSlug}`;
+}
+
+/** Human-readable environment name for titles, H1s, and meta (e.g. `local` → Local Machine). */
+export function displayCloudName(cloudSlug: string, cloudName: string): string {
+  if (cloudSlug === "local") return "Local Machine";
+  return cloudName;
+}
+
+/** Implemented agent×cloud pairs for sitemap and `generateStaticParams`. */
+export function implementedAgentCloudPairs(m: Manifest): Array<{ agent: string; cloud: string }> {
+  const pairs: Array<{ agent: string; cloud: string }> = [];
+  for (const agentSlug of agentKeys(m)) {
+    for (const cloudSlug of INDEXED_CLOUD_SLUGS) {
+      if (isCloudImplementedForAgent(m, cloudSlug, agentSlug)) {
+        pairs.push({ agent: agentSlug, cloud: cloudSlug });
+      }
+    }
+  }
+  return pairs;
+}
+
+function publicOriginBase(): string {
+  return process.env.NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN?.replace(/\/+$/, "") ?? "https://spawn.thegrid.ai";
+}
+
+/** Per-route title, description, canonical URL, and Open Graph / Twitter tags for launch pages. */
+export function launchPageMetadata(
+  agentSlug: string,
+  agentName: string,
+  cloudSlug: string,
+  cloudName: string,
+): Metadata {
+  const environment = displayCloudName(cloudSlug, cloudName);
+  const title = `Deploy ${agentName} on ${environment}`;
+  const description = `Deploy ${agentName} on ${environment} with AgentSea — one command installs the CLI and starts your deployment (agentsea ${agentSlug} ${cloudSlug}). Grid-backed inference on infrastructure you control.`;
+  const url = `${publicOriginBase()}${agentCloudPath(agentSlug, cloudSlug)}`;
+  return {
+    title,
+    description,
+    alternates: { canonical: url },
+    openGraph: {
+      title,
+      description,
+      url,
+      type: "website",
+    },
+    twitter: {
+      card: "summary",
+      title,
+      description,
+    },
+  };
+}
+
 /** Resolve launch cloud from query param — validates agent, cloud, and matrix cell. */
 export function resolveLaunchCloud(
   m: Manifest,
@@ -37,7 +120,8 @@ export function resolveLaunchCloud(
   if (!agentMeta || agentMeta.disabled) return null;
   if (HOME_CLOUD_COMING_SOON.has(cloudSlug)) return null;
   if (!isCloudImplementedForAgent(m, cloudSlug, agentSlug)) return null;
-  const cloudName = m.clouds[cloudSlug]?.name ?? cloudSlug;
+  const rawName = m.clouds[cloudSlug]?.name ?? cloudSlug;
+  const cloudName = displayCloudName(cloudSlug, rawName);
   return { cloudSlug, cloudName };
 }
 
@@ -61,9 +145,10 @@ export function homeCloudOptionsFromManifest(m: Manifest): HomeCloudVm[] {
       };
     }
     const cloud = m.clouds[slug];
+    const rawName = cloud?.name ?? slug;
     return {
       slug,
-      name: cloud?.name ?? slug,
+      name: displayCloudName(slug, rawName),
       description: cloud?.description ?? "",
       comingSoon: HOME_CLOUD_COMING_SOON.has(slug),
       icon: cloud?.icon ?? null,
@@ -102,6 +187,10 @@ export interface HomeAgentVm {
   chatVerified: boolean;
   image: string | null;
   available: boolean;
+  disabled: boolean;
+  disabledReason: string | null;
+  githubStars: number | undefined;
+  sortPriority: number;
 }
 
 const ICON_MAP: Record<string, string> = {
@@ -124,10 +213,45 @@ function formatStars(n: number | undefined): string | null {
   return `${n}★`;
 }
 
-export function homeAgentsFromManifest(m: Manifest): HomeAgentVm[] {
+export function sortHomeAgents(agents: readonly HomeAgentVm[], mode: AgentSortMode): HomeAgentVm[] {
+  return [...agents].sort((a, b) => {
+    if (a.disabled !== b.disabled) {
+      return a.disabled ? 1 : -1;
+    }
+
+    switch (mode) {
+      case "recommended": {
+        if (a.sortPriority !== b.sortPriority) {
+          return a.sortPriority - b.sortPriority;
+        }
+        const aStars = a.githubStars ?? 0;
+        const bStars = b.githubStars ?? 0;
+        if (aStars !== bStars) {
+          return bStars - aStars;
+        }
+        return a.name.localeCompare(b.name);
+      }
+      case "github-stars": {
+        const aStars = a.githubStars ?? 0;
+        const bStars = b.githubStars ?? 0;
+        if (aStars !== bStars) {
+          return bStars - aStars;
+        }
+        return a.name.localeCompare(b.name);
+      }
+      case "name":
+        return a.name.localeCompare(b.name);
+    }
+  });
+}
+
+export function homeAgentsFromManifest(
+  m: Manifest,
+  mode: AgentSortMode = DEFAULT_AGENT_SORT_MODE,
+): HomeAgentVm[] {
   const rows: HomeAgentVm[] = [];
 
-  for (const slug of agentKeys(m)) {
+  for (const slug of allAgentKeys(m, mode)) {
     const agent = m.agents[slug];
     if (!agent) continue;
 
@@ -137,10 +261,10 @@ export function homeAgentsFromManifest(m: Manifest): HomeAgentVm[] {
       if (status === "implemented") implementedCells++;
     }
     const available = implementedCells > 0;
+    const disabled = agent.disabled === true;
 
     const desc = agent.tagline?.trim() || agent.description;
     const chatVerified = CHAT_VERIFIED_ORDER.has(slug);
-
     const stars = formatStars(agent.github_stars);
 
     rows.push({
@@ -150,21 +274,18 @@ export function homeAgentsFromManifest(m: Manifest): HomeAgentVm[] {
       publisher: agent.creator ?? "—",
       metricLabel: stars ? "GitHub stars" : null,
       metricValue: stars,
-      highlight: chatVerified,
+      highlight: chatVerified && !disabled,
       chatVerified,
       image: ICON_MAP[slug] ?? null,
       available,
+      disabled,
+      disabledReason: agent.disabled_reason?.trim() || null,
+      githubStars: agent.github_stars,
+      sortPriority: agent.sort_priority ?? 999,
     });
   }
 
-  rows.sort((a, b) => {
-    const aRank = CHAT_VERIFIED_ORDER.get(a.slug) ?? Number.MAX_SAFE_INTEGER;
-    const bRank = CHAT_VERIFIED_ORDER.get(b.slug) ?? Number.MAX_SAFE_INTEGER;
-    if (aRank !== bRank) return aRank - bRank;
-    return a.name.localeCompare(b.name);
-  });
-
-  return rows;
+  return sortHomeAgents(rows, mode);
 }
 
 /** Raster logo filename under `public/agents/`, if any. */

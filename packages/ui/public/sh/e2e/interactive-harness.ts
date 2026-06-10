@@ -1,0 +1,482 @@
+#!/usr/bin/env bun
+// sh/e2e/interactive-harness.ts — AI-driven interactive E2E test for agentsea CLI
+//
+// Agentseas agentsea in a real PTY (via `script` command), feeds terminal output to
+// The Grid (OpenAI-compatible chat), and types responses like a human user would.
+//
+// Usage: bun run sh/e2e/interactive-harness.ts <agent> <cloud>
+//
+// Required env:
+//   THEGRID_API_KEY     — The Grid key for the AI driver (OpenAI-compatible chat) and for the agent under test
+//   Cloud credentials   — HCLOUD_TOKEN, DIGITALOCEAN_ACCESS_TOKEN, AWS_ACCESS_KEY_ID, etc.
+//
+// Optional:
+//   THEGRID_API_URL      — Override inference API base (default https://api.thegrid.ai/v1)
+//   GRID_OPENAI_BASE_URL — Alias for THEGRID_API_URL (legacy)
+//   INTERACTIVE_DRIVER_MODEL_ID / MODEL_ID — Chat model id (default agent-standard)
+//
+// Outputs JSON to stdout: { success: boolean, duration: number, transcript: string, uxIssues?: UxIssue[] }
+
+const IDLE_MS = 2000; // Wait 2s of silence before asking AI
+const SESSION_TIMEOUT_MS = 20 * 60 * 1000; // 20 minute overall timeout (provision takes 3-4 min + onboarding)
+
+const GRID_OPENAI_BASE = (
+  process.env.THEGRID_API_URL ??
+  process.env.GRID_OPENAI_BASE_URL ??
+  "https://api.thegrid.ai/v1"
+).replace(/\/+$/, "");
+const AI_MODEL = (
+  process.env.INTERACTIVE_DRIVER_MODEL_ID ??
+  process.env.MODEL_ID ??
+  "agent-standard"
+)
+  .trim() || "agent-standard";
+
+// ─── Args & validation ──────────────────────────────────────────────────
+
+const [agent, cloud] = process.argv.slice(2);
+if (!agent || !cloud) {
+  process.stderr.write("Usage: bun run interactive-harness.ts <agent> <cloud>\n");
+  process.exit(1);
+}
+
+const gridApiKey = (process.env.THEGRID_API_KEY ?? "").trim();
+if (!gridApiKey) {
+  process.stderr.write(
+    "THEGRID_API_KEY is required (interactive AI driver and agent under test)\n",
+  );
+  process.exit(1);
+}
+process.env.THEGRID_API_KEY = gridApiKey;
+
+// ─── Credential map (only include what's set) ───────────────────────────
+
+function buildCredentialHints(): string {
+  const creds: string[] = [];
+
+  if (gridApiKey) creds.push(`The Grid API key (THEGRID_API_KEY): ${gridApiKey}`);
+
+  const hetzner = process.env.HCLOUD_TOKEN ?? "";
+  if (hetzner) creds.push(`Hetzner token: ${hetzner}`);
+
+  const doToken = process.env.DIGITALOCEAN_ACCESS_TOKEN ?? process.env.DIGITALOCEAN_API_TOKEN ?? process.env.DO_API_TOKEN ?? "";
+  if (doToken) creds.push(`DigitalOcean token: ${doToken}`);
+
+  const awsKey = process.env.AWS_ACCESS_KEY_ID ?? "";
+  const awsSecret = process.env.AWS_SECRET_ACCESS_KEY ?? "";
+  if (awsKey) creds.push(`AWS Access Key ID: ${awsKey}`);
+  if (awsSecret) creds.push(`AWS Secret Access Key: ${awsSecret}`);
+
+  const gcpProject = process.env.GCP_PROJECT ?? "";
+  if (gcpProject) creds.push(`GCP Project ID: ${gcpProject}`);
+
+  return creds.join("\n");
+}
+
+// ─── ANSI stripping ─────────────────────────────────────────────────────
+
+function stripAnsi(text: string): string {
+  return text
+    .replace(/\x1B\[[0-9;]*[A-Za-z]/g, "") // CSI sequences
+    .replace(/\x1B\][^\x07]*\x07/g, "") // OSC sequences
+    .replace(/\x1B\[\?[0-9;]*[hl]/g, "") // DEC private mode
+    .replace(/\x1B[()][A-Z0-9]/g, "") // Character set
+    .replace(/\r/g, "");
+}
+
+// ─── Credential redaction for logs ──────────────────────────────────────
+
+function redactSecrets(text: string): string {
+  let result = text;
+  const secrets = [
+    process.env.THEGRID_API_KEY,
+    process.env.HCLOUD_TOKEN,
+    process.env.DIGITALOCEAN_ACCESS_TOKEN,
+    process.env.DIGITALOCEAN_API_TOKEN,
+    process.env.DO_API_TOKEN,
+    process.env.AWS_ACCESS_KEY_ID,
+    process.env.AWS_SECRET_ACCESS_KEY,
+  ];
+  for (const s of secrets) {
+    if (s && s.length > 8) {
+      result = result.replaceAll(s, "[REDACTED]");
+    }
+  }
+  return result;
+}
+
+// ─── The Grid (OpenAI-compatible chat) — interactive driver only ────────
+
+interface Message {
+  role: "user" | "assistant";
+  content: string;
+}
+
+async function askDriverModel(
+  systemPrompt: string,
+  messages: Message[],
+  maxTokens = 256,
+): Promise<string> {
+  const resp = await fetch(`${GRID_OPENAI_BASE}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${gridApiKey}`,
+    },
+    body: JSON.stringify({
+      model: AI_MODEL,
+      max_tokens: maxTokens,
+      messages: [{ role: "system", content: systemPrompt }, ...messages],
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new Error(`Grid chat API ${resp.status}: ${body.slice(0, 200)}`);
+  }
+
+  const data = (await resp.json()) as {
+    choices?: Array<{ message?: { content?: unknown } }>;
+  };
+  const raw = data?.choices?.[0]?.message?.content;
+  if (typeof raw === "string") {
+    return raw.trim();
+  }
+  if (Array.isArray(raw)) {
+    const text = raw
+      .map((b) =>
+        b && typeof b === "object" && (b as { text?: unknown }).text != null
+          ? String((b as { text: unknown }).text)
+          : "",
+      )
+      .join("");
+    return text.trim();
+  }
+  return "";
+}
+
+// ─── UX review ──────────────────────────────────────────────────────────
+
+interface UxIssue {
+  issue: string;
+  example: string;
+  suggestion: string;
+}
+
+const UX_REVIEW_SYSTEM = `You are a senior UX reviewer for a CLI tool called "agentsea" that provisions cloud VMs with AI agents. \
+A user ran "agentsea <agent> <cloud>" and the full terminal session was captured.
+
+Your job is to find the WORST UX problems only — the kind that would make a real user confused, frustrated, \
+or lose trust. Most sessions will be fine. Return an empty array unless something is genuinely bad.
+
+Only flag if ALL of these are true:
+1. It would confuse or frustrate a non-technical user (not just a developer)
+2. You can quote a specific verbatim example from the transcript
+3. You have a concrete fix, not just "make it clearer"
+
+Strong signals (worth flagging):
+- Exact same message repeated 3+ times with no new information
+- Raw stack traces, JSON blobs, or internal paths shown to the user
+- An error with no hint of what to do next
+- A spinner or wait that lasts 60+ seconds with zero feedback
+
+Weak signals (do NOT flag):
+- Slightly long messages that are still readable
+- Technical terms that developers expect
+- Minor formatting preferences
+- Anything that "could be better" but isn't actively harmful
+
+Be conservative. A run with 0 findings is a GOOD outcome, not a failure.
+
+Return ONLY a JSON array of objects with these fields:
+  "issue"      — one-sentence description of the UX problem
+  "example"    — verbatim excerpt from the transcript that demonstrates it (≤120 chars)
+  "suggestion" — concrete fix in one sentence
+
+If nothing is genuinely bad, return: []
+No markdown, no explanation — just the JSON array.`;
+
+async function reviewTranscriptForUX(transcript: string): Promise<UxIssue[]> {
+  process.stderr.write("[harness] Reviewing transcript for UX issues...\n");
+
+  try {
+    const text = await askDriverModel(
+      UX_REVIEW_SYSTEM,
+      [
+        {
+          role: "user",
+          content: `Terminal session transcript:\n\n${transcript.slice(-8000)}`,
+        },
+      ],
+      1024,
+    ).catch(() => "");
+
+    if (!text) return [];
+
+    // Strip markdown code fences if present
+    const json = text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+    const parsed = JSON.parse(json) as unknown;
+    if (!Array.isArray(parsed)) return [];
+
+    const issues = parsed.filter(
+      (item): item is UxIssue =>
+        typeof item === "object" &&
+        item !== null &&
+        typeof (item as Record<string, unknown>).issue === "string" &&
+        typeof (item as Record<string, unknown>).example === "string" &&
+        typeof (item as Record<string, unknown>).suggestion === "string",
+    );
+
+    process.stderr.write(`[harness] UX review: ${issues.length} issue(s) found\n`);
+    return issues;
+  } catch (err) {
+    process.stderr.write(`[harness] UX review error: ${err}\n`);
+    return [];
+  }
+}
+
+// ─── Input parsing ──────────────────────────────────────────────────────
+
+function parseInput(response: string): Uint8Array | null {
+  const trimmed = response.trim();
+
+  if (trimmed === "<wait>") return null;
+  if (trimmed === "<done>") return null;
+  if (trimmed === "<ctrl-c>") return new Uint8Array([3]); // ETX
+  if (trimmed === "<enter>") return new Uint8Array([10]); // LF
+  if (trimmed === "<up>") return new TextEncoder().encode("\x1B[A");
+  if (trimmed === "<down>") return new TextEncoder().encode("\x1B[B");
+
+  // Plain text → type it + Enter
+  return new TextEncoder().encode(trimmed + "\n");
+}
+
+// ─── System prompt ──────────────────────────────────────────────────────
+
+function buildSystemPrompt(): string {
+  return `You are an automated QA tester driving the "agentsea" CLI through a terminal.
+Your job is to respond to prompts exactly like a human user would.
+
+CREDENTIALS (paste these EXACTLY when asked):
+${buildCredentialHints()}
+
+RULES:
+1. When asked for a token/key/credential, paste the EXACT value from above
+2. When asked to confirm (Y/n), respond with "y"
+3. When asked for a name with a default shown in [brackets], press Enter to accept
+4. When shown a selection menu (with arrows/highlights), press Enter to accept the default
+5. If you see "Try again? (Y/n)" or similar retry prompts, respond with "y"
+6. When you see "Starting agent..." or "setup completed successfully", respond with <done>
+7. If something is clearly broken and unrecoverable, respond with <fail:reason>
+8. If the terminal is still loading/processing, respond with <wait>
+
+RESPONSE FORMAT — reply with ONLY one of these:
+- The exact text to type (will be followed by Enter automatically)
+- <enter>     — press Enter (accept default)
+- <up>        — arrow up
+- <down>      — arrow down
+- <ctrl-c>    — send Ctrl+C
+- <wait>      — do nothing, wait for more output
+- <done>      — test succeeded (agent is ready)
+- <fail:reason> — test failed (describe why)
+
+IMPORTANT: Reply with ONLY the action. No explanation, no markdown, no quotes.`;
+}
+
+// ─── PTY via script command ─────────────────────────────────────────────
+
+function agentseaPty(command: string): typeof Bun.spawn.prototype {
+  const env = {
+    ...process.env,
+    TERM: "xterm-256color",
+    COLUMNS: "120",
+    LINES: "40",
+  };
+
+  // macOS: script -q /dev/null bash -c "command"
+  // Linux: script -qc "command" /dev/null
+  const args =
+    process.platform === "darwin"
+      ? ["-q", "/dev/null", "bash", "-c", command]
+      : ["-qc", command, "/dev/null"];
+
+  return Bun.spawn(["script", ...args], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+}
+
+// ─── Main ───────────────────────────────────────────────────────────────
+
+async function main(): Promise<void> {
+  const startTime = Date.now();
+  const systemPrompt = buildSystemPrompt();
+  const messages: Message[] = [];
+  let transcript = "";
+  let success = false;
+  let failReason = "";
+
+  // Resolve CLI entry point
+  const repoRoot =
+    process.env.AGENTSEA_CLI_DIR ??
+    new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
+  const cliEntry = `${repoRoot}/packages/cli/src/index.ts`;
+  const command = `bun run ${cliEntry} ${agent} ${cloud}`;
+
+  process.stderr.write(`[harness] Starting: agentsea ${agent} ${cloud}\n`);
+  process.stderr.write(`[harness] Timeout: ${SESSION_TIMEOUT_MS / 1000}s\n`);
+
+  const proc = agentseaPty(command);
+  let buffer = "";
+  let lastDataTime = Date.now();
+  let sessionDone = false;
+
+  // Reader loop — accumulates PTY output
+  const readerDone = (async () => {
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        sessionDone = true;
+        break;
+      }
+      const text = decoder.decode(value, { stream: true });
+      buffer += text;
+      transcript += text;
+      lastDataTime = Date.now();
+      // Echo to stderr (redacted) so CI logs show progress
+      process.stderr.write(redactSecrets(text));
+    }
+  })();
+
+  // AI driver loop
+  let turnCount = 0;
+  const maxTurns = 50; // Safety limit
+
+  while (!sessionDone && turnCount < maxTurns) {
+    // Wait for output to settle
+    await Bun.sleep(500);
+
+    // Check overall timeout
+    if (Date.now() - startTime > SESSION_TIMEOUT_MS) {
+      failReason = "Session timeout";
+      break;
+    }
+
+    // Wait until output has been idle for IDLE_MS
+    if (Date.now() - lastDataTime < IDLE_MS) continue;
+    if (buffer.length === 0) continue;
+
+    const stripped = stripAnsi(buffer);
+
+    // Check for success markers in output.
+    // "Starting agent..." = orchestrate.ts line 539 — provisioning+install done, SSH session starting.
+    // "setup completed successfully" = orchestrate.ts line 537 — same stage.
+    // Deliberately avoid "is ready" alone — too broad (matches "SSH is ready" ~30s in).
+    if (/Starting agent\.\.\.|setup completed successfully/i.test(stripped)) {
+      success = true;
+      break;
+    }
+
+    // Ask the driver model what to type
+    turnCount++;
+    process.stderr.write(
+      `\n[harness] Turn ${turnCount}: asking AI (${stripped.length} chars of output)\n`,
+    );
+
+    messages.push({
+      role: "user",
+      content: `Terminal output:\n${stripped}`,
+    });
+
+    let response: string;
+    const aiResult = await askDriverModel(systemPrompt, messages).catch(
+      (err: Error) => {
+        process.stderr.write(`[harness] AI error: ${err.message}\n`);
+        return "<wait>";
+      },
+    );
+    response = aiResult;
+
+    messages.push({ role: "assistant", content: response });
+    process.stderr.write(
+      `[harness] AI response: ${redactSecrets(response)}\n`,
+    );
+
+    // Clear buffer for next round
+    buffer = "";
+
+    // Handle AI response
+    if (response === "<done>") {
+      success = true;
+      break;
+    }
+    if (response.startsWith("<fail:")) {
+      failReason = response.slice(6, -1) || "AI reported failure";
+      break;
+    }
+    if (response === "<wait>") {
+      continue;
+    }
+
+    const input = parseInput(response);
+    if (input) {
+      proc.stdin.write(input);
+      proc.stdin.flush();
+    }
+  }
+
+  if (turnCount >= maxTurns) {
+    failReason = "Exceeded max turns";
+  }
+
+  // Clean exit: send Ctrl+C then wait briefly
+  proc.stdin.write(new Uint8Array([3]));
+  proc.stdin.flush();
+  await Bun.sleep(2000);
+  proc.kill();
+  await readerDone.catch(() => {});
+
+  const duration = Math.round((Date.now() - startTime) / 1000);
+
+  const cleanTranscript = redactSecrets(stripAnsi(transcript));
+
+  // Run UX review on successful provisions (skip on timeout/failure — transcript may be incomplete)
+  const uxIssues = success ? await reviewTranscriptForUX(cleanTranscript) : [];
+
+  // Output result as JSON to stdout
+  const result = {
+    success,
+    duration,
+    turns: turnCount,
+    failReason: failReason || undefined,
+    transcript: cleanTranscript.slice(-5000), // Last 5KB
+    uxIssues: uxIssues.length > 0 ? uxIssues : undefined,
+  };
+
+  process.stdout.write(JSON.stringify(result) + "\n");
+
+  if (success) {
+    process.stderr.write(
+      `\n[harness] SUCCESS in ${duration}s (${turnCount} turns)\n`,
+    );
+  } else {
+    process.stderr.write(
+      `\n[harness] FAILED in ${duration}s: ${failReason || "unknown"}\n`,
+    );
+  }
+
+  process.exit(success ? 0 : 1);
+}
+
+main().catch((err) => {
+  process.stderr.write(`[harness] Fatal: ${err}\n`);
+  process.stdout.write(
+    JSON.stringify({ success: false, duration: 0, turns: 0, failReason: String(err) }) + "\n",
+  );
+  process.exit(1);
+});

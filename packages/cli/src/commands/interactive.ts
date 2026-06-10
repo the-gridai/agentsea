@@ -10,7 +10,7 @@ import { asyncTryCatch, tryCatch, unwrapOr } from "../shared/result.js";
 import { maybeShowStarPrompt } from "../shared/star-prompt.js";
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
 import { captureEvent, setTelemetryContext } from "../shared/telemetry.js";
-import { validateModelId, CLACK_LOG_OPTS } from "../shared/ui.js";
+import { defaultAgentseaLabel, logError, validateModelId, CLACK_LOG_OPTS } from "../shared/ui.js";
 import { cmdLink } from "./link.js";
 import { activeServerPicker } from "./list.js";
 import { execScript, showDryRunPreview } from "./run.js";
@@ -55,7 +55,7 @@ function getAndValidateCloudChoices(
   const clouds = getImplementedClouds(manifest, agent);
 
   if (clouds.length === 0) {
-    p.log.error(`No clouds available for ${manifest.agents[agent].name}`);
+    logError(`No clouds available for ${manifest.agents[agent].name}`);
     p.log.info("This agent has no implemented cloud providers yet.");
     p.log.info(`Run ${pc.cyan(`${AGENTSEA_CLI} matrix`)} to see the full availability matrix.`);
     process.exit(1);
@@ -138,13 +138,13 @@ async function selectCloud(
 // Prompt user to enter a display name for the agentsea instance.
 // Any string is allowed (spaces, uppercase, etc.) — the shell scripts
 // derive a kebab-case slug for the actual cloud resource name.
-async function promptAgentseaName(): Promise<string | undefined> {
+async function promptAgentseaName(agentSlug: string): Promise<string | undefined> {
   // If AGENTSEA_NAME is set (e.g. via --name flag), use it without prompting
   if (process.env.AGENTSEA_NAME) {
     return process.env.AGENTSEA_NAME;
   }
 
-  const defaultName = "agentsea";
+  const defaultName = defaultAgentseaLabel(agentSlug);
   const agentseaName = await p.text({
     message: "Name your agentsea",
     placeholder: defaultName,
@@ -345,6 +345,7 @@ export async function cmdInteractive(): Promise<void> {
     agent: agentChoice,
   });
   setTelemetryContext("agent", agentChoice);
+  process.env.AGENTSEA_AGENT_SLUG = agentChoice;
 
   const { clouds, hintOverrides } = getAndValidateCloudChoices(manifest, agentChoice);
   captureEvent("cloud_picker_shown");
@@ -386,7 +387,7 @@ export async function cmdInteractive(): Promise<void> {
   await maybePromptSkills(manifest, agentChoice);
 
   captureEvent("name_prompt_shown");
-  const agentseaName = await promptAgentseaName();
+  const agentseaName = await promptAgentseaName(agentChoice);
   // promptAgentseaName cancels via handleCancel() on its own path if the user
   // bails; if we reach this line the name was entered successfully.
   captureEvent("name_entered");
@@ -430,7 +431,7 @@ export async function cmdAgentInteractive(agent: string, prompt?: string, dryRun
       raw: agent,
     });
     const agentMatch = findClosestKeyByNameOrKey(agent, agentKeys(manifest), (k) => manifest.agents[k].name);
-    p.log.error(`Unknown agent: ${pc.bold(agent)}`);
+    logError(`Unknown agent: ${pc.bold(agent)}`);
     if (agentMatch) {
       p.log.info(`Did you mean ${pc.cyan(agentMatch)} (${manifest.agents[agentMatch].name})?`);
     }
@@ -443,6 +444,7 @@ export async function cmdAgentInteractive(agent: string, prompt?: string, dryRun
     agent: resolvedAgent,
   });
   setTelemetryContext("agent", resolvedAgent);
+  process.env.AGENTSEA_AGENT_SLUG = resolvedAgent;
 
   const { clouds, hintOverrides } = getAndValidateCloudChoices(manifest, resolvedAgent);
   captureEvent("cloud_picker_shown");
@@ -486,7 +488,7 @@ export async function cmdAgentInteractive(agent: string, prompt?: string, dryRun
   }
 
   captureEvent("name_prompt_shown");
-  const agentseaName = await promptAgentseaName();
+  const agentseaName = await promptAgentseaName(resolvedAgent);
   captureEvent("name_entered");
 
   const agentName = manifest.agents[resolvedAgent].name;

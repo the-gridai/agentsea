@@ -3,13 +3,20 @@
 #
 # Usage:
 #   curl -fsSL --proto '=https' https://spawn.thegrid.ai/cli/install.sh | bash
+#   curl -fsSL --proto '=https' https://spawn.thegrid.ai/cli/install.sh | bash -s -- openclaw digitalocean
 #
 # This installs agentsea via bun. If bun is not available, it auto-installs it first.
+# With agent and cloud arguments, installs then runs `agentsea <agent> <cloud>` interactively.
 #
 # Override install directory:
 #   AGENTSEA_INSTALL_DIR=/usr/local/bin curl -fsSL --proto '=https' ... | bash
 
 set -eo pipefail
+
+# Optional launch target when invoked as: curl ... | bash -s -- <agent> <cloud>
+AGENTSEA_LAUNCH_AGENT="${1:-}"
+AGENTSEA_LAUNCH_CLOUD="${2:-}"
+INSTALL_DIR=""
 
 AGENTSEA_REPO="Spectral-Finance/agentsea"
 # Origin this installer + the agentsea CLI fetch scripts from. Per-environment
@@ -279,11 +286,49 @@ ensure_in_path() {
     if [ "$all_ready" = true ]; then
         printf '%b[agentsea]%b Run %bagentsea%b to get started\n' "$GREEN" "$NC" "$BOLD" "$NC"
     else
-        printf '%b[agentsea]%b To start using agentsea, run:\n' "$GREEN" "$NC"
+        printf '%b[agentsea]%b Add agentsea to your PATH for this session:\n' "$GREEN" "$NC"
         echo ""
-        echo "    exec \$SHELL"
+        echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+        echo ""
+        echo "  Or reopen your terminal if ~/.bashrc / ~/.zshrc was updated."
         echo ""
     fi
+}
+
+# --- Helper: validate agent/cloud slugs before auto-launch ---
+validate_launch_slug() {
+    local label="$1"
+    local value="$2"
+    if ! [[ "$value" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+        log_error "Invalid ${label}: ${value}"
+        echo "Use lowercase letters, digits, and hyphens only (e.g. hermes, local)."
+        exit 1
+    fi
+}
+
+launch_agentsea_if_requested() {
+    if [ -z "${AGENTSEA_LAUNCH_AGENT}" ] && [ -z "${AGENTSEA_LAUNCH_CLOUD}" ]; then
+        return 0
+    fi
+    if [ -z "${AGENTSEA_LAUNCH_AGENT}" ] || [ -z "${AGENTSEA_LAUNCH_CLOUD}" ]; then
+        log_error "Both agent and cloud are required to auto-launch after install"
+        echo "Example: curl -fsSL .../install.sh | bash -s -- hermes local"
+        exit 1
+    fi
+    validate_launch_slug "agent" "${AGENTSEA_LAUNCH_AGENT}"
+    validate_launch_slug "cloud" "${AGENTSEA_LAUNCH_CLOUD}"
+
+    local bin="${INSTALL_DIR}/agentsea"
+    if [ ! -x "$bin" ]; then
+        log_error "agentsea binary not found at ${bin}"
+        exit 1
+    fi
+
+    echo ""
+    log_step "Install complete — starting agentsea ${AGENTSEA_LAUNCH_AGENT} ${AGENTSEA_LAUNCH_CLOUD}..."
+    echo ""
+    export PATH="${INSTALL_DIR}:${BUN_INSTALL}/bin:${HOME}/.local/bin:/usr/local/bin:${PATH}"
+    AGENTSEA_NO_UPDATE_CHECK=1 exec "${bin}" "${AGENTSEA_LAUNCH_AGENT}" "${AGENTSEA_LAUNCH_CLOUD}"
 }
 
 # --- Helper: build and install the CLI using bun ---
@@ -385,8 +430,7 @@ build_and_install
 # AGENTSEA_CDN exported. The CLI reads this file (env var still takes precedence).
 _cdn_dir="${AGENTSEA_HOME:-${HOME}/.config/agentsea}"
 if mkdir -p "${_cdn_dir}" 2>/dev/null; then
-    printf '%s\n' "${AGENTSEA_CDN}" > "${_cdn_dir}/cdn-origin" 2>/dev/null \
-        && log_info "Pinned CDN origin: ${AGENTSEA_CDN}"
+    printf '%s\n' "${AGENTSEA_CDN}" > "${_cdn_dir}/cdn-origin" 2>/dev/null || true
 fi
 
 # Persist install referrer (e.g. AGENTSEA_REF=reddit) so the CLI can report
@@ -404,3 +448,5 @@ if [ -n "${AGENTSEA_REF:-}" ]; then
         fi
     fi
 fi
+
+launch_agentsea_if_requested

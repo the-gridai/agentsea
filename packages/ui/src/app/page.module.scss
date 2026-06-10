@@ -73,11 +73,51 @@
 }
 
 .sectionHead {
-  @include flex(center, flex-start);
+  @include flex(center, space-between);
+  flex-wrap: wrap;
   gap: pad(3);
   padding-bottom: pad(4);
   margin-bottom: pad(8);
   border-bottom: 2px solid c(stroke-2);
+}
+
+.sectionHead__lead {
+  @include flex(center, flex-start);
+  gap: pad(3);
+  min-width: 0;
+}
+
+.sectionHead__sort {
+  @include flex(center, flex-end);
+  gap: pad(2);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.sectionHead__sortLabel {
+  @include text(text-xs);
+  @include font(600);
+  color: c(text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.sectionHead__sortSelect {
+  box-sizing: border-box;
+  padding: pad(2) pad(3);
+  border-radius: br(m);
+  border: 1px solid c(stroke-2);
+  background: c(base-1);
+  color: c(text-1);
+  @include text(text-s);
+  @include font(500);
+  cursor: pointer;
+
+  &:focus {
+    outline: 2px solid color-mix(in srgb, rgb(var(--text-highlight)) 65%, transparent);
+    outline-offset: 1px;
+  }
 }
 
 .sectionHead__index {

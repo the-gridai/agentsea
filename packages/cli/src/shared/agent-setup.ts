@@ -10,7 +10,24 @@ import { getErrorMessage } from "@agentsea/sdk";
 import { getCdnOrigin } from "./cdn.js";
 import { setupCursorProxy, startCursorProxy } from "./cursor-proxy.js";
 import { gridInferenceOverrideEnvLine, resolveGridAnthropicMessagesClientBase, resolveGridInferenceApiBase, resolveGridOpenClawMessagesBase } from "./grid-api.js";
-import { JUNIE_LAUNCH_SHELL_PREFIX, setupJunieConfig, startJunieLiteLlmProxy } from "./junie-config.js";
+import {
+  defaultGridModelForAgent,
+  resolveGridInstrumentModelSpec,
+  resolveHarnessGridInstruments,
+  type HarnessGridInstruments,
+} from "./grid-instruments.js";
+import { ensureHermesDashboard } from "./hermes-dashboard.js";
+import {
+  cursorHeadlessPrompt,
+  hermesHeadlessPrompt,
+  junieHeadlessPrompt,
+  kilocodeHeadlessPrompt,
+  openclawHeadlessPrompt,
+  opencodeHeadlessPrompt,
+  OPENCODE_LAUNCH_SHELL_PREFIX,
+  piHeadlessPrompt,
+} from "./headless-prompts.js";
+import { JUNIE_LAUNCH_SHELL_PREFIX, setupJunieConfig, startJunieGridChatProxy } from "./junie-config.js";
 import { setupT3Settings, T3_LAUNCH_CMD } from "./t3-config.js";
 import { getTmpDir } from "./paths.js";
 import { asyncTryCatch, asyncTryCatchIf, isOperationalError, tryCatchIf } from "./result.js";
@@ -19,6 +36,7 @@ import { isAgentseaVerbose } from "./verbosity.js";
 import {
   Err,
   jsonEscape,
+  formatProvisionElapsed,
   logAlwaysStep,
   logError,
   logInfo,
@@ -26,18 +44,19 @@ import {
   logWarn,
   Ok,
   prompt,
+  runWithSpinner,
   shellQuote,
   validateModelId,
   withRetry,
 } from "./ui.js";
 import {
+  CODEX_CLI_GRID_PINNED_VERSION,
   GRID_INFERENCE_DEFAULT_MODEL_ID,
-  OPENCLAW_GRID_MODEL_CONTEXT_WINDOW,
+  KILO_GRID_PROVIDER_ID,
   OPENCLAW_GRID_MODEL_MAX_TOKENS,
   OPENCLAW_GRID_PROVIDER_ID,
   VENDOR_CHAT_MODEL_DEFAULT,
   VENDOR_CODEX_MODEL_PROVIDER_KEY,
-  VENDOR_KILO_PROVIDER_TYPE_VALUE,
 } from "./vendor-routing.js";
 
 /** Optional `THEGRID_API_URL=…` for ~/.agentsearc when a local override is active. */
@@ -45,191 +64,6 @@ function agentsearcGridInferenceExtras(): string[] {
   const line = gridInferenceOverrideEnvLine();
   return line ? [line] : [];
 }
-
-const CODEX_LITELLM_PORT = 4141;
-const CODEX_LITELLM_BASE_URL = `http://127.0.0.1:${CODEX_LITELLM_PORT}/v1`;
-
-/** Hermes custom provider cannot follow api.thegrid.ai → synapse 307 redirects; use a local proxy like Codex. */
-const HERMES_LITELLM_PORT = 4142;
-const HERMES_LITELLM_BASE_URL = `http://127.0.0.1:${HERMES_LITELLM_PORT}/v1`;
-
-/**
- * Remote shell: ensure ~/.litellm-venv has litellm[proxy]. Shared by Codex,
- * Hermes, Junie.
- *
- * sudo/apt is the last resort, not the default: on a fresh VM image we may need
- * `apt-get install python3-venv`, but most machines (and all repeat runs)
- * already have a working `python3 -m venv`. We therefore only invoke apt/sudo
- * when `python3` genuinely cannot create a venv — which keeps local runs
- * non-interactive (no sudo password prompt) and avoids touching the apt index
- * (and its unrelated third-party-repo GPG warnings) when nothing is needed.
- */
-export const LITELLM_VENV_SETUP = [
-  '_sudo=""; [ "$(id -u)" != "0" ] && _sudo="sudo"',
-  // Only reach for apt/sudo if Python can't stand up a venv (incl. ensurepip)
-  // on its own. This is the only step that needs root, so guarding it is what
-  // removes the sudo prompt on typical local machines.
-  'if ! python3 -c "import venv, ensurepip" >/dev/null 2>&1; then',
-  "  if command -v apt-get >/dev/null 2>&1; then",
-  '    command -v python3 >/dev/null 2>&1 || { $_sudo apt-get update -qq && $_sudo apt-get install -y -qq python3 || exit 1; }',
-  "    $_sudo apt-get update -qq || true",
-  '    _py_ver=$(python3 -c "import sys; print(f\\"{sys.version_info.major}.{sys.version_info.minor}\\")" 2>/dev/null || echo "3")',
-  '    if apt-cache show "python${_py_ver}-venv" >/dev/null 2>&1; then',
-  '      $_sudo apt-get install -y "python${_py_ver}-venv" || exit 1',
-  "    elif apt-cache show python3-venv >/dev/null 2>&1; then",
-  "      $_sudo apt-get install -y python3-venv || exit 1",
-  "    else",
-  '      echo "No python3-venv package available via apt" >&2; exit 1',
-  "    fi",
-  "  else",
-  '    echo "python3 cannot create a venv and apt-get is unavailable" >&2; exit 1',
-  "  fi",
-  "fi",
-  'if [ -d "$HOME/.litellm-venv" ] && [ ! -x "$HOME/.litellm-venv/bin/litellm" ]; then rm -rf "$HOME/.litellm-venv"; fi',
-  'if [ ! -x "$HOME/.litellm-venv/bin/litellm" ]; then',
-  '  rm -rf "$HOME/.litellm-venv"',
-  '  python3 -m venv "$HOME/.litellm-venv" || { echo "python3 -m venv failed" >&2; exit 1; }',
-  '  "$HOME/.litellm-venv/bin/pip" install -q --upgrade pip',
-  "fi",
-  // pip runs inside the user-owned venv (no sudo); keeps litellm at >=1.85.0.
-  '"$HOME/.litellm-venv/bin/pip" install -q --upgrade "litellm[proxy]>=1.85.0" || exit 1',
-  'mkdir -p "$HOME/.local/bin"',
-  'ln -sf "$HOME/.litellm-venv/bin/litellm" "$HOME/.local/bin/litellm"',
-].join("\n");
-
-/** True when Codex LiteLLM proxy responds on localhost (health endpoint). */
-const CODEX_LITELLM_HEALTH_CHECK = `curl -sf "http://127.0.0.1:${CODEX_LITELLM_PORT}/health/liveliness" >/dev/null 2>&1`;
-
-/** True when Hermes LiteLLM proxy responds on localhost (health endpoint). */
-const HERMES_LITELLM_HEALTH_CHECK = `curl -sf "http://127.0.0.1:${HERMES_LITELLM_PORT}/health/liveliness" >/dev/null 2>&1`;
-
-/** Strips empty tools=[], reasoning params, and json_schema (Grid supports json_object only). */
-const CODEX_LITELLM_CALLBACKS_PY = `from litellm.integrations.custom_logger import CustomLogger
-import json
-
-class DropEmptyToolsHandler(CustomLogger):
-    def _append_user_text(self, data: dict, suffix: str) -> None:
-        if not suffix:
-            return
-        if isinstance(data.get("input"), str):
-            data["input"] = data["input"] + suffix
-            return
-        messages = data.get("messages")
-        if not isinstance(messages, list):
-            return
-        for msg in reversed(messages):
-            if isinstance(msg, dict) and msg.get("role") == "user":
-                content = msg.get("content")
-                if isinstance(content, str):
-                    msg["content"] = content + suffix
-                elif isinstance(content, list):
-                    msg["content"] = content + [{"type": "text", "text": suffix}]
-                else:
-                    msg["content"] = suffix
-                return
-
-    def _schema_hint(self, schema) -> str:
-        if not schema:
-            return " Respond with a single JSON object."
-        try:
-            encoded = json.dumps(schema, separators=(",", ":"))
-        except Exception:
-            encoded = str(schema)
-        return f" Respond with JSON matching this schema: {encoded}."
-
-    def _downgrade_json_schema(self, data: dict) -> dict:
-        text = data.get("text")
-        structured = False
-        if isinstance(text, dict):
-            fmt = text.get("format")
-            if isinstance(fmt, dict) and fmt.get("type") == "json_schema":
-                structured = True
-                self._append_user_text(data, self._schema_hint(fmt.get("schema")))
-                text["format"] = {"type": "json_object"}
-            elif isinstance(fmt, dict) and fmt.get("type") == "json_object":
-                structured = True
-            text.pop("verbosity", None)
-
-        response_format = data.get("response_format")
-        if isinstance(response_format, dict) and response_format.get("type") == "json_schema":
-            structured = True
-            schema = response_format.get("schema")
-            nested = response_format.get("json_schema")
-            if schema is None and isinstance(nested, dict):
-                schema = nested.get("schema")
-            self._append_user_text(data, self._schema_hint(schema))
-            data["response_format"] = {"type": "json_object"}
-        elif isinstance(response_format, dict) and response_format.get("type") == "json_object":
-            structured = True
-
-        # codex exec --output-schema sends tool definitions that break Grid structured output.
-        if structured:
-            data.pop("tools", None)
-            data.pop("tool_choice", None)
-            data["parallel_tool_calls"] = False
-            instructions = data.get("instructions")
-            if isinstance(instructions, str) and len(instructions) > 500:
-                data["instructions"] = (
-                    "Return only JSON matching the requested schema. No tools, no prose."
-                )
-        return data
-
-    def _normalize_upstream_request(self, data: dict) -> dict:
-        if not isinstance(data, dict):
-            return data
-        if data.get("tools") == []:
-            data.pop("tools", None)
-        if "tools" not in data and data.get("tool_choice") in ("none", "auto"):
-            data.pop("tool_choice", None)
-        # T3 Code sends reasoning_effort=medium with gpt-5.4; The Grid hangs or returns empty content.
-        data.pop("reasoning_effort", None)
-        reasoning = data.get("reasoning")
-        if isinstance(reasoning, dict):
-            reasoning.pop("effort", None)
-            reasoning.pop("summary", None)
-            if not reasoning:
-                data.pop("reasoning", None)
-        return self._downgrade_json_schema(data)
-
-    def _message_reasoning(self, msg) -> str | None:
-        reasoning = getattr(msg, "reasoning_content", None)
-        if reasoning:
-            return reasoning
-        fields = getattr(msg, "provider_specific_fields", None)
-        if isinstance(fields, dict):
-            nested = fields.get("reasoning_content")
-            if nested:
-                return nested
-        return None
-
-    def _normalize_upstream_response(self, response):
-        try:
-            choices = getattr(response, "choices", None)
-            if not choices:
-                return response
-            for choice in choices:
-                msg = getattr(choice, "message", None)
-                if msg is None:
-                    continue
-                content = getattr(msg, "content", None)
-                reasoning = self._message_reasoning(msg)
-                if (content is None or content == "") and reasoning:
-                    msg.content = reasoning
-        except Exception:
-            pass
-        return response
-
-    async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
-        return self._normalize_upstream_request(data)
-
-    async def async_pre_call_deployment_hook(self, kwargs, call_type):
-        return self._normalize_upstream_request(kwargs)
-
-    async def async_post_call_success_hook(self, data, user_api_key_dict, response):
-        return self._normalize_upstream_response(response)
-
-proxy_handler_instance = DropEmptyToolsHandler()
-`;
 
 /**
  * Base URL for Anthropic SDK / Claude Code (`ANTHROPIC_BASE_URL`). The SDK appends `/v1/messages`.
@@ -268,7 +102,7 @@ export interface CloudRunner {
   uploadFile(localPath: string, remotePath: string): Promise<void>;
   downloadFile(remotePath: string, localPath: string): Promise<void>;
   /**
-   * Start a long-lived background service (e.g. a LiteLLM proxy) and return once
+   * Start a long-lived background service (e.g. a local grid-chat-proxy) and return once
    * it has been launched — NOT when it exits.
    *
    * Local mode only. On a VM, long-lived proxies are supervised by systemd (or a
@@ -281,7 +115,7 @@ export interface CloudRunner {
    * as a process detached from the ephemeral command shell (its own session,
    * stdio redirected to `logPath`) so it survives for the CLI session.
    *
-   * @param cmd      Shell command that execs the service (e.g. `exec "$HOME/.local/bin/hermes-litellm-wrapper"`).
+   * @param cmd      Shell command that execs the service (e.g. `exec "$HOME/.local/bin/junie-grid-chat-proxy"`).
    * @param logPath  Absolute path to append the service's stdout/stderr to.
    */
   startService?(cmd: string, logPath: string): Promise<void>;
@@ -310,21 +144,61 @@ export function validateScriptTemplate(script: string, label: string): void {
 
 // ─── Install helpers ────────────────────────────────────────────────────────
 
+function installProgressDetail(agentName: string, elapsedSec: number): string {
+  if (elapsedSec < 15) {
+    return "contacting server";
+  }
+  if (elapsedSec < 45) {
+    return "downloading packages";
+  }
+  if (elapsedSec < 120) {
+    return "installing dependencies";
+  }
+  if (agentName === "Hermes Agent") {
+    return "building Python environment (can take several minutes)";
+  }
+  return "still working — large installs are normal";
+}
+
 async function installAgent(
   runner: CloudRunner,
   agentName: string,
   installCmd: string,
   timeoutSecs?: number,
 ): Promise<void> {
+  const label = `Installing ${agentName}…`;
+
+  const runInstall = () =>
+    withRetry(`${agentName} install`, () => wrapSshCall(runner.runServer(installCmd, timeoutSecs)), 4, 10, true);
+
   if (isAgentseaVerbose()) {
     logStep(`Installing ${agentName}...`);
-  } else {
-    logAlwaysStep(`Installing ${agentName}…`);
+    const r = await asyncTryCatch(runInstall);
+    if (!r.ok) {
+      logError(`${agentName} installation failed`);
+      throw new Error(`${agentName} install failed`);
+    }
+    logInfo(`${agentName} installation completed`);
+    return;
   }
-  const r = await asyncTryCatch(() =>
-    withRetry(`${agentName} install`, () => wrapSshCall(runner.runServer(installCmd, timeoutSecs)), 4, 10, true),
-  );
-  if (!r.ok) {
+
+  try {
+    await runWithSpinner(
+      label,
+      async (handle) => {
+        handle.setDetail("starting");
+        return runInstall();
+      },
+      {
+        doneMessage: `${agentName} installed`,
+        formatMessage: ({ base, detail, elapsedSec }) => {
+          const phase = detail === "starting" ? installProgressDetail(agentName, elapsedSec) : detail;
+          const elapsed = formatProvisionElapsed(elapsedSec);
+          return `${base} — ${phase} (${elapsed})`;
+        },
+      },
+    );
+  } catch {
     logError(`${agentName} installation failed`);
     throw new Error(`${agentName} install failed`);
   }
@@ -577,55 +451,15 @@ export async function offerGithubAuth(runner: CloudRunner, explicitlyRequested?:
 
 // ─── Codex CLI Config ────────────────────────────────────────────────────────
 
-/** T3 Code hardcodes OpenAI model slugs when invoking `codex exec`; alias them to the Grid catalogue id. */
-const T3_CODEX_HARDCODED_MODELS = [
-  "gpt-5.4-mini",
-  "gpt-5.4",
-  "gpt-5.3-codex",
-  "gpt-5.3-codex-spark",
-] as const;
-
-function buildCodexLiteLlmYaml(
-  model: string,
-  upstreamModel: string,
-  extraModelNames?: readonly string[],
-): string {
-  const inferenceBase = resolveGridInferenceApiBase();
-  const modelNames = [model, ...(extraModelNames ?? [])];
-  const modelList = modelNames
-    .map(
-      (modelName) => `  - model_name: "${modelName}"
-    litellm_params:
-      model: "${upstreamModel}"
-      api_base: "${inferenceBase}"
-      api_key: "os.environ/THEGRID_API_KEY"
-      use_chat_completions_api: true
-      drop_params: true`,
-    )
-    .join("\n");
-
-  return `model_list:
-${modelList}
-
-litellm_settings:
-  drop_params: true
-  callbacks: codex_litellm_callbacks.proxy_handler_instance
-`;
-}
-
-async function setupCodexConfig(
-  runner: CloudRunner,
-  modelId?: string,
-  extraModelNames?: readonly string[],
-): Promise<void> {
+async function setupCodexConfig(runner: CloudRunner, modelId?: string): Promise<void> {
   logStep("Configuring Codex CLI for The Grid (OpenAI-compatible)...");
-  const slot = VENDOR_CODEX_MODEL_PROVIDER_KEY;
   const model = normalizeGridCatalogModelId(
     typeof modelId === "string" && modelId.trim() && validateModelId(modelId.trim())
       ? modelId.trim()
       : VENDOR_CHAT_MODEL_DEFAULT,
   );
-  const upstreamModel = model.includes("/") ? model : `openai/${model}`;
+  const inferenceBase = resolveGridInferenceApiBase();
+  const slot = VENDOR_CODEX_MODEL_PROVIDER_KEY;
   const config = `model = "${model}"
 model_provider = "${slot}"
 sandbox_mode = "danger-full-access"
@@ -633,142 +467,18 @@ model_reasoning_effort = "none"
 
 [model_providers.${slot}]
 name = "The Grid"
-base_url = "${CODEX_LITELLM_BASE_URL}"
+base_url = "${inferenceBase}"
 env_key = "OPENAI_API_KEY"
-wire_api = "responses"
+wire_api = "chat"
 `;
   await uploadConfigFile(runner, config, "$HOME/.codex/config.toml");
-
-  const litellmConfig = buildCodexLiteLlmYaml(model, upstreamModel, extraModelNames);
-  await uploadConfigFile(runner, litellmConfig, "$HOME/.codex/litellm.yaml");
-  await uploadConfigFile(runner, CODEX_LITELLM_CALLBACKS_PY, "$HOME/.codex/codex_litellm_callbacks.py");
-
-  logStep("Installing Codex LiteLLM proxy (python3-venv + litellm)...");
-  const venvResult = await asyncTryCatch(() =>
-    runner.runServer(LITELLM_VENV_SETUP, 300),
-  );
-  if (!venvResult.ok) {
-    throw new Error(
-      "Codex LiteLLM install failed — ensure python3-venv is available on the VM (see provisioning logs)",
-    );
-  }
-}
-
-async function startCodexLiteLlmProxy(runner: CloudRunner): Promise<void> {
-  logStep("Starting Codex local responses proxy...");
-
-  const wrapperScript = [
-    "#!/bin/bash",
-    'source "$HOME/.agentsearc" 2>/dev/null',
-    'export PATH="$HOME/.local/bin:$HOME/.litellm-venv/bin:$PATH"',
-    'export PYTHONPATH="$HOME/.codex"',
-    "export THEGRID_API_KEY",
-    `exec "$HOME/.litellm-venv/bin/litellm" --config "$HOME/.codex/litellm.yaml" --host 127.0.0.1 --port ${CODEX_LITELLM_PORT}`,
-  ].join("\n");
-
-  const unitFile = [
-    "[Unit]",
-    "Description=Codex LiteLLM proxy for The Grid",
-    "After=network.target",
-    "",
-    "[Service]",
-    "Type=simple",
-    "ExecStart=/usr/local/bin/codex-litellm-wrapper",
-    "Restart=always",
-    "RestartSec=3",
-    "User=__USER__",
-    "Environment=HOME=__HOME__",
-    "StandardOutput=append:/tmp/codex-litellm.log",
-    "StandardError=append:/tmp/codex-litellm.log",
-    "",
-    "[Install]",
-    "WantedBy=multi-user.target",
-  ].join("\n");
-
-  validateScriptTemplate(wrapperScript, "codex-litellm-wrapper");
-  validateScriptTemplate(unitFile, "codex-litellm-unit");
-
-  const wrapperB64 = Buffer.from(wrapperScript).toString("base64");
-  const unitB64 = Buffer.from(unitFile).toString("base64");
-
-  const checkLines = [
-    "source ~/.agentsearc 2>/dev/null",
-    'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.litellm-venv/bin:$PATH"',
-    'test -n "$THEGRID_API_KEY" || { echo "THEGRID_API_KEY missing from ~/.agentsearc" >&2; exit 1; }',
-    'export THEGRID_API_KEY',
-    'test -s "$HOME/.codex/litellm.yaml" || { echo "Missing ~/.codex/litellm.yaml" >&2; exit 1; }',
-  ];
-  const venvWrapperLines = [
-    LITELLM_VENV_SETUP,
-    'test -x "$HOME/.litellm-venv/bin/litellm" || { echo "litellm binary missing after venv setup" >&2; exit 1; }',
-    "printf '%s' '" + wrapperB64 + "' | base64 -d > /tmp/codex-litellm-wrapper.tmp",
-    "chmod +x /tmp/codex-litellm-wrapper.tmp",
-  ];
-
-  // Local mode: launch detached via runner.startService instead of the
-  // in-shell `setsid … &`, which Bun tears down (see startLiteLlmProxyLocally).
-  if (runner.startService) {
-    await startLiteLlmProxyLocally(runner, {
-      name: "Codex",
-      port: CODEX_LITELLM_PORT,
-      binName: "codex-litellm-wrapper",
-      logPath: "/tmp/codex-litellm.log",
-      healthCheck: CODEX_LITELLM_HEALTH_CHECK,
-      prepLines: [...checkLines, ...venvWrapperLines],
-    });
-    return;
-  }
-
-  const script = [
-    ...checkLines,
-    `if ${CODEX_LITELLM_HEALTH_CHECK}; then echo "Codex proxy already running on :${CODEX_LITELLM_PORT}"; exit 0; fi`,
-    ...venvWrapperLines,
-    "if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then",
-    '  _sudo=""',
-    '  [ "$(id -u)" != "0" ] && _sudo="sudo"',
-    "  $_sudo mv /tmp/codex-litellm-wrapper.tmp /usr/local/bin/codex-litellm-wrapper",
-    "  printf '%s' '" + unitB64 + "' | base64 -d > /tmp/codex-litellm.unit.tmp",
-    '  sed -i "s|__USER__|$(whoami)|;s|__HOME__|$HOME|" /tmp/codex-litellm.unit.tmp',
-    "  $_sudo mv /tmp/codex-litellm.unit.tmp /etc/systemd/system/codex-litellm.service",
-    "  $_sudo systemctl daemon-reload",
-    "  $_sudo systemctl enable codex-litellm 2>/dev/null",
-    "  $_sudo systemctl restart codex-litellm",
-    "else",
-    // No systemd (e.g. macOS local runs): /usr/local/bin is not user-writable
-    // and we have no sudo here, so install the wrapper into the user-owned
-    // ~/.local/bin (already on PATH above) instead.
-    '  mkdir -p "$HOME/.local/bin"',
-    '  mv /tmp/codex-litellm-wrapper.tmp "$HOME/.local/bin/codex-litellm-wrapper"',
-    "  pkill -f '[l]itellm.*4141' 2>/dev/null || true",
-    "  sleep 1",
-    "  if command -v setsid >/dev/null 2>&1; then",
-    '    setsid "$HOME/.local/bin/codex-litellm-wrapper" >> /tmp/codex-litellm.log 2>&1 < /dev/null &',
-    "  else",
-    '    nohup "$HOME/.local/bin/codex-litellm-wrapper" >> /tmp/codex-litellm.log 2>&1 < /dev/null &',
-    "  fi",
-    "fi",
-    "elapsed=0; while [ $elapsed -lt 120 ]; do",
-    `  if ${CODEX_LITELLM_HEALTH_CHECK}; then echo "Codex proxy ready after $elapsed sec"; exit 0; fi`,
-    "  sleep 1; elapsed=$((elapsed + 1))",
-    "done",
-    'echo "Codex proxy failed to start within 120s" >&2',
-    "if command -v systemctl >/dev/null 2>&1; then systemctl status codex-litellm --no-pager 2>/dev/null || true; fi",
-    "tail -60 /tmp/codex-litellm.log 2>/dev/null || true",
-    "exit 1",
-  ].join("\n");
-
-  const result = await asyncTryCatch(() => runner.runServer(script, 300));
-  if (result.ok) {
-    logInfo(`Codex proxy started on :${CODEX_LITELLM_PORT}`);
-    return;
-  }
-  throw new Error(
-    `Codex LiteLLM proxy failed to start on :${CODEX_LITELLM_PORT} — check /tmp/codex-litellm.log on the VM`,
+  logInfo(
+    `Codex CLI configured (model: ${model} → ${inferenceBase}, wire_api=chat, pin @openai/codex@${CODEX_CLI_GRID_PINNED_VERSION})`,
   );
 }
 
 async function setupT3CodeConfig(runner: CloudRunner, modelId?: string): Promise<void> {
-  await setupCodexConfig(runner, modelId, T3_CODEX_HARDCODED_MODELS);
+  await setupCodexConfig(runner, modelId);
   await setupT3Settings(runner, modelId);
 }
 
@@ -853,18 +563,43 @@ function openClawGridPrimaryModel(catalogModelId: string): string {
   return `${OPENCLAW_GRID_PROVIDER_ID}/${catalogModelId}`;
 }
 
+const OPENCLAW_ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+
 function openClawGridProviderModelEntry(catalogModelId: string): {
   id: string;
   name: string;
+  reasoning: boolean;
+  input: readonly string[];
+  cost: typeof OPENCLAW_ZERO_COST;
   contextWindow: number;
   maxTokens: number;
 } {
+  const spec = resolveGridInstrumentModelSpec(catalogModelId);
   return {
     id: catalogModelId,
     name: `The Grid (${catalogModelId})`,
-    contextWindow: OPENCLAW_GRID_MODEL_CONTEXT_WINDOW,
-    maxTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS,
+    reasoning: false,
+    input: [...spec.input],
+    cost: OPENCLAW_ZERO_COST,
+    contextWindow: spec.contextWindow,
+    maxTokens: spec.maxOutputTokens,
   };
+}
+
+function openClawGridProviderModelEntries(catalogModelIds: readonly string[]): ReturnType<typeof openClawGridProviderModelEntry>[] {
+  return catalogModelIds.map((id) => openClawGridProviderModelEntry(id));
+}
+
+function yamlScalar(value: string): string {
+  return /^[a-zA-Z0-9._-]+$/.test(value) ? value : `"${value.replace(/"/g, '\\"')}"`;
+}
+
+function hermesModelCapabilityYamlLines(indent: string, instrumentId: string): string[] {
+  const spec = resolveGridInstrumentModelSpec(instrumentId);
+  return [
+    `${indent}context_length: ${spec.contextWindow}`,
+    `${indent}supports_vision: false`,
+  ];
 }
 
 /**
@@ -874,23 +609,42 @@ function openClawGridProviderModelEntry(catalogModelId: string): {
  */
 async function mergeOpenClawGridInferenceProvider(
   runner: CloudRunner,
-  catalogModelId: string,
+  instruments: HarnessGridInstruments,
   plaintextApiKey: string,
 ): Promise<void> {
-  const ocPrimary = openClawGridPrimaryModel(catalogModelId);
+  const ocPrimary = openClawGridPrimaryModel(instruments.primary);
   const openClawMessagesBase = resolveGridOpenClawMessagesBase();
   const inferLit = JSON.stringify(openClawMessagesBase);
+  const slugsLit = JSON.stringify(instruments.registered);
+  const utilityLit = JSON.stringify(instruments.utility ?? "");
   // OpenSSL-claw validates config by resolving `${THEGRID_API_KEY}` markers; systemd/gateway shells may not
   // export `THEGRID_*` yet. Persist the Grid key inlined (openclaw.json is chmod 600 on the VM).
   const apiKeyLit = JSON.stringify(plaintextApiKey);
+  const modelSpecsLit = JSON.stringify(
+    Object.fromEntries(
+      instruments.registered.map((slug) => {
+        const spec = resolveGridInstrumentModelSpec(slug);
+        return [
+          slug,
+          {
+            contextWindow: spec.contextWindow,
+            maxTokens: spec.maxOutputTokens,
+            input: spec.input,
+          },
+        ];
+      }),
+    ),
+  );
   const mergeScript = [
     "import fs from 'fs';",
     `const apiKeyPlain = ${apiKeyLit};`,
     `const infer = ${inferLit};`,
+    `const slugs = ${slugsLit};`,
+    `const utilitySlug = ${utilityLit};`,
+    `const modelSpecs = ${modelSpecsLit};`,
     "const providerId = process.env.AGENTSEA_GRID_PROVIDER_ID || 'thegrid';",
-    "const slug = process.env.AGENTSEA_GRID_CATALOG_MODEL;",
     "const ocPrimary = process.env.AGENTSEA_GRID_PRIMARY;",
-    "if (!slug || !ocPrimary) { console.error('agentsea grid-merge: missing env'); process.exit(1); }",
+    "if (!slugs.length || !ocPrimary) { console.error('agentsea grid-merge: missing env'); process.exit(1); }",
     "const cfgPath = (process.env.HOME ?? '') + '/.openclaw/openclaw.json';",
     "const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));",
     "cfg.env ||= {};",
@@ -899,13 +653,36 @@ async function mergeOpenClawGridInferenceProvider(
     "cfg.env.OPENAI_API_KEY = apiKeyPlain;",
     "cfg.models ||= {};",
     "cfg.models.mode = 'merge';",
+    "const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };",
+    "const fallbackSpec = { contextWindow: 128000, maxTokens: 8192, input: ['text'] };",
+    "const providerModels = slugs.map((slug) => {",
+    "  const spec = modelSpecs[slug] || fallbackSpec;",
+    "  return {",
+    "    id: slug,",
+    "    name: 'The Grid (' + slug + ')',",
+    "    reasoning: false,",
+    "    input: spec.input || ['text'],",
+    "    cost: zeroCost,",
+    "    contextWindow: spec.contextWindow,",
+    "    maxTokens: spec.maxTokens,",
+    "  };",
+    "});",
     "cfg.models.providers = {",
-    `  [providerId]: { baseUrl: infer, apiKey: apiKeyPlain, api: 'anthropic-messages', models: [{ id: slug, name: 'The Grid (' + slug + ')', contextWindow: ${OPENCLAW_GRID_MODEL_CONTEXT_WINDOW}, maxTokens: ${OPENCLAW_GRID_MODEL_MAX_TOKENS} }] },`,
+    "  [providerId]: { baseUrl: infer, apiKey: apiKeyPlain, api: 'anthropic-messages', models: providerModels },",
     "};",
     "cfg.agents ||= {}; cfg.agents.defaults ||= {}; cfg.agents.defaults.model ||= {};",
     "cfg.agents.defaults.model.primary = ocPrimary;",
     "cfg.agents.defaults.models ||= {};",
-    `cfg.agents.defaults.models[ocPrimary] = { alias: 'The Grid', params: { maxTokens: ${OPENCLAW_GRID_MODEL_MAX_TOKENS} } };`,
+    "for (const slug of slugs) {",
+    "  const key = providerId + '/' + slug;",
+    "  const spec = modelSpecs[slug] || fallbackSpec;",
+    "  cfg.agents.defaults.models[key] = { alias: 'The Grid (' + slug + ')', params: { maxTokens: spec.maxTokens } };",
+    "}",
+    "if (utilitySlug) {",
+    "  cfg.agents.defaults.heartbeat = Object.assign(cfg.agents.defaults.heartbeat || {}, {",
+    "    model: providerId + '/' + utilitySlug,",
+    "  });",
+    "}",
     "fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2)); fs.chmodSync(cfgPath, 0o600);",
   ].join(" ");
 
@@ -913,7 +690,6 @@ async function mergeOpenClawGridInferenceProvider(
   const merged = await asyncTryCatchIf(isOperationalError, () =>
     runner.runServer(
       "source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; " +
-        `export AGENTSEA_GRID_CATALOG_MODEL=${shellQuote(catalogModelId)}; ` +
         `export AGENTSEA_GRID_PRIMARY=${shellQuote(ocPrimary)}; ` +
         `export AGENTSEA_GRID_PROVIDER_ID=${shellQuote(OPENCLAW_GRID_PROVIDER_ID)}; ` +
         `bun -e ${shellQuote(mergeScript)}${qb}`,
@@ -931,7 +707,8 @@ async function setupOpenclawConfig(
   token?: string,
   enabledSteps?: Set<string>,
 ): Promise<void> {
-  const catalogModelId = normalizeGridCatalogModelId(modelId);
+  const instruments = resolveHarnessGridInstruments("openclaw", normalizeGridCatalogModelId(modelId));
+  const catalogModelId = instruments.primary;
 
   logInfo(`OpenClaw configure (${catalogModelId}): Chrome → onboard → Grid merge → prefs.`);
   logStep("Configuring openclaw...");
@@ -993,6 +770,17 @@ async function setupOpenclawConfig(
       logAlwaysStep("Tip: on the droplet, run `tail -80 /tmp/openclaw-onboard.log` for full OpenClaw setup output.");
     }
     const ocPrimary = openClawGridPrimaryModel(catalogModelId);
+    const ocModels = Object.fromEntries(
+      instruments.registered.map((slug) => [
+        openClawGridPrimaryModel(slug),
+        {
+          alias: `The Grid (${slug})`,
+          params: {
+            maxTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS,
+          },
+        },
+      ]),
+    );
     const fallbackConfig = JSON.stringify(
       {
         env: {
@@ -1018,7 +806,7 @@ async function setupOpenclawConfig(
               baseUrl: openClawMessagesBase,
               apiKey,
               api: "anthropic-messages",
-              models: [openClawGridProviderModelEntry(catalogModelId)],
+              models: openClawGridProviderModelEntries(instruments.registered),
             },
           },
         },
@@ -1027,14 +815,14 @@ async function setupOpenclawConfig(
             model: {
               primary: ocPrimary,
             },
-            models: {
-              [ocPrimary]: {
-                alias: "The Grid",
-                params: {
-                  maxTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS,
-                },
-              },
-            },
+            models: ocModels,
+            ...(instruments.utility
+              ? {
+                  heartbeat: {
+                    model: openClawGridPrimaryModel(instruments.utility),
+                  },
+                }
+              : {}),
             sandbox: {
               mode: "off",
             },
@@ -1047,7 +835,7 @@ async function setupOpenclawConfig(
     await uploadConfigFile(runner, fallbackConfig, "$HOME/.openclaw/openclaw.json");
   }
 
-  await mergeOpenClawGridInferenceProvider(runner, catalogModelId, apiKey);
+  await mergeOpenClawGridInferenceProvider(runner, instruments, apiKey);
 
   // Batch all `openclaw config set` calls into ONE exec to reduce Sprite
   // connection overhead. Previously 4 separate exec calls, each triggering a
@@ -1296,62 +1084,94 @@ export async function startGateway(runner: CloudRunner): Promise<void> {
  * Hermes v0.14+ reads model/provider from ~/.hermes/config.yaml (not ~/.agentsearc OPENAI_*).
  * Without this, install defaults to provider:auto → OpenRouter + claude-opus-4.6.
  */
+/** Hermes docs: patch httpx client to follow Grid /v1 → /r/v1 redirects. */
+async function applyHermesRedirectPatch(runner: CloudRunner): Promise<void> {
+  const patchScript = [
+    'RUN_AGENT="$HOME/.hermes/hermes-agent/run_agent.py"',
+    'test -f "$RUN_AGENT" || { echo "Hermes run_agent.py not found — skip redirect patch" >&2; exit 0; }',
+    'grep -q "follow_redirects=True" "$RUN_AGENT" && exit 0',
+    "python3 - <<'PY'",
+    "from pathlib import Path",
+    "import os, re",
+    'p = Path(os.path.expanduser("~/.hermes/hermes-agent/run_agent.py"))',
+    "if not p.is_file():",
+    "    raise SystemExit(0)",
+    "text = p.read_text()",
+    'if "follow_redirects=True" in text:',
+    "    raise SystemExit(0)",
+    'm = re.search(r"(def _build_keepalive_http_client\\b.*?)(return _httpx\\.Client\\()", text, re.DOTALL)',
+    "if m:",
+    '    text = text[: m.start(2)] + "return _httpx.Client(follow_redirects=True, " + text[m.end(2) :]',
+    "else:",
+    '    for needle in ("return _httpx.Client(", "_httpx.Client(", "httpx.Client("):',
+    "        if needle in text:",
+    '            text = text.replace(needle, needle + "follow_redirects=True, ", 1)',
+    "            break",
+    "    else:",
+    '        raise SystemExit("httpx.Client( not found in run_agent.py")',
+    "p.write_text(text)",
+    "print('Patched Hermes run_agent.py for follow_redirects=True')",
+    "PY",
+    '_patch_count=$(grep -c "follow_redirects=True" "$RUN_AGENT" || true)',
+    'if [ "$_patch_count" != "1" ]; then',
+    '  echo "Hermes redirect patch verify failed: grep count=$_patch_count (expected 1)" >&2',
+    "  exit 1",
+    "fi",
+  ].join("\n");
+  const result = await asyncTryCatchIf(isOperationalError, () => runner.runServer(patchScript, 120));
+  if (!result.ok) {
+    logWarn("Could not patch Hermes redirect follower — chat may 307 without follow_redirects");
+  }
+}
+
 async function setupHermesConfig(runner: CloudRunner, apiKey: string, modelId?: string): Promise<void> {
   logStep("Configuring Hermes Agent for The Grid...");
 
-  const selectedModel =
-    typeof modelId === "string" && modelId.trim() && validateModelId(modelId.trim())
-      ? modelId.trim()
-      : GRID_INFERENCE_DEFAULT_MODEL_ID;
-
-  const modelYaml =
-    /^[a-zA-Z0-9._-]+$/.test(selectedModel) ? selectedModel : `"${selectedModel.replace(/"/g, '\\"')}"`;
-
-  const configYaml = [
-    "model:",
-    `  default: ${modelYaml}`,
-    "  provider: custom",
-    `  base_url: ${HERMES_LITELLM_BASE_URL}`,
-  ].join("\n");
-
-  const upstreamModel = selectedModel.includes("/") ? selectedModel : `openai/${selectedModel}`;
+  const instruments = resolveHarnessGridInstruments("hermes", modelId);
   const inferenceBase = resolveGridInferenceApiBase();
-  const litellmConfig = `model_list:
-  - model_name: "${selectedModel}"
-    litellm_params:
-      model: "${upstreamModel}"
-      api_base: "${inferenceBase}"
-      api_key: "os.environ/THEGRID_API_KEY"
-      use_chat_completions_api: true
-      drop_params: true
 
-litellm_settings:
-  drop_params: true
-`;
+  const configLines = [
+    "model:",
+    `  default: ${yamlScalar(instruments.primary)}`,
+    "  provider: custom",
+    `  base_url: ${inferenceBase}`,
+    "  api_key: ${THEGRID_API_KEY}",
+    ...hermesModelCapabilityYamlLines("  ", instruments.primary),
+  ];
 
-  const hermesEnv = [
-    `OPENAI_API_KEY=${shellQuote(apiKey)}`,
-    `THEGRID_API_KEY=${shellQuote(apiKey)}`,
-  ].join("\n");
+  const aliasIds = instruments.registered.filter((id) => id !== instruments.primary);
+  if (aliasIds.length > 0) {
+    configLines.push("model_aliases:");
+    for (const id of aliasIds) {
+      const aliasKey = id.replace(/-/g, "_");
+      configLines.push(`  ${aliasKey}:`);
+      configLines.push(`    model: ${yamlScalar(id)}`);
+      configLines.push("    provider: custom");
+      configLines.push(`    base_url: ${inferenceBase}`);
+      configLines.push(...hermesModelCapabilityYamlLines("    ", id));
+    }
+  }
+
+  if (instruments.utility) {
+    configLines.push("auxiliary:");
+    configLines.push("  compression:");
+    configLines.push("    provider: custom");
+    configLines.push(`    model: ${yamlScalar(instruments.utility)}`);
+    configLines.push(`    base_url: ${inferenceBase}`);
+    configLines.push("    api_key: ${THEGRID_API_KEY}");
+  }
+
+  const configYaml = configLines.join("\n");
+  const hermesEnv = [`THEGRID_API_KEY=${shellQuote(apiKey)}`].join("\n");
 
   await runner.runServer("mkdir -p ~/.hermes");
   await uploadConfigFile(runner, `${configYaml}\n`, "$HOME/.hermes/config.yaml");
-  await uploadConfigFile(runner, `${litellmConfig}\n`, "$HOME/.hermes/litellm.yaml");
   await uploadConfigFile(runner, `${hermesEnv}\n`, "$HOME/.hermes/.env");
-  await runner.runServer("chmod 600 ~/.hermes/config.yaml ~/.hermes/litellm.yaml ~/.hermes/.env");
-
-  logStep("Installing Hermes LiteLLM proxy (python3-venv + litellm)...");
-  const venvResult = await asyncTryCatch(() =>
-    runner.runServer(LITELLM_VENV_SETUP, 300),
-  );
-  if (!venvResult.ok) {
-    throw new Error(
-      "Hermes LiteLLM install failed — ensure python3-venv is available on the VM (see provisioning logs)",
-    );
-  }
+  await runner.runServer("chmod 600 ~/.hermes/config.yaml ~/.hermes/.env");
+  await applyHermesRedirectPatch(runner);
 
   logInfo(
-    `Hermes Agent configured (model: ${selectedModel}, provider: custom → local LiteLLM → The Grid)`,
+    `Hermes Agent configured (primary: ${instruments.primary}, registered: ${instruments.registered.join(", ")}, provider: custom → ${inferenceBase})`,
   );
 }
 
@@ -1362,10 +1182,7 @@ litellm_settings:
 async function setupPiConfig(runner: CloudRunner, _apiKey: string, modelId?: string): Promise<void> {
   logStep("Configuring Pi for The Grid...");
 
-  const selectedModel =
-    typeof modelId === "string" && modelId.trim() && validateModelId(modelId.trim())
-      ? modelId.trim()
-      : GRID_INFERENCE_DEFAULT_MODEL_ID;
+  const instruments = resolveHarnessGridInstruments("pi", modelId);
 
   const modelsJson = {
     providers: {
@@ -1377,19 +1194,25 @@ async function setupPiConfig(runner: CloudRunner, _apiKey: string, modelId?: str
           supportsDeveloperRole: false,
           supportsReasoningEffort: false,
         },
-        models: [
-          {
-            id: selectedModel,
-            name: `The Grid (${selectedModel})`,
-          },
-        ],
+        models: instruments.registered.map((id) => {
+          const spec = resolveGridInstrumentModelSpec(id);
+          return {
+            id,
+            name: `The Grid (${id})`,
+            reasoning: false,
+            input: [...spec.input],
+            contextWindow: spec.contextWindow,
+            maxTokens: spec.maxOutputTokens,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          };
+        }),
       },
     },
   };
 
   const settingsJson = {
     defaultProvider: OPENCLAW_GRID_PROVIDER_ID,
-    defaultModel: selectedModel,
+    defaultModel: instruments.primary,
   };
 
   await runner.runServer("mkdir -p ~/.pi/agent");
@@ -1397,7 +1220,7 @@ async function setupPiConfig(runner: CloudRunner, _apiKey: string, modelId?: str
   await uploadConfigFile(runner, `${JSON.stringify(settingsJson, null, 2)}\n`, "$HOME/.pi/agent/settings.json");
   await runner.runServer("chmod 600 ~/.pi/agent/models.json ~/.pi/agent/settings.json");
 
-  logInfo(`Pi configured (provider: ${OPENCLAW_GRID_PROVIDER_ID}, model: ${selectedModel})`);
+  logInfo(`Pi configured (provider: ${OPENCLAW_GRID_PROVIDER_ID}, primary: ${instruments.primary})`);
 }
 
 /**
@@ -1412,14 +1235,11 @@ async function setupPiConfig(runner: CloudRunner, _apiKey: string, modelId?: str
 async function setupOpenCodeConfig(runner: CloudRunner, modelId?: string): Promise<void> {
   logStep("Configuring OpenCode for The Grid...");
 
-  const selectedModel =
-    typeof modelId === "string" && modelId.trim() && validateModelId(modelId.trim())
-      ? modelId.trim()
-      : GRID_INFERENCE_DEFAULT_MODEL_ID;
+  const instruments = resolveHarnessGridInstruments("opencode", modelId);
 
   const config = {
     $schema: "https://opencode.ai/config.json",
-    model: `${OPENCLAW_GRID_PROVIDER_ID}/${selectedModel}`,
+    model: `${OPENCLAW_GRID_PROVIDER_ID}/${instruments.primary}`,
     provider: {
       [OPENCLAW_GRID_PROVIDER_ID]: {
         npm: "@ai-sdk/openai-compatible",
@@ -1428,11 +1248,19 @@ async function setupOpenCodeConfig(runner: CloudRunner, modelId?: string): Promi
           baseURL: resolveGridInferenceApiBase(),
           apiKey: "{env:THEGRID_API_KEY}",
         },
-        models: {
-          [selectedModel]: {
-            name: `The Grid (${selectedModel})`,
-          },
-        },
+        models: Object.fromEntries(
+          instruments.registered.map((id) => {
+            const spec = resolveGridInstrumentModelSpec(id);
+            return [
+              id,
+              {
+                name: `The Grid (${id})`,
+                modalities: { input: [...spec.input], output: ["text"] },
+                limit: { context: spec.contextWindow, output: spec.maxOutputTokens },
+              },
+            ];
+          }),
+        ),
       },
     },
   };
@@ -1441,189 +1269,55 @@ async function setupOpenCodeConfig(runner: CloudRunner, modelId?: string): Promi
   await uploadConfigFile(runner, `${JSON.stringify(config, null, 2)}\n`, "$HOME/.config/opencode/opencode.json");
   await runner.runServer("chmod 600 ~/.config/opencode/opencode.json");
 
-  logInfo(`OpenCode configured (provider: ${OPENCLAW_GRID_PROVIDER_ID}, model: ${selectedModel})`);
+  logInfo(`OpenCode configured (provider: ${OPENCLAW_GRID_PROVIDER_ID}, primary: ${instruments.primary})`);
 }
 
 /**
- * Local-mode launch for a LiteLLM-style proxy.
- *
- * Installs the wrapper into ~/.local/bin, launches it via runner.startService
- * (a process detached from the ephemeral command shell — see CloudRunner.
- * startService), then polls its health endpoint from a plain foreground shell.
- *
- * This replaces the `setsid … &` fire-and-forget used on VMs: inside the local
- * runner's `Bun.spawn`-ed shell, a backgrounded job is killed (SIGTERM) when the
- * shell is reaped, so the proxy would never persist. Only used when
- * `runner.startService` is defined (local mode); VM/SSH runners keep the
- * systemd/`setsid` path.
+ * Kilo Code resolves models from ~/.config/kilo/kilo.jsonc. Without a custom
+ * thegrid provider it only lists built-in kilo/* models and `kilocode run
+ * --model thegrid/...` fails with "Model not found" (issue #39). Register an
+ * OpenAI-compatible provider pointed at The Grid's inference base. The key is
+ * read from THEGRID_API_KEY via `{env:...}` interpolation (set in ~/.agentsearc).
  */
-export async function startLiteLlmProxyLocally(
-  runner: CloudRunner,
-  opts: {
-    name: string;
-    port: number;
-    binName: string;
-    logPath: string;
-    healthCheck: string;
-    prepLines: string[];
-  },
-): Promise<void> {
-  const { name, port, binName, logPath, healthCheck, prepLines } = opts;
-  if (!runner.startService) {
-    throw new Error("startLiteLlmProxyLocally requires a runner with startService");
-  }
+async function setupKiloConfig(runner: CloudRunner, modelId?: string): Promise<void> {
+  logStep("Configuring Kilo Code for The Grid...");
 
-  const prep = [
-    ...prepLines,
-    'mkdir -p "$HOME/.local/bin"',
-    `mv /tmp/${binName}.tmp "$HOME/.local/bin/${binName}"`,
-    // Clear any proxy left over from a previous session before relaunching.
-    //
-    // CRITICAL: kill by listening socket, NOT `pkill -f <pattern>`. runLocal
-    // executes this via `bash -c "<entire script>"`, so the whole script — which
-    // mentions "litellm" and the port — is in the shell's own argv. A
-    // `pkill -f '…litellm…<port>…'` therefore matches and SIGTERMs THIS shell
-    // (exit 143), which is exactly why local setup kept dying. lsof/fuser match
-    // by socket, never by command line.
-    `_oldpid=$(lsof -ti tcp:${port} 2>/dev/null); [ -z "$_oldpid" ] && _oldpid=$(fuser ${port}/tcp 2>/dev/null); [ -n "$_oldpid" ] && kill $_oldpid 2>/dev/null || true`,
-    "sleep 1",
-  ].join("\n");
+  const instruments = resolveHarnessGridInstruments("kilocode", modelId);
 
-  const prepResult = await asyncTryCatch(() => runner.runServer(prep, 300));
-  if (!prepResult.ok) {
-    throw new Error(`${name} LiteLLM proxy setup failed — check ${logPath}`);
-  }
+  const config = {
+    $schema: "https://app.kilo.ai/config.json",
+    model: `${KILO_GRID_PROVIDER_ID}/${instruments.primary}`,
+    provider: {
+      [KILO_GRID_PROVIDER_ID]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "The Grid",
+        options: {
+          baseURL: resolveGridInferenceApiBase(),
+          apiKey: "{env:THEGRID_API_KEY}",
+        },
+        models: Object.fromEntries(
+          instruments.registered.map((id) => {
+            const spec = resolveGridInstrumentModelSpec(id);
+            return [
+              id,
+              {
+                name: `The Grid (${id})`,
+                tool_call: true,
+                modalities: { input: [...spec.input], output: ["text"] },
+                limit: { context: spec.contextWindow, output: spec.maxOutputTokens },
+              },
+            ];
+          }),
+        ),
+      },
+    },
+  };
 
-  await runner.startService(`exec "$HOME/.local/bin/${binName}"`, logPath);
+  await runner.runServer("mkdir -p ~/.config/kilo");
+  await uploadConfigFile(runner, `${JSON.stringify(config, null, 2)}\n`, "$HOME/.config/kilo/kilo.jsonc");
+  await runner.runServer("chmod 600 ~/.config/kilo/kilo.jsonc");
 
-  const poll = [
-    "elapsed=0; while [ $elapsed -lt 120 ]; do",
-    `  if ${healthCheck}; then echo "${name} proxy ready after $elapsed sec"; exit 0; fi`,
-    "  sleep 1; elapsed=$((elapsed + 1))",
-    "done",
-    `echo "${name} proxy failed to start within 120s" >&2`,
-    `tail -60 ${logPath} 2>/dev/null || true`,
-    "exit 1",
-  ].join("\n");
-
-  const pollResult = await asyncTryCatch(() => runner.runServer(poll, 130));
-  if (pollResult.ok) {
-    logInfo(`${name} proxy started on :${port}`);
-    return;
-  }
-  throw new Error(`${name} LiteLLM proxy failed to start on :${port} — check ${logPath}`);
-}
-
-async function startHermesLiteLlmProxy(runner: CloudRunner): Promise<void> {
-  logStep("Starting Hermes local chat/completions proxy...");
-
-  const wrapperScript = [
-    "#!/bin/bash",
-    'source "$HOME/.agentsearc" 2>/dev/null',
-    'export PATH="$HOME/.local/bin:$HOME/.litellm-venv/bin:$PATH"',
-    "export THEGRID_API_KEY",
-    `exec "$HOME/.litellm-venv/bin/litellm" --config "$HOME/.hermes/litellm.yaml" --host 127.0.0.1 --port ${HERMES_LITELLM_PORT}`,
-  ].join("\n");
-
-  const unitFile = [
-    "[Unit]",
-    "Description=Hermes LiteLLM proxy for The Grid",
-    "After=network.target",
-    "",
-    "[Service]",
-    "Type=simple",
-    "ExecStart=/usr/local/bin/hermes-litellm-wrapper",
-    "Restart=always",
-    "RestartSec=3",
-    "User=__USER__",
-    "Environment=HOME=__HOME__",
-    "StandardOutput=append:/tmp/hermes-litellm.log",
-    "StandardError=append:/tmp/hermes-litellm.log",
-    "",
-    "[Install]",
-    "WantedBy=multi-user.target",
-  ].join("\n");
-
-  validateScriptTemplate(wrapperScript, "hermes-litellm-wrapper");
-  validateScriptTemplate(unitFile, "hermes-litellm-unit");
-
-  const wrapperB64 = Buffer.from(wrapperScript).toString("base64");
-  const unitB64 = Buffer.from(unitFile).toString("base64");
-
-  const checkLines = [
-    "source ~/.agentsearc 2>/dev/null",
-    'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.litellm-venv/bin:$PATH"',
-    'test -n "$THEGRID_API_KEY" || { echo "THEGRID_API_KEY missing from ~/.agentsearc" >&2; exit 1; }',
-    "export THEGRID_API_KEY",
-    'test -s "$HOME/.hermes/litellm.yaml" || { echo "Missing ~/.hermes/litellm.yaml" >&2; exit 1; }',
-  ];
-  const venvWrapperLines = [
-    LITELLM_VENV_SETUP,
-    'test -x "$HOME/.litellm-venv/bin/litellm" || { echo "litellm binary missing after venv setup" >&2; exit 1; }',
-    "printf '%s' '" + wrapperB64 + "' | base64 -d > /tmp/hermes-litellm-wrapper.tmp",
-    "chmod +x /tmp/hermes-litellm-wrapper.tmp",
-  ];
-
-  // Local mode: launch detached via runner.startService instead of the
-  // in-shell `setsid … &`, which Bun tears down (see startLiteLlmProxyLocally).
-  if (runner.startService) {
-    await startLiteLlmProxyLocally(runner, {
-      name: "Hermes",
-      port: HERMES_LITELLM_PORT,
-      binName: "hermes-litellm-wrapper",
-      logPath: "/tmp/hermes-litellm.log",
-      healthCheck: HERMES_LITELLM_HEALTH_CHECK,
-      prepLines: [...checkLines, ...venvWrapperLines],
-    });
-    return;
-  }
-
-  const script = [
-    ...checkLines,
-    `if ${HERMES_LITELLM_HEALTH_CHECK}; then echo "Hermes proxy already running on :${HERMES_LITELLM_PORT}"; exit 0; fi`,
-    ...venvWrapperLines,
-    "if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then",
-    '  _sudo=""',
-    '  [ "$(id -u)" != "0" ] && _sudo="sudo"',
-    "  $_sudo mv /tmp/hermes-litellm-wrapper.tmp /usr/local/bin/hermes-litellm-wrapper",
-    "  printf '%s' '" + unitB64 + "' | base64 -d > /tmp/hermes-litellm.unit.tmp",
-    '  sed -i "s|__USER__|$(whoami)|;s|__HOME__|$HOME|" /tmp/hermes-litellm.unit.tmp',
-    "  $_sudo mv /tmp/hermes-litellm.unit.tmp /etc/systemd/system/hermes-litellm.service",
-    "  $_sudo systemctl daemon-reload",
-    "  $_sudo systemctl enable hermes-litellm 2>/dev/null",
-    "  $_sudo systemctl restart hermes-litellm",
-    "else",
-    // No systemd (e.g. macOS local runs): /usr/local/bin is not user-writable
-    // and we have no sudo here, so install the wrapper into the user-owned
-    // ~/.local/bin (already on PATH above) instead.
-    '  mkdir -p "$HOME/.local/bin"',
-    '  mv /tmp/hermes-litellm-wrapper.tmp "$HOME/.local/bin/hermes-litellm-wrapper"',
-    "  pkill -f '[l]itellm.*4142' 2>/dev/null || true",
-    "  sleep 1",
-    "  if command -v setsid >/dev/null 2>&1; then",
-    '    setsid "$HOME/.local/bin/hermes-litellm-wrapper" >> /tmp/hermes-litellm.log 2>&1 < /dev/null &',
-    "  else",
-    '    nohup "$HOME/.local/bin/hermes-litellm-wrapper" >> /tmp/hermes-litellm.log 2>&1 < /dev/null &',
-    "  fi",
-    "fi",
-    "elapsed=0; while [ $elapsed -lt 120 ]; do",
-    `  if ${HERMES_LITELLM_HEALTH_CHECK}; then echo "Hermes proxy ready after $elapsed sec"; exit 0; fi`,
-    "  sleep 1; elapsed=$((elapsed + 1))",
-    "done",
-    'echo "Hermes proxy failed to start within 120s" >&2',
-    "if command -v systemctl >/dev/null 2>&1; then systemctl status hermes-litellm --no-pager 2>/dev/null || true; fi",
-    "tail -60 /tmp/hermes-litellm.log 2>/dev/null || true",
-    "exit 1",
-  ].join("\n");
-
-  const result = await asyncTryCatch(() => runner.runServer(script, 300));
-  if (result.ok) {
-    logInfo(`Hermes proxy started on :${HERMES_LITELLM_PORT}`);
-    return;
-  }
-  throw new Error(
-    `Hermes LiteLLM proxy failed to start on :${HERMES_LITELLM_PORT} — check /tmp/hermes-litellm.log on the VM`,
-  );
+  logInfo(`Kilo Code configured (provider: ${KILO_GRID_PROVIDER_ID}, primary: ${instruments.primary})`);
 }
 
 /**
@@ -1641,45 +1335,7 @@ async function startHermesLiteLlmProxy(runner: CloudRunner): Promise<void> {
  */
 export async function startHermesDashboard(runner: CloudRunner): Promise<void> {
   logStep("Starting Hermes web dashboard...");
-
-  // Port check — same pattern as startGateway. Debian/Ubuntu bash is compiled
-  // without /dev/tcp, so we chain ss → /dev/tcp → nc.
-  const portCheck =
-    'ss -tln 2>/dev/null | grep -q ":9119 " || ' +
-    "(echo >/dev/tcp/127.0.0.1/9119) 2>/dev/null || " +
-    "nc -z 127.0.0.1 9119 2>/dev/null";
-
-  // `hermes` lives inside the install venv; mirror launchCmd's PATH exactly.
-  const hermesPath = 'export PATH="$HOME/.local/bin:$HOME/.hermes/hermes-agent/venv/bin:$PATH"';
-
-  const script = [
-    "source ~/.agentsearc 2>/dev/null",
-    hermesPath,
-    `if ${portCheck}; then echo "Hermes dashboard already running on :9119"; exit 0; fi`,
-    "_hermes_bin=$(command -v hermes) || { echo 'hermes not found in PATH' >&2; exit 1; }",
-    // --no-open: we're on a remote VM, don't try to agentsea a browser there.
-    // --host 127.0.0.1: loopback-only; the SSH tunnel is how the user reaches it.
-    "if command -v setsid >/dev/null 2>&1; then",
-    '  setsid "$_hermes_bin" dashboard --port 9119 --host 127.0.0.1 --no-open > /tmp/hermes-dashboard.log 2>&1 < /dev/null &',
-    "else",
-    '  nohup "$_hermes_bin" dashboard --port 9119 --host 127.0.0.1 --no-open > /tmp/hermes-dashboard.log 2>&1 < /dev/null &',
-    "fi",
-    "elapsed=0; while [ $elapsed -lt 60 ]; do",
-    `  if ${portCheck}; then echo "Hermes dashboard ready after \${elapsed}s"; exit 0; fi`,
-    "  printf '.'; sleep 1; elapsed=$((elapsed + 1))",
-    "done",
-    'echo "Hermes dashboard failed to start within 60s" >&2',
-    "tail -20 /tmp/hermes-dashboard.log 2>/dev/null || true",
-    "exit 1",
-  ].join("\n");
-
-  const result = await asyncTryCatch(() => runner.runServer(script));
-  if (result.ok) {
-    logInfo("Hermes web dashboard started on :9119");
-  } else {
-    // Non-fatal: the TUI still works even if the dashboard didn't come up.
-    logWarn("Hermes web dashboard failed to start — TUI still available");
-  }
+  await ensureHermesDashboard(runner);
 }
 
 // ─── OpenCode Install Command ────────────────────────────────────────────────
@@ -2131,7 +1787,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
     claude: {
       name: "Claude Code",
       cloudInitTier: "minimal",
-      modelDefault: VENDOR_CHAT_MODEL_DEFAULT,
+      modelDefault: defaultGridModelForAgent("claude"),
       modelEnvVar: "ANTHROPIC_MODEL",
       preProvision: detectGithubAuth,
       install: () => installClaudeCode(runner),
@@ -2159,13 +1815,13 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
     codex: {
       name: "Codex CLI",
       cloudInitTier: "node",
-      modelDefault: VENDOR_CHAT_MODEL_DEFAULT,
+      modelDefault: defaultGridModelForAgent("codex"),
       preProvision: detectGithubAuth,
       install: () =>
         installAgent(
           runner,
           "Codex CLI",
-          `${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} @openai/codex && ${NPM_GLOBAL_PATH_PERSIST}`,
+          `${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} @openai/codex@${CODEX_CLI_GRID_PINNED_VERSION} && ${NPM_GLOBAL_PATH_PERSIST}`,
         ),
       envVars: (apiKey) => [
         `THEGRID_API_KEY=${apiKey}`,
@@ -2173,8 +1829,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         `OPENAI_API_KEY=${apiKey}`,
         `OPENAI_BASE_URL=${resolveGridInferenceApiBase()}`,
       ],
-      configure: (_apiKey, modelId, _enabledSteps) => setupCodexConfig(runner, modelId),
-      preLaunch: () => startCodexLiteLlmProxy(runner),
+      configure: (_apiKey, modelId) => setupCodexConfig(runner, modelId),
       launchCmd: () => "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; codex",
       // Newer Codex CLIs dropped `--ask-for-approval` from `codex exec` (it errors
       // with "unexpected argument"). Probe `--help` and only pass the flag when the
@@ -2185,7 +1840,9 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         '_cx_flags="--sandbox danger-full-access"; ' +
         "codex exec --help 2>/dev/null | grep -q -- '--ask-for-approval' && _cx_flags=\"$_cx_flags --ask-for-approval=never\"; " +
         `codex exec $_cx_flags ${shellQuote(prompt)} < /dev/null`,
-      updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + "npm install -g $_NPM_G_FLAGS @openai/codex@latest",
+      updateCmd:
+        `${NPM_AUTO_UPDATE_SETUP} && ` +
+        `npm install -g $_NPM_G_FLAGS @openai/codex@${CODEX_CLI_GRID_PINNED_VERSION}`,
     },
 
     openclaw: (() => {
@@ -2194,7 +1851,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         name: "OpenClaw",
         cloudInitTier: "full" satisfies AgentConfig["cloudInitTier"],
         preProvision: detectGithubAuth,
-        modelDefault: VENDOR_CHAT_MODEL_DEFAULT,
+        modelDefault: defaultGridModelForAgent("openclaw"),
         install: async () => {
           await installAgent(
             runner,
@@ -2208,12 +1865,11 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
           `OPENAI_BASE_URL=${resolveGridOpenClawMessagesBase()}`,
         ],
         configure: (apiKey: string, modelId?: string, enabledSteps?: Set<string>) =>
-          setupOpenclawConfig(runner, apiKey, modelId || VENDOR_CHAT_MODEL_DEFAULT, dashboardToken, enabledSteps),
+          setupOpenclawConfig(runner, apiKey, modelId || defaultGridModelForAgent("openclaw"), dashboardToken, enabledSteps),
         preLaunch: () => startGateway(runner),
         launchCmd: () =>
           "source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; openclaw tui",
-        promptCmd: (prompt: string) =>
-          `source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH; openclaw run ${shellQuote(prompt)}`,
+        promptCmd: (prompt: string) => openclawHeadlessPrompt(prompt),
         tunnel: {
           remotePort: 18789,
           logGatewayToken: dashboardToken,
@@ -2231,22 +1887,23 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
     opencode: {
       name: "OpenCode",
       cloudInitTier: "minimal",
-      modelDefault: VENDOR_CHAT_MODEL_DEFAULT,
+      modelDefault: defaultGridModelForAgent("opencode"),
       preProvision: detectGithubAuth,
       install: () => installAgent(runner, "OpenCode", openCodeInstallCmd()),
       envVars: (apiKey) => [
         `THEGRID_API_KEY=${apiKey}`,
       ],
       configure: (_apiKey, modelId) => setupOpenCodeConfig(runner, modelId),
-      launchCmd: () => "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; opencode",
+      launchCmd: () => `${OPENCODE_LAUNCH_SHELL_PREFIX}; opencode`,
       promptCmd: (prompt) =>
-        `source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; opencode --prompt ${shellQuote(prompt)}`,
+        opencodeHeadlessPrompt(prompt, defaultGridModelForAgent("opencode")),
       updateCmd: openCodeInstallCmd(),
     },
 
     kilocode: {
       name: "Kilo Code",
       cloudInitTier: "node",
+      modelDefault: defaultGridModelForAgent("kilocode"),
       modelEnvVar: "KILOCODE_MODEL",
       preProvision: detectGithubAuth,
       install: () =>
@@ -2255,21 +1912,18 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
           "Kilo Code",
           `cd "$HOME" && ${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} @kilocode/cli && ${NPM_GLOBAL_PATH_PERSIST} && ${KILOCODE_BINARY_VERIFY}`,
         ),
-      envVars: (apiKey) => [
-        `THEGRID_API_KEY=${apiKey}`,
-        `KILO_PROVIDER_TYPE=${VENDOR_KILO_PROVIDER_TYPE_VALUE}`,
-        `KILO_OPEN_ROUTER_API_KEY=${apiKey}`,
-      ],
+      envVars: (apiKey) => [`THEGRID_API_KEY=${apiKey}`],
+      configure: (_apiKey, modelId) => setupKiloConfig(runner, modelId),
       launchCmd: () => "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; kilocode",
       promptCmd: (prompt) =>
-        `source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; kilocode --prompt ${shellQuote(prompt)}`,
+        kilocodeHeadlessPrompt(prompt, defaultGridModelForAgent("kilocode")),
       updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + "npm install -g $_NPM_G_FLAGS @kilocode/cli@latest",
     },
 
     hermes: {
       name: "Hermes Agent",
       cloudInitTier: "minimal",
-      modelDefault: VENDOR_CHAT_MODEL_DEFAULT,
+      modelDefault: defaultGridModelForAgent("hermes"),
       modelEnvVar: "LLM_MODEL",
       preProvision: detectGithubAuth,
       install: () =>
@@ -2285,7 +1939,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         ),
       envVars: (apiKey) => [
         `THEGRID_API_KEY=${apiKey}`,
-        `OPENAI_BASE_URL=${HERMES_LITELLM_BASE_URL}`,
+        `OPENAI_BASE_URL=${resolveGridInferenceApiBase()}`,
         `OPENAI_API_KEY=${apiKey}`,
         "HERMES_YOLO_MODE=1",
       ],
@@ -2298,16 +1952,13 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
           logInfo("YOLO mode disabled — Hermes will prompt before installing tools");
         }
       },
-      preLaunch: async () => {
-        await startHermesLiteLlmProxy(runner);
-        await startHermesDashboard(runner);
-      },
+      preLaunch: () => startHermesDashboard(runner),
       preLaunchMsg:
         "Your Hermes web dashboard will open automatically — use it to configure settings, monitor sessions, and manage gateways.",
       launchCmd: () =>
         "source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.local/bin:$HOME/.hermes/hermes-agent/venv/bin:$PATH; hermes",
       promptCmd: (prompt) =>
-        `source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.local/bin:$HOME/.hermes/hermes-agent/venv/bin:$PATH; hermes ${shellQuote(prompt)}`,
+        hermesHeadlessPrompt(prompt, defaultGridModelForAgent("hermes")),
       tunnel: {
         remotePort: 9119,
         browserUrl: (localPort: number) => `http://localhost:${localPort}/`,
@@ -2322,7 +1973,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
     junie: {
       name: "Junie",
       cloudInitTier: "node",
-      modelDefault: VENDOR_CHAT_MODEL_DEFAULT,
+      modelDefault: defaultGridModelForAgent("junie"),
       preProvision: detectGithubAuth,
       install: () =>
         installAgent(
@@ -2335,17 +1986,16 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         `THEGRID_API_KEY=${apiKey}`,
       ],
       configure: (apiKey, modelId) => setupJunieConfig(runner, apiKey, modelId),
-      preLaunch: () => startJunieLiteLlmProxy(runner),
+      preLaunch: () => startJunieGridChatProxy(runner),
       launchCmd: () => `${JUNIE_LAUNCH_SHELL_PREFIX}; junie`,
-      promptCmd: (prompt) =>
-        `${JUNIE_LAUNCH_SHELL_PREFIX}; junie --prompt ${shellQuote(prompt)}`,
+      promptCmd: (prompt) => junieHeadlessPrompt(prompt),
       updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + "npm install -g $_NPM_G_FLAGS @jetbrains/junie-cli@latest",
     },
 
     pi: {
       name: "Pi",
       cloudInitTier: "node",
-      modelDefault: VENDOR_CHAT_MODEL_DEFAULT,
+      modelDefault: defaultGridModelForAgent("pi"),
       preProvision: detectGithubAuth,
       install: () =>
         installAgent(
@@ -2359,20 +2009,20 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
       configure: (apiKey, modelId) => setupPiConfig(runner, apiKey, modelId),
       launchCmd: () => "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; pi",
       promptCmd: (prompt) =>
-        `source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; pi --prompt ${shellQuote(prompt)}`,
+        piHeadlessPrompt(prompt, defaultGridModelForAgent("pi")),
       updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + "npm install -g $_NPM_G_FLAGS @mariozechner/pi-coding-agent@latest",
     },
 
     t3code: {
       name: "T3 Code",
       cloudInitTier: "node" satisfies AgentConfig["cloudInitTier"],
-      modelDefault: VENDOR_CHAT_MODEL_DEFAULT,
+      modelDefault: defaultGridModelForAgent("t3code"),
       preProvision: detectGithubAuth,
       install: () =>
         installAgent(
           runner,
           "T3 Code",
-          `${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} t3 @openai/codex && ${NPM_GLOBAL_PATH_PERSIST}`,
+          `${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} t3 @openai/codex@${CODEX_CLI_GRID_PINNED_VERSION} && ${NPM_GLOBAL_PATH_PERSIST}`,
         ),
       // T3 Code spawns Codex CLI as its primary provider; child processes inherit Grid auth via .agentsearc.
       envVars: (apiKey) => [
@@ -2385,7 +2035,6 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         `OPENAI_BASE_URL=${resolveGridInferenceApiBase()}`,
       ],
       configure: (_apiKey, modelId) => setupT3CodeConfig(runner, modelId),
-      preLaunch: () => startCodexLiteLlmProxy(runner),
       preLaunchMsg: "T3 Code web GUI will open automatically — use it to interact with Claude Code and Codex agents.",
       launchCmd: () => T3_LAUNCH_CMD,
       tunnel: {
@@ -2393,13 +2042,13 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         requiresPairing: true,
       },
       updateCmd:
-        `${NPM_AUTO_UPDATE_SETUP} && npm install -g $_NPM_G_FLAGS t3@latest @openai/codex@latest`,
+        `${NPM_AUTO_UPDATE_SETUP} && npm install -g $_NPM_G_FLAGS t3@latest @openai/codex@${CODEX_CLI_GRID_PINNED_VERSION}`,
     },
 
     cursor: {
       name: "Cursor CLI",
       cloudInitTier: "bun",
-      modelDefault: VENDOR_CHAT_MODEL_DEFAULT,
+      modelDefault: defaultGridModelForAgent("cursor"),
       modelEnvVar: "GRID_MODEL_ID",
       preProvision: detectGithubAuth,
       install: () =>
@@ -2418,8 +2067,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
       preLaunch: () => startCursorProxy(runner),
       launchCmd: () =>
         'source ~/.agentsearc 2>/dev/null; export PATH="$HOME/.local/bin:$PATH"; agent --endpoint https://api2.cursor.sh',
-      promptCmd: (prompt) =>
-        `source ~/.agentsearc 2>/dev/null; export PATH="$HOME/.local/bin:$PATH"; agent --endpoint https://api2.cursor.sh --prompt ${shellQuote(prompt)}`,
+      promptCmd: (prompt) => cursorHeadlessPrompt(prompt),
       updateCmd: 'export PATH="$HOME/.local/bin:$PATH"; agent update',
     },
   };

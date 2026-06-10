@@ -3,7 +3,15 @@ import type { AgentseaRecord } from "../history.js";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { filterHistory, HISTORY_SCHEMA_VERSION, loadHistory, saveAgentseaRecord } from "../history.js";
+import {
+  filterHistory,
+  getActiveListRecords,
+  getActiveLocalRecords,
+  getActiveServers,
+  HISTORY_SCHEMA_VERSION,
+  loadHistory,
+  saveAgentseaRecord,
+} from "../history.js";
 
 describe("history", () => {
   let testDir: string;
@@ -350,6 +358,98 @@ describe("history", () => {
     // Corruption recovery and backup tests are in history-corruption.test.ts
   });
 
+  // ── active record queries ───────────────────────────────────────────────
+
+  describe("getActiveServers / getActiveLocalRecords / getActiveListRecords", () => {
+    function writeHistory(records: AgentseaRecord[]) {
+      writeFileSync(join(testDir, "history.json"), JSON.stringify(records));
+    }
+
+    const cloudRecord: AgentseaRecord = {
+      id: "cloud-1",
+      agent: "claude",
+      cloud: "hetzner",
+      timestamp: "2026-03-01T00:00:00.000Z",
+      connection: {
+        ip: "1.2.3.4",
+        user: "root",
+        server_id: "srv-1",
+        server_name: "claude-vm",
+        cloud: "hetzner",
+      },
+    };
+
+    const localHermes: AgentseaRecord = {
+      id: "local-1",
+      agent: "hermes",
+      cloud: "local",
+      name: "hermes",
+      timestamp: "2026-03-02T00:00:00.000Z",
+      connection: {
+        ip: "localhost",
+        user: "tester",
+        cloud: "local",
+      },
+    };
+
+    const deletedLocal: AgentseaRecord = {
+      id: "local-deleted",
+      agent: "codex",
+      cloud: "local",
+      timestamp: "2026-03-03T00:00:00.000Z",
+      connection: {
+        ip: "localhost",
+        user: "tester",
+        cloud: "local",
+        deleted: true,
+      },
+    };
+
+    const stubWithoutConnection: AgentseaRecord = {
+      id: "stub-1",
+      agent: "hermes",
+      cloud: "local",
+      timestamp: "2026-03-04T00:00:00.000Z",
+    };
+
+    it("getActiveServers excludes local runs", () => {
+      writeHistory([
+        cloudRecord,
+        localHermes,
+      ]);
+      const active = getActiveServers();
+      expect(active).toHaveLength(1);
+      expect(active[0].id).toBe("cloud-1");
+    });
+
+    it("getActiveLocalRecords returns non-deleted local runs with connection", () => {
+      writeHistory([
+        cloudRecord,
+        localHermes,
+        deletedLocal,
+        stubWithoutConnection,
+      ]);
+      const local = getActiveLocalRecords();
+      expect(local).toHaveLength(1);
+      expect(local[0].id).toBe("local-1");
+      expect(local[0].agent).toBe("hermes");
+    });
+
+    it("getActiveListRecords merges cloud VMs and local runs for list/delete pickers", () => {
+      writeHistory([
+        cloudRecord,
+        localHermes,
+        deletedLocal,
+      ]);
+      const listable = getActiveListRecords();
+      expect(listable).toHaveLength(2);
+      expect(listable.map((r) => r.id).sort()).toEqual([
+        "cloud-1",
+        "local-1",
+      ]);
+    });
+  });
+
   // ── filterHistory ───────────────────────────────────────────────────────
 
   describe("filterHistory", () => {
@@ -505,6 +605,21 @@ describe("history", () => {
       expect(loaded).toHaveLength(1);
       expect(loaded[0].agent).toBe("claude");
       // Lock dir should be cleaned up
+      expect(existsSync(lockPath)).toBe(false);
+    });
+
+    it("recovers from a broken lock with an empty PID file", () => {
+      const lockPath = join(testDir, "history.json.lock");
+      mkdirSync(lockPath, { recursive: true });
+      writeFileSync(join(lockPath, "pid"), "");
+
+      saveAgentseaRecord({
+        agent: "openclaw",
+        cloud: "local",
+        timestamp: new Date().toISOString(),
+      });
+
+      expect(loadHistory()).toHaveLength(1);
       expect(existsSync(lockPath)).toBe(false);
     });
 

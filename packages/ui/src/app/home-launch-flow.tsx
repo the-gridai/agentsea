@@ -61,7 +61,7 @@ export const HomeLaunchFlow = memo(function HomeLaunchFlowComp({
     if (agentParam === lastWrittenSlugRef.current) return;
 
     const agent = agents.find((a) => a.slug === agentParam);
-    if (!agent?.chatVerified || !agent.available) return;
+    if (!agent?.chatVerified || !agent.available || agent.disabled) return;
 
     setSelectedAgentSlug(agentParam);
 

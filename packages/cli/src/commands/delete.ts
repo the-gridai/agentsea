@@ -15,8 +15,7 @@ import {
 } from "../gcp/gcp.js";
 import { ensureHcloudToken, destroyServer as hetznerDestroyServer } from "../hetzner/hetzner.js";
 import {
-  getActiveLocalRecords,
-  getActiveServers,
+  getActiveListRecords,
   loadHistory,
   markRecordDeleted,
   mergeChildHistory,
@@ -35,6 +34,7 @@ import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
 import { getHistoryPath } from "../shared/paths.js";
 import { asyncTryCatch, asyncTryCatchIf, isNetworkError, tryCatch } from "../shared/result.js";
 import { ensureSpriteAuthenticated, ensureSpriteCli, destroyServer as spriteDestroyServer } from "../sprite/sprite.js";
+import { logError } from "../shared/ui.js";
 import { activeServerPicker, resolveListFilters } from "./list.js";
 import { getErrorMessage, isInteractiveTTY } from "./shared.js";
 
@@ -136,7 +136,7 @@ async function execDeleteServer(record: AgentseaRecord): Promise<boolean> {
       markRecordDeleted(record);
       return true;
     }
-    p.log.error(`Delete failed: ${errMsg}`);
+    logError(`Delete failed: ${errMsg}`);
     p.log.info("The server may still be running. Check your cloud provider dashboard.");
     return false;
   };
@@ -210,7 +210,7 @@ async function execDeleteServer(record: AgentseaRecord): Promise<boolean> {
       });
 
     default:
-      p.log.error(`No delete handler for cloud: ${conn.cloud}`);
+      logError(`No delete handler for cloud: ${conn.cloud}`);
       return false;
   }
 }
@@ -281,7 +281,7 @@ export async function confirmAndDelete(
     trackAgentseaDeleted(record);
   } else {
     const detail = lastMessage ? `: ${lastMessage}` : "";
-    p.log.error(`Failed to delete "${label}"${detail}`);
+    logError(`Failed to delete "${label}"${detail}`);
   }
   return success;
 }
@@ -419,10 +419,7 @@ export async function cmdDelete(
   // Include local runs: they have no cloud VM but still leave history rows the
   // user expects `delete` to clear (issue #21 — "No active servers to delete"
   // while `list` still showed local entries).
-  const servers = [
-    ...getActiveServers(),
-    ...getActiveLocalRecords(),
-  ];
+  const servers = getActiveListRecords();
 
   let filtered = servers;
   if (agentFilter) {
@@ -464,7 +461,7 @@ export async function cmdDelete(
   // Non-interactive headless delete: --name + --yes skips the picker
   if (!isInteractiveTTY()) {
     if (!forceYes) {
-      p.log.error(`${AGENTSEA_CLI} delete requires --yes in non-interactive mode.`);
+      logError(`${AGENTSEA_CLI} delete requires --yes in non-interactive mode.`);
       p.log.info(`Usage: ${pc.cyan(`${AGENTSEA_CLI} delete --name <name> --yes`)}`);
       process.exit(1);
     }

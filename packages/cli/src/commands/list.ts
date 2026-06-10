@@ -8,7 +8,7 @@ import {
   clearHistory,
   exportHistory,
   filterHistory,
-  getActiveServers,
+  getActiveListRecords,
   markRecordDeleted,
   removeRecord,
   updateRecordConnection,
@@ -18,6 +18,7 @@ import { agentKeys, cloudKeys, loadManifest } from "../manifest.js";
 import { trackAgentseaConnected } from "../shared/lifecycle-telemetry.js";
 import { asyncTryCatch, tryCatch, unwrapOr } from "../shared/result.js";
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
+import { logError } from "../shared/ui.js";
 import { cmdConnect, cmdEnterAgent, cmdOpenDashboard } from "./connect.js";
 import { confirmAndDelete } from "./delete.js";
 import { fixAgentsea } from "./fix.js";
@@ -691,7 +692,7 @@ export async function handleRecordAction(
   if (action === "enter") {
     const enterResult = await asyncTryCatch(() => cmdEnterAgent(conn, selected.agent, manifest));
     if (!enterResult.ok) {
-      p.log.error(`Connection failed: ${getErrorMessage(enterResult.error)}`);
+      logError(`Connection failed: ${getErrorMessage(enterResult.error)}`);
 
       p.log.info(
         `VM may no longer be running. Use ${pc.cyan(`${AGENTSEA_CLI} ${selected.agent} ${selected.cloud}`)} to start a new one.`,
@@ -703,7 +704,7 @@ export async function handleRecordAction(
   if (action === "dashboard") {
     const dashResult = await asyncTryCatch(() => cmdOpenDashboard(conn, selected.agent));
     if (!dashResult.ok) {
-      p.log.error(`Dashboard failed: ${getErrorMessage(dashResult.error)}`);
+      logError(`Dashboard failed: ${getErrorMessage(dashResult.error)}`);
     }
     return RecordActionOutcome.Back;
   }
@@ -715,7 +716,7 @@ export async function handleRecordAction(
     trackAgentseaConnected(selected);
     const reconnectResult = await asyncTryCatch(() => cmdConnect(conn, selected.agent));
     if (!reconnectResult.ok) {
-      p.log.error(`Connection failed: ${getErrorMessage(reconnectResult.error)}`);
+      logError(`Connection failed: ${getErrorMessage(reconnectResult.error)}`);
 
       p.log.info(
         `VM may no longer be running. Use ${pc.cyan(`${AGENTSEA_CLI} ${selected.agent} ${selected.cloud}`)} to start a new one.`,
@@ -839,7 +840,7 @@ export async function activeServerPicker(records: AgentseaRecord[], manifest: Ma
     const outcome = await handleRecordAction(picked, manifest);
     if (outcome === RecordActionOutcome.Back) {
       // Delete/remove completed (or errored) — refresh the remaining list and loop back
-      const active = getActiveServers();
+      const active = getActiveListRecords();
       const activeSet = new Set(active.map((r) => r.timestamp));
       for (let i = remaining.length - 1; i >= 0; i--) {
         if (!activeSet.has(remaining[i].timestamp)) {
@@ -864,7 +865,7 @@ export async function cmdListClear(forceYes?: boolean): Promise<void> {
   }
 
   if (!isInteractiveTTY() && !forceYes) {
-    p.log.error(`${AGENTSEA_CLI} list --clear requires --yes in non-interactive mode.`);
+    logError(`${AGENTSEA_CLI} list --clear requires --yes in non-interactive mode.`);
     p.log.info(`Usage: ${pc.cyan(`${AGENTSEA_CLI} list --clear --yes`)}`);
     process.exit(1);
   }
@@ -891,7 +892,7 @@ export async function cmdList(agentFilter?: string, cloudFilter?: string): Promi
 
   if (isInteractiveTTY()) {
     // Interactive mode: show active servers with inline delete
-    const servers = getActiveServers();
+    const servers = getActiveListRecords();
     let filtered = servers;
     if (agentFilter) {
       const lower = agentFilter.toLowerCase();

@@ -134,6 +134,32 @@ describe("Agent optional field types (when present)", () => {
       expect(agent.notes!.length).toBeGreaterThan(0);
     }
   });
+
+  it("next_steps should be 3–5 bullets with valid text and optional links", () => {
+    const featuredSlugs = [
+      "claude",
+      "openclaw",
+      "opencode",
+      "kilocode",
+      "hermes",
+    ] as const;
+    for (const slug of featuredSlugs) {
+      const steps = manifest.agents[slug]?.next_steps;
+      expect(steps, `agent "${slug}" missing next_steps`).toBeDefined();
+      expect(steps!.length, `agent "${slug}" next_steps count`).toBeGreaterThanOrEqual(3);
+      expect(steps!.length, `agent "${slug}" next_steps count`).toBeLessThanOrEqual(5);
+      for (const [i, step] of steps!.entries()) {
+        expect(typeof step.text, `agent "${slug}" next_steps[${i}].text`).toBe("string");
+        expect(step.text.trim().length, `agent "${slug}" next_steps[${i}].text length`).toBeGreaterThan(0);
+        if (step.link !== undefined) {
+          expect(typeof step.link.label, `agent "${slug}" next_steps[${i}].link.label`).toBe("string");
+          expect(step.link.label.length).toBeGreaterThan(0);
+          expect(typeof step.link.url, `agent "${slug}" next_steps[${i}].link.url`).toBe("string");
+          expect(step.link.url).toMatch(/^https?:\/\//);
+        }
+      }
+    }
+  });
 });
 
 // ── Cloud required field types ────────────────────────────────────────────

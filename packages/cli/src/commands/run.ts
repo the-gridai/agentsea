@@ -1,6 +1,5 @@
 import type { Manifest } from "../manifest.js";
 
-import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,6 +21,7 @@ import {
 import { asyncTryCatch, isFileError, tryCatch, tryCatchIf } from "../shared/result.js";
 import { getLocalShell, isWindows } from "../shared/shell.js";
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
+import { runLocalAgent } from "../local/run-local-agent.js";
 import { getCloudProvider } from "../shared/cloud-provider-registry.js";
 import { maybeShowStarPrompt } from "../shared/star-prompt.js";
 import { captureEvent, setTelemetryContext } from "../shared/telemetry.js";
@@ -31,6 +31,7 @@ import {
   logInfo,
   logStep,
   prepareStdinForHandoff,
+  defaultAgentseaLabel,
   toKebabCase,
 } from "../shared/ui.js";
 import { getDefaultAgentseaEnabledStepsCsv, promptSetupOptions, promptAgentseaName } from "./interactive.js";
@@ -267,7 +268,7 @@ async function downloadScriptWithFallback(primaryUrl: string, fallbackUrl: strin
 
 // Report 404 errors (script not found)
 function report404Failure(): void {
-  p.log.error("Script not found (HTTP 404)");
+  logError("Script not found (HTTP 404)");
   console.error("\nThe agentsea script doesn't exist at the expected location.");
   console.error("\nThis usually means:");
   console.error("  \u2022 The agent + cloud combination hasn't been implemented yet");
@@ -282,7 +283,7 @@ function report404Failure(): void {
 // Report HTTP errors (non-404)
 function reportHTTPFailure(primaryStatus: number, fallbackStatus: number): void {
   const hasServerError = primaryStatus >= 500 || fallbackStatus >= 500;
-  p.log.error("Script download failed");
+  logError("Script download failed");
   console.error(
     `\nCouldn't download the agentsea script (HTTP ${primaryStatus} from primary, ${fallbackStatus} from fallback).`,
   );
@@ -361,7 +362,7 @@ const NETWORK_ERROR_GUIDANCE: Record<"timeout" | "connection" | "unknown", Error
 };
 
 function reportDownloadError(ghUrl: string, err: unknown): never {
-  p.log.error("Script download failed");
+  logError("Script download failed");
   const errMsg = getErrorMessage(err);
   console.error("\nNetwork error:", errMsg);
 
@@ -478,7 +479,7 @@ function reportScriptFailure(
   dashboardUrl?: string,
   agentseaName?: string,
 ): never {
-  p.log.error("Agentsea script failed");
+  logError("Agentsea script failed");
   console.error("\nError:", errMsg);
 
   const exitCodeMatch = errMsg.match(/exited with code (\d+)/);
@@ -579,6 +580,9 @@ function runBash(
     env.AGENTSEA_NAME = agentseaName;
     env.AGENTSEA_NAME_KEBAB = toKebabCase(agentseaName);
   }
+  if (process.env.AGENTSEA_AGENT_SLUG) {
+    env.AGENTSEA_AGENT_SLUG = process.env.AGENTSEA_AGENT_SLUG;
+  }
   if (process.env.AGENTSEA_CUSTOM === "1") {
     env.AGENTSEA_CUSTOM = "1";
   }
@@ -639,8 +643,7 @@ async function downloadBundle(cloud: string): Promise<string> {
       redirect: "follow",
     });
     if (!res.ok) {
-      logError("Download failed");
-      p.log.error(`Bundle not found at ${bundleUrl} (HTTP ${res.status})`);
+      logError(`Bundle not found at ${bundleUrl} (HTTP ${res.status})`);
       process.exit(2);
     }
     const text = await res.text();
@@ -769,6 +772,22 @@ export async function execScript(
     console.error(pc.dim(`Warning: Failed to save agentsea record: ${getErrorMessage(saveResult.error)}`));
   }
   process.env.AGENTSEA_ID = agentseaId;
+
+  // Local cloud: run in-process from the installed CLI bundle (no CDN/GitHub script fetch).
+  if (cloud === "local") {
+    if (debug) {
+      console.error(`[run] Executing ${agent} on local (in-process)...`);
+    }
+    prepareStdinForHandoff();
+    const localResult = await asyncTryCatch(() => runLocalAgent(agent));
+    if (!localResult.ok) {
+      const errMsg = getErrorMessage(localResult.error);
+      handleUserInterrupt(errMsg, dashboardUrl);
+      reportScriptFailure(errMsg, cloud, agent, authHint, prompt, dashboardUrl, agentseaName);
+      return false;
+    }
+    return true;
+  }
 
   if (isWindows()) {
     const env: Record<string, string | undefined> = {
@@ -1234,6 +1253,32 @@ export async function cmdRunHeadless(agent: string, cloud: string, opts: Headles
   // Phase 2+3: Load and execute
   let exitCode: number;
 
+  if (resolvedCloud === "local") {
+    if (debug) {
+      console.error(`[headless] Executing ${resolvedAgent} on local (in-process)...`);
+    }
+    const localResult = await asyncTryCatch(() => runLocalAgent(resolvedAgent));
+    if (!localResult.ok) {
+      headlessError(
+        resolvedAgent,
+        resolvedCloud,
+        "EXECUTION_ERROR",
+        getErrorMessage(localResult.error),
+        outputFormat,
+        1,
+      );
+    }
+    headlessOutput(
+      {
+        status: "success",
+        cloud: resolvedCloud,
+        agent: resolvedAgent,
+      },
+      outputFormat,
+    );
+    process.exit(0);
+  }
+
   if (isWindows()) {
     // Windows: download JS bundle and run with bun (bash wrappers won't work)
     const cliDir = process.env.AGENTSEA_CLI_DIR;
@@ -1475,18 +1520,20 @@ export async function cmdRun(
     }
   }
 
-  // OpenRouter-style direct run: pick a unique name so we don't block on clack prompts.
+  process.env.AGENTSEA_AGENT_SLUG = agent;
+
+  // Direct run: default name to the agent slug (e.g. hermes) so we don't block on clack prompts.
   if (
     !process.env.AGENTSEA_NAME &&
     process.env.AGENTSEA_PROMPT_FOR_NAME !== "1" &&
     process.env.AGENTSEA_SETUP_PROMPT !== "1" &&
     process.env.AGENTSEA_CUSTOM_SETUP !== "1"
   ) {
-    process.env.AGENTSEA_NAME = `agentsea-${randomBytes(4).toString("hex")}`;
+    process.env.AGENTSEA_NAME = defaultAgentseaLabel(agent);
   }
 
   captureEvent("name_prompt_shown");
-  const agentseaName = await promptAgentseaName();
+  const agentseaName = await promptAgentseaName(agent);
   captureEvent("name_entered");
 
   // If a name was given, check whether an active instance with that name already

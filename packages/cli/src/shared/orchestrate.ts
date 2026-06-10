@@ -24,10 +24,12 @@ import {
   writeProvisionCheckpoint,
 } from "../history.js";
 import { offerGithubAuth, setupAutoUpdate, setupSecurityScan, wrapSshCall } from "./agent-setup.js";
+import { ensureHermesDashboard } from "./hermes-dashboard.js";
 import { tryTarballInstall } from "./agent-tarball.js";
 import { getCdnOrigin } from "./cdn.js";
 import { generateEnvConfig } from "./agents.js";
 import { acquireHeadlessProvisionLock } from "./headless-lock.js";
+import { TOOL_E2E_FILE, assertToolE2eFileCmd, wrapHeadlessPromptCmd } from "./headless-prompts.js";
 import { fetchGridModelCatalog } from "./grid-models.js";
 import { ensureGridModelHasCredits } from "./grid-credits-guidance.js";
 import { getOrPromptApiKey } from "./oauth.js";
@@ -43,7 +45,12 @@ import { buildCloudOrchestratorForResume } from "./resume-cloud-factory.js";
 import { ensureSshKeys, getSshKeyOpts } from "./ssh-keys.js";
 import { AGENTSEA_CLI } from "./cli-invocation.js";
 import { captureEvent, setTelemetryContext } from "./telemetry.js";
-import { GRID_INFERENCE_DEFAULT_MODEL_ID, VENDOR_AGENT_IMAGE_REGISTRY } from "./vendor-routing.js";
+import {
+  AGENTSEA_HEARTBEAT_MODEL_ENV,
+  GRID_INFERENCE_DEFAULT_MODEL_ID,
+  VENDOR_AGENT_IMAGE_REGISTRY,
+} from "./vendor-routing.js";
+import { agentSupportsHeartbeatModel } from "./grid-instruments.js";
 import {
   logAlwaysInfo,
   logAlwaysStep,
@@ -55,15 +62,17 @@ import {
   openBrowser,
   prepareStdinForHandoff,
   prompt,
-  promptGridCatalogModelId,
+  promptHarnessGridModels,
   retryOrQuit,
   rewriteLocalhostHttpUrlForWindowsBrowserFromWsl,
+  runWithSpinner,
   shellQuote,
   validateModelId,
   withRetry,
 } from "./ui.js";
 
 import { isInteractiveTTY } from "../commands/shared.js";
+import { isAgentseaVerbose } from "./verbosity.js";
 
 function logDashboardAuthHandoff(url: string, gatewayToken?: string): void {
   const alt = rewriteLocalhostHttpUrlForWindowsBrowserFromWsl(url);
@@ -422,6 +431,8 @@ export interface OrchestrationOptions {
   testResumeCloud?: CloudOrchestrator;
   /** For tests: return from resumeOrchestrationFromRecord immediately before runPostInstallPhase (avoids process.exit). */
   testResumeStopBeforePostInstall?: boolean;
+  /** Resume path: skip agent configure() when checkpoint is agent_configured or later (#28). */
+  skipAgentConfigure?: boolean;
 }
 
 /**
@@ -473,6 +484,38 @@ function shouldOfferGridModelPicker(agent: AgentConfig, preference: string | nul
   return true;
 }
 
+function shouldOfferHeartbeatModelPicker(agentName: string): boolean {
+  if (!agentSupportsHeartbeatModel(agentName)) {
+    return false;
+  }
+  if (!isInteractiveTTY()) {
+    return false;
+  }
+  if (
+    process.env.AGENTSEA_NON_INTERACTIVE === "1" ||
+    process.env.AGENTSEA_HEADLESS === "1" ||
+    process.env.AGENTSEA_SKIP_MODEL_PROMPT === "1"
+  ) {
+    return false;
+  }
+  if (process.env[AGENTSEA_HEARTBEAT_MODEL_ENV]) {
+    return false;
+  }
+  return true;
+}
+
+async function ensureGridModelFunded(apiKey: string, modelId: string, catalog: Awaited<ReturnType<typeof fetchGridModelCatalog>>): Promise<void> {
+  const entry = catalog.entries.find((row) => row.id === modelId);
+  if (entry?.funded) {
+    return;
+  }
+  const funded = await ensureGridModelHasCredits(apiKey, modelId);
+  if (!funded) {
+    logWarn(`Provisioning cancelled — add Grid credits for "${modelId}" and try again.`);
+    throw new Error("Grid model has no consumption balance");
+  }
+}
+
 /** Resolve MODEL_ID → validated id; optionally prompt against `GET …/models` when interactive. */
 async function resolveProvisionModelId(
   agentName: string,
@@ -496,9 +539,10 @@ async function resolveProvisionModelId(
     }
   }
 
-  if (shouldOfferGridModelPicker(agent, preference)) {
-    logAlwaysStep("Fetching models from The Grid…");
-    const catalog = await fetchGridModelCatalog(apiKey);
+  const needsModelCatalog =
+    shouldOfferGridModelPicker(agent, preference) || shouldOfferHeartbeatModelPicker(agentName);
+  if (needsModelCatalog) {
+    const catalog = await runWithSpinner("Fetching models from The Grid…", async () => fetchGridModelCatalog(apiKey));
     if (catalog.authFailed) {
       logWarn("The Grid API key was rejected — check THEGRID_API_KEY (and THEGRID_API_URL if set).");
       if (
@@ -521,17 +565,25 @@ async function resolveProvisionModelId(
         agent.modelDefault && catalogueIds.includes(agent.modelDefault) ? agent.modelDefault : catalogueIds[0]!;
       const suggested =
         rawModelId && catalogueIds.includes(rawModelId) ? rawModelId : fallback;
-      const picked = await promptGridCatalogModelId(catalog.entries, suggested);
-      if (picked && validateModelId(picked)) {
-        const entry = catalog.entries.find((row) => row.id === picked);
-        if (!entry?.funded) {
-          const funded = await ensureGridModelHasCredits(apiKey, picked);
-          if (!funded) {
-            logWarn("Provisioning cancelled — add Grid credits for the selected model and try again.");
-            throw new Error("Grid model has no consumption balance");
-          }
+
+      if (shouldOfferGridModelPicker(agent, preference)) {
+        const picked = await promptHarnessGridModels(catalog.entries, suggested, agentName);
+        if (picked.primary && validateModelId(picked.primary)) {
+          await ensureGridModelFunded(apiKey, picked.primary, catalog);
+          rawModelId = picked.primary;
         }
-        rawModelId = picked;
+        if (picked.utility && validateModelId(picked.utility)) {
+          await ensureGridModelFunded(apiKey, picked.utility, catalog);
+          process.env[AGENTSEA_HEARTBEAT_MODEL_ENV] = picked.utility;
+        }
+      } else if (shouldOfferHeartbeatModelPicker(agentName)) {
+        const picked = await promptHarnessGridModels(catalog.entries, suggested, agentName, {
+          heartbeatOnly: true,
+        });
+        if (picked.utility && validateModelId(picked.utility)) {
+          await ensureGridModelFunded(apiKey, picked.utility, catalog);
+          process.env[AGENTSEA_HEARTBEAT_MODEL_ENV] = picked.utility;
+        }
       }
     } else if (catalog.publicCatalogFailed && catalog.authFailed) {
       logWarn("Could not load model catalogue from The Grid — continuing with CLI defaults.");
@@ -979,7 +1031,11 @@ export async function resumeOrchestrationFromRecord(
   if (options?.testResumeStopBeforePostInstall) {
     return;
   }
-  await runPostInstallPhase(cloud, agent, record.agent, apiKey, modelId, record.id, envSoft, options);
+  const skipConfigure = phaseIdx >= provisionPhaseIndex("agent_configured");
+  await runPostInstallPhase(cloud, agent, record.agent, apiKey, modelId, record.id, envSoft, {
+    ...options,
+    skipAgentConfigure: skipConfigure,
+  });
 }
 
 /** Write env content to ~/.agentsearc and ensure all shell rc files source it. */
@@ -1096,14 +1152,42 @@ export async function runPostInstallPhase(
   }
 
   // Agent-specific configuration
-  if (agent.configure) {
-    logAlwaysStep(`${agent.name}: remote configuration…`);
-    const configResult = await asyncTryCatch(() =>
-      withRetry("agent config", () => wrapSshCall(agent.configure!(apiKey, modelId, enabledSteps)), 2, 5),
-    );
+  if (agent.configure && !options?.skipAgentConfigure) {
+    const configLabel = `${agent.name}: remote configuration…`;
+    const runConfigure = () =>
+      withRetry("agent config", () => wrapSshCall(agent.configure!(apiKey, modelId, enabledSteps)), 2, 5);
+    const configResult = await asyncTryCatch(() => {
+      if (isAgentseaVerbose()) {
+        logAlwaysStep(configLabel);
+        return runConfigure();
+      }
+      return runWithSpinner(
+        configLabel,
+        async (handle) => {
+          handle.setDetail("writing config files");
+          return runConfigure();
+        },
+        {
+          doneMessage: `${agent.name} configured`,
+          formatMessage: ({ base, detail, elapsedSec }) => {
+            const phase =
+              elapsedSec < 20
+                ? detail || "applying settings"
+                : elapsedSec < 90
+                  ? "merging provider config"
+                  : "finishing setup";
+            return `${base} — ${phase}`;
+          },
+        },
+      );
+    });
     if (!configResult.ok) {
       logWarn("Agent configuration failed (continuing with defaults)");
       soft.push("agent_configure");
+    } else {
+      patchAgentseaRecord(agentseaId, {
+        provision_phase: "agent_configured",
+      });
     }
   }
   trackFunnel("funnel_configure_completed");
@@ -1234,6 +1318,18 @@ export async function runPostInstallPhase(
   // Web dashboard access
   let tunnelHandle: SshTunnelHandle | undefined;
   let t3PairingWatcher: { stop: () => void } | undefined;
+  let hermesDashboardReady = true;
+  if (agentName === "hermes") {
+    hermesDashboardReady = await ensureHermesDashboard(cloud.runner);
+    if (!hermesDashboardReady) {
+      logWarn(
+        isLocalRuntime(cloud)
+          ? "Hermes dashboard is not running — skipping browser. The TUI still works; run `hermes dashboard` or try agentsea list → Open Dashboard."
+          : "Hermes dashboard is not running on the server — skipping browser. The TUI works; try again later via agentsea list → Open Dashboard.",
+      );
+      soft.push("hermes_dashboard");
+    }
+  }
   if (agent.tunnel) {
     const tunnelCfg = agent.tunnel; // capture for closure (TS can't narrow across async boundaries)
     const templateUrl = tunnelCfg.browserUrl?.(0);
@@ -1249,7 +1345,7 @@ export async function runPostInstallPhase(
           remotePort: tunnelCfg.remotePort,
           sshKeyOpts: getSshKeyOpts(keys),
         });
-        if (tunnelCfg.browserUrl) {
+        if (tunnelCfg.browserUrl && hermesDashboardReady) {
           const url = tunnelCfg.browserUrl(tunnelHandle.localPort);
           if (url) {
           logAlwaysStep("Web dashboard — Control UI");
@@ -1284,7 +1380,7 @@ export async function runPostInstallPhase(
         soft.push("dashboard_preview");
       }
     } else if (isLocalRuntime(cloud)) {
-      if (agent.tunnel.browserUrl) {
+      if (agent.tunnel.browserUrl && hermesDashboardReady) {
         const url = agent.tunnel.browserUrl(agent.tunnel.remotePort);
         if (url) {
           logAlwaysStep("Web dashboard — Control UI");
@@ -1344,7 +1440,7 @@ export async function runPostInstallPhase(
     }
   }
 
-  if (agent.preLaunchMsg) {
+  if (agent.preLaunchMsg && hermesDashboardReady) {
     process.stderr.write("\n");
     logAlwaysInfo(`Tip: ${agent.preLaunchMsg}`);
   }
@@ -1352,6 +1448,14 @@ export async function runPostInstallPhase(
   // Launch agent
   logAlwaysInfo(`Agent setup complete — ${agent.name} is ready on ${cloud.cloudLabel}`);
   process.stderr.write("\n");
+
+  const manifestForNextSteps = await asyncTryCatchIf(isOperationalError, () =>
+    import("../manifest.js").then((m) => m.loadManifest()),
+  );
+  if (manifestForNextSteps.ok) {
+    const { writeAgentNextSteps } = await import("./next-steps.js");
+    writeAgentNextSteps(agentName, manifestForNextSteps.data, { headless: isHeadless });
+  }
 
   // Final funnel event — pipeline completed all the way to handoff.
   // Downstream analysis: (funnel_started count) - (funnel_handoff count) =
@@ -1375,13 +1479,25 @@ export async function runPostInstallPhase(
     const headlessPrompt = process.env.AGENTSEA_PROMPT;
     if (headlessPrompt && agent.promptCmd) {
       logAlwaysInfo("Headless mode — running prompt on provisioned VM...");
-      const promptRunCmd = agent.promptCmd(headlessPrompt);
+      const promptRunCmd = wrapHeadlessPromptCmd(agent.promptCmd(headlessPrompt));
       const promptResult = await asyncTryCatch(() => cloud.runner.runServer(promptRunCmd, 600));
       if (!promptResult.ok) {
-        logWarn(`Prompt execution failed: ${getErrorMessage(promptResult.error)}`);
-      } else {
-        logAlwaysInfo("Prompt execution completed");
+        logError(`Headless prompt failed: ${getErrorMessage(promptResult.error)}`);
+        process.exit(1);
       }
+      if (process.env.AGENTSEA_USE_CHAT_INPUT_TEST !== "1") {
+        const toolAssert = await asyncTryCatch(() =>
+          cloud.runner.runServer(assertToolE2eFileCmd(), 30),
+        );
+        if (!toolAssert.ok) {
+          logError(
+            `Headless tool E2E failed: agent did not create ${TOOL_E2E_FILE} — ${getErrorMessage(toolAssert.error)}`,
+          );
+          process.exit(1);
+        }
+        logAlwaysInfo("Tool E2E file assertion passed");
+      }
+      logAlwaysInfo("Prompt execution completed");
     } else {
       logAlwaysInfo("Headless mode — provisioning complete. Skipping interactive session.");
     }

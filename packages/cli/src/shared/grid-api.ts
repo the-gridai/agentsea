@@ -64,6 +64,16 @@ export function resolveGridOpenClawMessagesBase(): string {
   return `${resolveGridAnthropicMessagesClientBase()}/v1`;
 }
 
+export type OpenClawGridProviderWire = "openai-completions" | "anthropic-messages";
+
+/** OpenClaw provider wiring. Set AGENTSEA_OPENCLAW_SSRF_SAFE=1 for messages-beta (no cross-host redirects). */
+export function resolveOpenClawGridProvider(): { baseUrl: string; api: OpenClawGridProviderWire } {
+  if (process.env.AGENTSEA_OPENCLAW_SSRF_SAFE === "1") {
+    return { baseUrl: resolveGridOpenClawMessagesBase(), api: "anthropic-messages" };
+  }
+  return { baseUrl: resolveGridInferenceApiBase(), api: "openai-completions" };
+}
+
 /** The Grid web app origin for credits / account management (matches inference env). */
 export function resolveGridWebAppOrigin(): string {
   const base = resolveGridInferenceApiBase();

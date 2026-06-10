@@ -1,8 +1,4 @@
-/**
- * Single source of truth for the "Why AgentSea?" feature cards rendered
- * on both `/` and `/cli` (launch view). Update copy here; both surfaces
- * pick it up.
- */
+/** Single source of truth for "Why AgentSea?" feature cards on `/why-agentsea`. */
 export interface WhyCard {
   title: string;
   body: string;

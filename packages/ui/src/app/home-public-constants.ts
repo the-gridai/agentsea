@@ -38,17 +38,16 @@ export const THEGRID_API_KEY_ENV_VAR = "THEGRID_API_KEY";
 /** Where users create Grid API keys in the dashboard (adjust path when canonical). */
 export const THEGRID_API_KEYS_DASHBOARD_ORIGIN = "https://app.thegrid.ai";
 
-/** Agents with end-to-end Grid chat verified on DigitalOcean (provision → configure → LLM). */
+/**
+ * Homepage agents only. Junie/Pi/Cursor/Codex/T3 are disabled in manifest until tool E2E passes.
+ * Hermes is included — provision/configure verified; automated input test skipped (TUI-only).
+ */
 export const CHAT_VERIFIED_AGENT_SLUGS = [
-  "claude",
-  "cursor",
   "openclaw",
-  "codex",
-  "opencode",
-  "kilocode",
   "hermes",
-  "junie",
-  "pi",
+  "kilocode",
+  "claude",
+  "opencode",
 ] as const;
 
 export type ChatVerifiedAgentSlug = (typeof CHAT_VERIFIED_AGENT_SLUGS)[number];

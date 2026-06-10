@@ -1,4 +1,4 @@
-// t3-config.ts ù T3 Code settings for The Grid (Codex provider + model defaults).
+// t3-config.ts ¬ù T3 Code settings for The Grid (Codex provider + model defaults).
 
 import type { CloudRunner } from "./agent-setup.js";
 import { uploadConfigFile } from "./agent-setup.js";
@@ -16,7 +16,7 @@ export const T3_USERDATA_DIR = "$HOME/.t3/userdata";
 /** Relative to home; uploaded as `$HOME/.t3/userdata/settings.json`. */
 export const T3_SETTINGS_REMOTE_PATH = `${T3_USERDATA_DIR}/settings.json`;
 
-/** T3 hardcodes these OpenAI slugs ù expose agent-standard in the provider model list. */
+/** T3 hardcodes these OpenAI slugs ¬ù expose agent-standard in the provider model list. */
 export const T3_CODEX_UI_MODEL_ALIASES = [
   "gpt-5.4-mini",
   "gpt-5.4",
@@ -33,7 +33,7 @@ export function resolveT3GridModelId(modelId?: string): string {
 
 /**
  * Seed ~/.t3/userdata/settings.json so title generation and provider pickers prefer the Grid
- * catalogue id. Thread turns still request gpt-5.4 by default ù those are aliased in LiteLLM.
+ * catalogue id. Thread turns still request gpt-5.4 by default ¬ù those are catalogue id.
  */
 export function buildT3GridSettingsJson(modelId?: string): string {
   const model = resolveT3GridModelId(modelId);
@@ -65,13 +65,12 @@ export async function setupT3Settings(runner: CloudRunner, modelId?: string): Pr
   logInfo(`T3 Code settings written (${selectedModel}, codex provider)`);
 }
 
-/** Shell prefix: agentsea env, codex on PATH, nudge Codex LiteLLM proxy if preLaunch/systemd missed it. */
+/** Shell prefix: agentsea env and codex on PATH for T3 launch. */
 export const T3_LAUNCH_SHELL_PREFIX = [
   "source ~/.agentsearc 2>/dev/null",
   "source ~/.zshrc 2>/dev/null",
-  'export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.litellm-venv/bin:$HOME/.bun/bin:/usr/local/bin:$PATH"',
+  'export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.bun/bin:/usr/local/bin:$PATH"',
   "export THEGRID_API_KEY OPENAI_API_KEY",
-  'curl -sf "http://127.0.0.1:4141/health/liveliness" >/dev/null 2>&1 || { command -v systemctl >/dev/null 2>&1 && systemctl restart codex-litellm 2>/dev/null || true; }',
 ].join("; ");
 
 /** Shell command to launch T3 on loopback (matches SSH tunnel target on the VM). */
@@ -80,7 +79,7 @@ export const T3_SERVER_LAUNCH = "t3 --port 3773 --host 127.0.0.1 --no-browser";
 /** Full remote launch: env prefix + T3 server (pairing URL is opened by agentsea locally). */
 export const T3_LAUNCH_CMD = `${T3_LAUNCH_SHELL_PREFIX}; ${T3_SERVER_LAUNCH}`;
 
-/** @deprecated Use T3_LAUNCH_CMD ó pipe/while breaks under bash -c quoting. */
+/** @deprecated Use T3_LAUNCH_CMD ¬ó pipe/while breaks under bash -c quoting. */
 export const T3_LAUNCH_WITH_PAIRING_HINT = T3_LAUNCH_CMD;
 
 /** Browser URL for T3 pairing through an SSH tunnel (use tunnel local port, not remote 3773). */
@@ -168,7 +167,7 @@ export function logT3PairingHandoff(localPort: number, pairingUrl?: string): voi
     logAlwaysInfo(
       [
         cookieHint,
-        "T3 Code pairing URL (open this in your browser ù use 127.0.0.1, not the localhost:3773 link from T3 logs):",
+        "T3 Code pairing URL (open this in your browser ¬ù use 127.0.0.1, not the localhost:3773 link from T3 logs):",
         pairingUrl,
       ].join("\n"),
     );
@@ -181,7 +180,7 @@ export function logT3PairingHandoff(localPort: number, pairingUrl?: string): voi
   logAlwaysInfo(
     [
       cookieHint,
-      "T3 Code requires browser pairing ù ignore the localhost:3773 link in T3 server logs.",
+      "T3 Code requires browser pairing ¬ù ignore the localhost:3773 link in T3 server logs.",
       "When T3 starts, agentsea will print/open the correct URL, or copy the token and open:",
       `  http://127.0.0.1:${localPort}/pair#token=TOKEN_FROM_LOG`,
     ].join("\n"),

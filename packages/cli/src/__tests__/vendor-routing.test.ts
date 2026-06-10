@@ -7,8 +7,8 @@ import {
   OPENCLAW_GRID_PROVIDER_ID,
   VENDOR_AGENT_IMAGE_REGISTRY,
   VENDOR_CHAT_MODEL_DEFAULT,
+  KILO_GRID_PROVIDER_ID,
   VENDOR_CODEX_MODEL_PROVIDER_KEY,
-  VENDOR_KILO_PROVIDER_TYPE_VALUE,
   digitalOceanAgentSeaImageSlug,
 } from "../shared/vendor-routing.js";
 
@@ -25,8 +25,8 @@ describe("vendor-routing", () => {
   });
 
   it("decodes routing constants used by upstream CLIs", () => {
-    expect(VENDOR_KILO_PROVIDER_TYPE_VALUE).toBe("opentouter");
-    expect(VENDOR_CODEX_MODEL_PROVIDER_KEY).toBe("opentouter");
+    expect(KILO_GRID_PROVIDER_ID).toBe("thegrid");
+    expect(VENDOR_CODEX_MODEL_PROVIDER_KEY).toBe("thegrid");
     expect(LEGACY_SAVED_API_KEY_CONFIG_STEM).toBe("opentouter");
     expect(VENDOR_AGENT_IMAGE_REGISTRY).toBe("ghcr.io/openrouterteam");
     expect(digitalOceanAgentSeaImageSlug("claude")).toBe("openrouter-spawnclaude");

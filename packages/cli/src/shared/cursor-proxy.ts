@@ -12,9 +12,12 @@
 
 import type { CloudRunner } from "./agent-setup.js";
 
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { wrapSshCall } from "./agent-setup.js";
 import { asyncTryCatchIf, isOperationalError } from "./result.js";
 import { logInfo, logStep, logWarn } from "./ui.js";
+import { resolveAgentGridModelId } from "./grid-instruments.js";
 import { GRID_INFERENCE_DEFAULT_MODEL_ID } from "./vendor-routing.js";
 import { gridInferenceChatCompletionsUrl } from "./grid-api.js";
 
@@ -53,7 +56,7 @@ function formatGridModelDisplayName(id){
   const tail=id.includes("/")?id.slice(id.lastIndexOf("/")+1):id;
   return tail.split(/[-_.]/).filter(Boolean).map(function(w){return w.charAt(0).toUpperCase()+w.slice(1);}).join(" ");
 }
-const GRID_MODEL_ID=process.env.GRID_MODEL_ID||"agent-standard";
+const GRID_MODEL_ID=process.env.GRID_MODEL_ID||"code-prime";
 const GRID_MODEL_DISPLAY=process.env.GRID_MODEL_DISPLAY_NAME||formatGridModelDisplayName(GRID_MODEL_ID);
 function bmr(){return Buffer.concat([[GRID_MODEL_ID,GRID_MODEL_DISPLAY]].map(function(pair){return em(1,bmd(pair[0],pair[1]));}));}
 function bdr(){return em(1,bmd(GRID_MODEL_ID,GRID_MODEL_DISPLAY));}
@@ -65,7 +68,7 @@ function xstr(buf,out){let o=0;while(o<buf.length){let t=0,s=0;while(o<buf.lengt
 function getUnaryScript(): string {
   return `import http from "node:http";
 import { appendFileSync } from "node:fs";
-const LOG="/var/log/cursor-proxy-unary.log";
+const LOG=process.env.HOME+"/.cursor/proxy/unary.log";
 function log(msg){try{appendFileSync(LOG,new Date().toISOString()+" "+msg+"\\n");}catch(e){}}
 
 ${PROTO_HELPERS}
@@ -146,7 +149,7 @@ function getBidiScript(gridChatCompletionsUrl: string): string {
   const gridChatUrl = gridChatCompletionsUrl.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   return `import http2 from "node:http2";
 import { appendFileSync } from "node:fs";
-const LOG="/var/log/cursor-proxy-bidi.log";
+const LOG=process.env.HOME+"/.cursor/proxy/bidi.log";
 function log(msg){try{appendFileSync(LOG,new Date().toISOString()+" "+msg+"\\n");}catch(e){}}
 
 ${PROTO_HELPERS}
@@ -199,10 +202,11 @@ async function forwardGridChatCompletion(msg, stream) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: process.env.GRID_MODEL_ID || "agent-standard",
+        model: process.env.GRID_MODEL_ID || "code-prime",
         messages: [{ role: "user", content: msg }],
         stream: true,
       }),
+      redirect: "follow",
     });
 
     if (!r.ok) {
@@ -286,13 +290,82 @@ https://agent.api5.cursor.sh {
 
 // ── Hosts entries ───────────────────────────────────────────────────────────
 
-const CURSOR_DOMAINS = [
+/** HTTPS endpoint Cursor CLI uses once Caddy + /etc/hosts are configured. */
+export const CURSOR_PROXY_HTTPS_ENDPOINT = "https://api2.cursor.sh";
+
+export const CURSOR_PROXY_DOMAINS = [
   "api2.cursor.sh",
   "api2geo.cursor.sh",
   "api2direct.cursor.sh",
   "agentn.api5.cursor.sh",
   "agent.api5.cursor.sh",
-];
+] as const;
+
+const CURSOR_DOMAINS = [...CURSOR_PROXY_DOMAINS];
+
+/** Shell snippet: install Caddy to ~/.local/bin and grant CAP_NET_BIND_SERVICE for :443. */
+export function cursorCaddyInstallScript(): string {
+  return [
+    'export PATH="$HOME/.local/bin:$PATH"',
+    'if ! command -v caddy >/dev/null 2>&1; then',
+    '  mkdir -p "$HOME/.local/bin"',
+    '  echo "Installing Caddy to ~/.local/bin..."',
+    '  curl -sf "https://caddyserver.com/api/download?os=linux&arch=amd64" -o "$HOME/.local/bin/caddy"',
+    '  chmod +x "$HOME/.local/bin/caddy"',
+    "fi",
+    "caddy version",
+    '_sudo=""; [ "$(id -u)" != "0" ] && _sudo="sudo"',
+    'if $_sudo getcap "$HOME/.local/bin/caddy" 2>/dev/null | grep -q cap_net_bind_service; then',
+    '  echo "caddy-setcap=ok"',
+    'elif $_sudo setcap cap_net_bind_service=+ep "$HOME/.local/bin/caddy" 2>/dev/null; then',
+    '  echo "caddy-setcap=ok"',
+    "else",
+    '  echo "caddy-setcap=skipped"',
+    "fi",
+  ].join("\n");
+}
+
+/** Shell snippet: map Cursor API hostnames to 127.0.0.1 in /etc/hosts (requires sudo). */
+export function cursorHostsSetupScript(): string {
+  return [
+    '_sudo=""; [ "$(id -u)" != "0" ] && _sudo="sudo"',
+    'if grep -q "api2\\.cursor\\.sh" /etc/hosts 2>/dev/null; then',
+    '  echo "hosts-spoof=ok"',
+    "  exit 0",
+    "fi",
+    'if ! $_sudo test -w /etc/hosts 2>/dev/null; then',
+    '  echo "hosts-spoof=FAILED: /etc/hosts not writable (sudo required)" >&2',
+    "  exit 1",
+    "fi",
+    '$_sudo sed -i "/cursor\\.sh/d" /etc/hosts 2>/dev/null || true',
+    `$_sudo sh -c 'echo "127.0.0.1 ${CURSOR_DOMAINS.join(" ")}" >> /etc/hosts'`,
+    'echo "hosts-spoof=ok"',
+  ].join("\n");
+}
+
+function cursorCaddyStartScript(): string {
+  const portCheck = (port: number) =>
+    `ss -tln 2>/dev/null | grep -q ":${port} " || nc -z 127.0.0.1 ${port} 2>/dev/null`;
+  return [
+    'export PATH="$HOME/.local/bin:$PATH"',
+    'export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"',
+    'export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"',
+    'mkdir -p "$HOME/.cursor/proxy"',
+    `if ${portCheck(443)}; then echo "Caddy already running"; exit 0; fi`,
+    'caddy stop --config "$HOME/.cursor/proxy/Caddyfile" 2>/dev/null || true',
+    'if caddy start --config "$HOME/.cursor/proxy/Caddyfile" --adapter caddyfile >> "$HOME/.cursor/proxy/caddy.log" 2>&1; then',
+    '  echo "caddy-start=ok"',
+    "  exit 0",
+    "fi",
+    '_sudo=""; [ "$(id -u)" != "0" ] && _sudo="sudo"',
+    'if $_sudo "$HOME/.local/bin/caddy" start --config "$HOME/.cursor/proxy/Caddyfile" --adapter caddyfile >> "$HOME/.cursor/proxy/caddy.log" 2>&1; then',
+    '  echo "caddy-start=sudo-ok"',
+    "  exit 0",
+    "fi",
+    'echo "caddy-start=FAILED" >&2; tail -20 "$HOME/.cursor/proxy/caddy.log" 2>/dev/null >&2 || true',
+    "exit 1",
+  ].join("\n");
+}
 
 // ── Deployment ──────────────────────────────────────────────────────────────
 
@@ -307,7 +380,7 @@ export function cursorProxyEnvFileScript(): string {
     ". ~/.agentsearc 2>/dev/null || true",
     "set +a",
     'if [ -z "${THEGRID_API_KEY:-}" ]; then echo "THEGRID_API_KEY missing from ~/.agentsearc" >&2; exit 1; fi',
-    'GRID_MODEL_ID="${GRID_MODEL_ID:-agent-standard}"',
+    'GRID_MODEL_ID="${GRID_MODEL_ID:-code-prime}"',
     'GRID_MODEL_DISPLAY_NAME="${GRID_MODEL_DISPLAY_NAME:-}"',
     "printf 'THEGRID_API_KEY=%s\\nGRID_MODEL_ID=%s\\nGRID_MODEL_DISPLAY_NAME=%s\\n' \\",
     '  "$THEGRID_API_KEY" "$GRID_MODEL_ID" "$GRID_MODEL_DISPLAY_NAME" > ~/.cursor/proxy/proxy.env',
@@ -322,20 +395,12 @@ export function cursorProxyEnvFileScript(): string {
  */
 export async function setupCursorProxy(runner: CloudRunner, modelId?: string): Promise<void> {
   logStep("Deploying Cursor→The Grid proxy...");
-  if (modelId?.trim()) {
-    logInfo(`Cursor proxy model: ${modelId.trim()} (${cursorGridModelDisplayName(modelId.trim())})`);
-  }
+  const gridModel = resolveAgentGridModelId("cursor", modelId);
+  logInfo(`Cursor proxy model: ${gridModel} (${cursorGridModelDisplayName(gridModel)})`);
 
-  // 1. Install Caddy if not present
-  const installCaddy = [
-    'if command -v caddy >/dev/null 2>&1; then echo "caddy already installed"; exit 0; fi',
-    'echo "Installing Caddy..."',
-    'curl -sf "https://caddyserver.com/api/download?os=linux&arch=amd64" -o /usr/local/bin/caddy',
-    "chmod +x /usr/local/bin/caddy",
-    "caddy version",
-  ].join("\n");
-
-  const caddyResult = await asyncTryCatchIf(isOperationalError, () => wrapSshCall(runner.runServer(installCaddy, 60)));
+  const caddyResult = await asyncTryCatchIf(isOperationalError, () =>
+    wrapSshCall(runner.runServer(cursorCaddyInstallScript(), 60)),
+  );
   if (!caddyResult.ok) {
     logWarn("Caddy install failed — Cursor proxy will not work");
     return;
@@ -369,21 +434,21 @@ export async function setupCursorProxy(runner: CloudRunner, modelId?: string): P
   await wrapSshCall(runner.runServer(deployScript));
   logInfo("Proxy scripts deployed");
 
-  // 3. Configure /etc/hosts for domain spoofing
-  const hostsScript = [
-    // Remove any existing cursor entries
-    'sed -i "/cursor\\.sh/d" /etc/hosts 2>/dev/null || true',
-    // Add our entries
-    `echo "127.0.0.1 ${CURSOR_DOMAINS.join(" ")}" >> /etc/hosts`,
-  ].join(" && ");
+  const hostsResult = await asyncTryCatchIf(isOperationalError, () =>
+    wrapSshCall(runner.runServer(cursorHostsSetupScript())),
+  );
+  if (hostsResult.ok) {
+    logInfo("Hosts spoofing configured for api2.cursor.sh → 127.0.0.1");
+  } else {
+    logWarn(
+      "Could not configure /etc/hosts — run: sudo sh -c 'echo \"127.0.0.1 api2.cursor.sh\" >> /etc/hosts'",
+    );
+  }
 
-  await wrapSshCall(runner.runServer(hostsScript));
-  logInfo("Hosts spoofing configured");
-
-  // 4. Install Caddy's internal CA cert
-  const trustScript = "caddy trust 2>/dev/null || true";
+  // 4. Trust Caddy internal CA (user-level when possible)
+  const trustScript = 'export PATH="$HOME/.local/bin:$PATH"; caddy trust 2>/dev/null || true';
   await wrapSshCall(runner.runServer(trustScript, 30));
-  logInfo("Caddy CA trusted");
+  logInfo("Caddy CA trust attempted");
 
   // 5. Write Cursor CLI config (permissions + PATH)
   const configScript = [
@@ -399,90 +464,96 @@ CONF`,
   logInfo("Cursor CLI configured");
 }
 
+function cursorProxyWrapperScript(role: "unary" | "bidi" | "caddy"): string {
+  if (role === "caddy") {
+    return [
+      "#!/bin/bash",
+      'export PATH="$HOME/.local/bin:$PATH"',
+      'export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"',
+      'export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"',
+      'exec caddy run --config "$HOME/.cursor/proxy/Caddyfile" --adapter caddyfile',
+    ].join("\n");
+  }
+  const script = role === "unary" ? "unary.mjs" : "bidi.mjs";
+  return [
+    "#!/bin/bash",
+    'set -a; . "$HOME/.cursor/proxy/proxy.env" 2>/dev/null; set +a',
+    'NODE=$(find "$HOME/.local/share/cursor-agent" -name node -type f 2>/dev/null | head -1)',
+    '[ -z "$NODE" ] && NODE=$(command -v node)',
+    '[ -z "$NODE" ] && exit 1',
+    `exec "$NODE" "$HOME/.cursor/proxy/${script}"`,
+  ].join("\n");
+}
+
 /**
  * Start the Cursor proxy services (Caddy + two Node.js backends).
- * Uses systemd if available, falls back to setsid/nohup.
+ * Local mode uses runner.startService so proxies survive the ephemeral shell.
  */
 export async function startCursorProxy(runner: CloudRunner): Promise<void> {
   logStep("Starting Cursor proxy services...");
 
-  // Find Node.js binary (cursor bundles its own)
-  const nodeFind =
-    "NODE=$(find ~/.local/share/cursor-agent -name node -type f 2>/dev/null | head -1); " +
-    '[ -z "$NODE" ] && NODE=$(command -v node); ' +
-    'echo "Using node: $NODE"';
-
-  // Port check (same pattern as startGateway)
   const portCheck = (port: number) =>
     `ss -tln 2>/dev/null | grep -q ":${port} " || nc -z 127.0.0.1 ${port} 2>/dev/null`;
 
-  const script = [
+  const wrappers: { name: string; role: "unary" | "bidi" | "caddy"; log: string }[] = [
+    { name: "cursor-proxy-unary", role: "unary", log: "$HOME/.cursor/proxy/unary.log" },
+    { name: "cursor-proxy-bidi", role: "bidi", log: "$HOME/.cursor/proxy/bidi.log" },
+    { name: "cursor-proxy-caddy", role: "caddy", log: "$HOME/.cursor/proxy/caddy.log" },
+  ];
+
+  const wrapperB64s = wrappers.map((w) => Buffer.from(cursorProxyWrapperScript(w.role)).toString("base64"));
+  for (const b64 of wrapperB64s) {
+    if (!/^[A-Za-z0-9+/=]+$/.test(b64)) {
+      throw new Error("Unexpected characters in base64 output");
+    }
+  }
+
+  const installWrappers = [
     cursorProxyEnvFileScript(),
-    nodeFind,
+    'mkdir -p "$HOME/.local/bin" "$HOME/.cursor/proxy"',
+    ...wrappers.map(
+      (w, i) =>
+        `printf '%s' '${wrapperB64s[i]}' | base64 -d > /tmp/${w.name}.tmp && chmod +x /tmp/${w.name}.tmp && mv /tmp/${w.name}.tmp "$HOME/.local/bin/${w.name}"`,
+    ),
+  ].join("\n");
 
-    // Start unary backend
+  if (runner.startService) {
+    const home = process.env.HOME || homedir();
+    await wrapSshCall(runner.runServer(installWrappers, 60));
+    for (const w of wrappers) {
+      const logPath = join(home, ".cursor/proxy", `${w.role}.log`);
+      await runner.startService(`exec "$HOME/.local/bin/${w.name}"`, logPath);
+    }
+    const waitScript = [
+      "elapsed=0; while [ $elapsed -lt 45 ]; do",
+      `  if ${portCheck(443)} && ${portCheck(18644)} && ${portCheck(18645)}; then`,
+      '    echo "Cursor proxy ready after ${elapsed}s"',
+      "    exit 0",
+      "  fi",
+      "  sleep 1; elapsed=$((elapsed + 1))",
+      "done",
+      'echo "Cursor proxy failed to start"; exit 1',
+    ].join("\n");
+    const result = await asyncTryCatchIf(isOperationalError, () => wrapSshCall(runner.runServer(waitScript, 60)));
+    if (result.ok) {
+      logInfo("Cursor proxy started");
+    } else {
+      logWarn("Cursor proxy start failed — agent may not work");
+    }
+    return;
+  }
+
+  const script = [
+    installWrappers,
+    'export PATH="$HOME/.local/bin:$PATH"',
     `if ${portCheck(18644)}; then echo "Unary backend already running"; else`,
-    "  if command -v systemctl >/dev/null 2>&1; then",
-    '    _sudo=""; [ "$(id -u)" != "0" ] && _sudo="sudo"',
-    "    cat > /tmp/cursor-proxy-unary.service << UNIT",
-    "[Unit]",
-    "Description=Cursor Proxy (unary)",
-    "After=network.target",
-    "[Service]",
-    "Type=simple",
-    "ExecStart=$NODE $HOME/.cursor/proxy/unary.mjs",
-    "Restart=always",
-    "RestartSec=3",
-    "User=$(whoami)",
-    "Environment=HOME=$HOME",
-    "EnvironmentFile=$HOME/.cursor/proxy/proxy.env",
-    "Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin",
-    "[Install]",
-    "WantedBy=multi-user.target",
-    "UNIT",
-    "    $_sudo mv /tmp/cursor-proxy-unary.service /etc/systemd/system/",
-    "    $_sudo systemctl daemon-reload",
-    "    $_sudo systemctl restart cursor-proxy-unary",
-    "  else",
-    "    set -a; . ~/.cursor/proxy/proxy.env; set +a; setsid $NODE ~/.cursor/proxy/unary.mjs < /dev/null &",
-    "  fi",
+    '  setsid "$HOME/.local/bin/cursor-proxy-unary" >> "$HOME/.cursor/proxy/unary.log" 2>&1 < /dev/null &',
     "fi",
-
-    // Start bidi backend
     `if ${portCheck(18645)}; then echo "BiDi backend already running"; else`,
-    "  if command -v systemctl >/dev/null 2>&1; then",
-    '    _sudo=""; [ "$(id -u)" != "0" ] && _sudo="sudo"',
-    "    cat > /tmp/cursor-proxy-bidi.service << UNIT",
-    "[Unit]",
-    "Description=Cursor Proxy (bidi)",
-    "After=network.target",
-    "[Service]",
-    "Type=simple",
-    "ExecStart=$NODE $HOME/.cursor/proxy/bidi.mjs",
-    "Restart=always",
-    "RestartSec=3",
-    "User=$(whoami)",
-    "Environment=HOME=$HOME",
-    "EnvironmentFile=$HOME/.cursor/proxy/proxy.env",
-    "Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin",
-    "[Install]",
-    "WantedBy=multi-user.target",
-    "UNIT",
-    "    $_sudo mv /tmp/cursor-proxy-bidi.service /etc/systemd/system/",
-    "    $_sudo systemctl daemon-reload",
-    "    $_sudo systemctl restart cursor-proxy-bidi",
-    "  else",
-    "    set -a; . ~/.cursor/proxy/proxy.env; set +a; setsid $NODE ~/.cursor/proxy/bidi.mjs < /dev/null &",
-    "  fi",
+    '  setsid "$HOME/.local/bin/cursor-proxy-bidi" >> "$HOME/.cursor/proxy/bidi.log" 2>&1 < /dev/null &',
     "fi",
-
-    // Start Caddy
-    `if ${portCheck(443)}; then echo "Caddy already running"; else`,
-    "  caddy start --config ~/.cursor/proxy/Caddyfile --adapter caddyfile 2>/dev/null || true",
-    "fi",
-
-    // Wait for all services
-    "elapsed=0; while [ $elapsed -lt 30 ]; do",
+    cursorCaddyStartScript(),
+    "elapsed=0; while [ $elapsed -lt 45 ]; do",
     `  if ${portCheck(443)} && ${portCheck(18644)} && ${portCheck(18645)}; then`,
     '    echo "Cursor proxy ready after ${elapsed}s"',
     "    exit 0",
@@ -492,7 +563,7 @@ export async function startCursorProxy(runner: CloudRunner): Promise<void> {
     'echo "Cursor proxy failed to start"; exit 1',
   ].join("\n");
 
-  const result = await asyncTryCatchIf(isOperationalError, () => wrapSshCall(runner.runServer(script, 60)));
+  const result = await asyncTryCatchIf(isOperationalError, () => wrapSshCall(runner.runServer(script, 90)));
   if (result.ok) {
     logInfo("Cursor proxy started");
   } else {

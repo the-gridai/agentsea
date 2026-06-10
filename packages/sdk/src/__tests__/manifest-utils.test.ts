@@ -1,6 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import type { Manifest } from "../manifest-schema.js";
-import { agentKeys, cloudKeys, countImplemented, matrixStatus } from "../manifest-utils.js";
+import {
+  agentKeys,
+  allAgentKeys,
+  cloudKeys,
+  compareAgentSlugs,
+  countImplemented,
+  matrixStatus,
+  sortAgentSlugs,
+} from "../manifest-utils.js";
 
 const baseManifest = (): Manifest => ({
   agents: {
@@ -30,6 +38,17 @@ const baseManifest = (): Manifest => ({
       launch: "off",
       env: {},
       disabled: true,
+      github_stars: 500,
+    },
+    featured: {
+      name: "Featured",
+      description: "featured",
+      url: "https://featured.example",
+      install: "true",
+      launch: "featured",
+      env: {},
+      github_stars: 5,
+      sort_priority: 1,
     },
   },
   clouds: {
@@ -71,7 +90,42 @@ describe("manifest-utils", () => {
     expect(agentKeys(m)).toEqual([
       "aaa",
       "zzz",
+      "featured",
     ]);
+  });
+
+  it("allAgentKeys includes disabled agents after enabled ones", () => {
+    const m = baseManifest();
+    expect(allAgentKeys(m, "github-stars")).toEqual([
+      "aaa",
+      "zzz",
+      "featured",
+      "disabled_agent",
+    ]);
+  });
+
+  it("recommended sort uses sort_priority before github stars", () => {
+    const m = baseManifest();
+    expect(allAgentKeys(m, "recommended")).toEqual([
+      "featured",
+      "aaa",
+      "zzz",
+      "disabled_agent",
+    ]);
+  });
+
+  it("compareAgentSlugs sorts by name when mode is name", () => {
+    const m = baseManifest();
+    expect(sortAgentSlugs(m, ["zzz", "aaa", "featured"], "name")).toEqual([
+      "aaa",
+      "featured",
+      "zzz",
+    ]);
+  });
+
+  it("compareAgentSlugs keeps disabled agents last regardless of stars", () => {
+    const m = baseManifest();
+    expect(compareAgentSlugs(m, "disabled_agent", "aaa", "github-stars")).toBeGreaterThan(0);
   });
 
   it("cloudKeys returns object keys (unordered)", () => {

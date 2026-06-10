@@ -1,0 +1,8 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`writeAgentNextSteps formatting formats Hermes next steps for CLI output 1`] = `
+"  • Open the web dashboard — AgentSea starts it and opens localhost:9119 in your browser (via SSH tunnel on cloud servers).
+  • Start your first conversation in the terminal (hermes) or in the dashboard chat.
+  • Connect Telegram, Discord, Slack, or other apps through Hermes' messaging gateway. — Quickstart tutorial: https://hermes-agent.nousresearch.com/docs/getting-started/quickstart
+  • Reconnect anytime with agentsea connect or agentsea list → Open Dashboard. — Hermes docs: https://hermes-agent.nousresearch.com/docs/"
+`;

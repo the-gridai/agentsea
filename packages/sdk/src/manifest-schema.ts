@@ -1,5 +1,19 @@
 /** Manifest schema (AgentSea–compatible manifest shape) used by `@agentsea/cli` + marketing UI. */
 
+/** Optional external doc link shown with a next-step bullet. */
+export interface NextStepLink {
+  label: string;
+  url: string;
+}
+
+/** One actionable post-install guidance bullet for techsumers. */
+export interface NextStep {
+  /** Plain-language guidance (shown as a bullet). */
+  text: string;
+  /** Optional doc link appended after the bullet text. */
+  link?: NextStepLink;
+}
+
 export interface AgentDef {
   name: string;
   description: string;
@@ -30,6 +44,8 @@ export interface AgentDef {
   created?: string;
   added?: string;
   github_stars?: number;
+  /** Lower values surface first in homepage “Recommended” sort (Grid-friendly agents). */
+  sort_priority?: number;
   stars_updated?: string;
   language?: string;
   runtime?: string;
@@ -38,6 +54,8 @@ export interface AgentDef {
   tags?: string[];
   disabled?: boolean;
   disabled_reason?: string;
+  /** 3–5 actionable bullets shown after a successful AgentSea install. */
+  next_steps?: NextStep[];
 }
 
 export interface CloudDef {

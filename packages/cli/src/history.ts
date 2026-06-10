@@ -141,11 +141,70 @@ const LOCK_TIMEOUT_MS = 5000; // Max time to wait for lock
 const LOCK_STALE_MS = 30_000; // Force-remove locks older than this
 const LOCK_POLL_MS = 50; // Poll interval when waiting
 
+/** Re-entrant lock depth — nested withHistoryLock calls must not fight the same PID. */
+let lockDepth = 0;
+let lockWarned = false;
+
 function getLockPath(): string {
   return `${getHistoryPath()}.lock`;
 }
 
+function forceRemoveLock(lockPath: string): void {
+  tryCatch(() => unlinkSync(join(lockPath, "pid")));
+  tryCatch(() => rmdirSync(lockPath));
+}
+
+type LockPidInfo = { pid: number; lockTime: number };
+
+function readLockPidInfo(lockPath: string): LockPidInfo | null {
+  const pidFile = join(lockPath, "pid");
+  if (!existsSync(pidFile)) {
+    return null;
+  }
+  const content = readFileSync(pidFile, "utf-8").trim();
+  if (!content) {
+    return null;
+  }
+  const lines = content.split("\n");
+  const pid = Number(lines[0]);
+  const lockTime = Number(lines[1]);
+  if (!Number.isFinite(pid) || !Number.isFinite(lockTime)) {
+    return null;
+  }
+  return { pid, lockTime };
+}
+
+/** True when the lock dir should be removed so another process (or this one) can acquire. */
+function shouldForceRemoveLock(lockPath: string): boolean {
+  const info = readLockPidInfo(lockPath);
+  if (!info) {
+    // Empty/missing pid file — broken lock left by a crash or partial write
+    return true;
+  }
+  if (info.pid === process.pid) {
+    // Same process already holds the lock (re-entrant call)
+    return false;
+  }
+  if (Date.now() - info.lockTime > LOCK_STALE_MS) {
+    return true;
+  }
+  return false;
+}
+
+function warnLockOnce(): void {
+  if (lockWarned) {
+    return;
+  }
+  lockWarned = true;
+  logWarn("Could not acquire history lock — proceeding without lock");
+}
+
 function acquireLock(): boolean {
+  if (lockDepth > 0) {
+    lockDepth++;
+    return true;
+  }
+
   const lockPath = getLockPath();
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
 
@@ -158,49 +217,51 @@ function acquireLock(): boolean {
       const pidWriteResult = tryCatch(() => writeFileSync(join(lockPath, "pid"), `${process.pid}\n${Date.now()}`));
       if (!pidWriteResult.ok) {
         // PID write failed — clean up and retry so we don't leave an undetectable lock
-        tryCatch(() => rmdirSync(lockPath));
+        forceRemoveLock(lockPath);
         continue;
       }
+      lockDepth = 1;
       return true;
     }
 
-    // Lock exists — check if stale
-    const staleResult = tryCatch(() => {
-      const pidFile = join(lockPath, "pid");
-      if (existsSync(pidFile)) {
-        const content = readFileSync(pidFile, "utf-8");
-        const lines = content.split("\n");
-        const lockTime = Number(lines[1]);
-        if (lockTime && Date.now() - lockTime > LOCK_STALE_MS) {
-          // Stale lock — force remove
-          tryCatch(() => unlinkSync(join(lockPath, "pid")));
-          tryCatch(() => rmdirSync(lockPath));
-          return true; // Retry on next iteration
-        }
-      } else {
-        // Lock dir exists but no PID file — broken lock, force remove
-        tryCatch(() => rmdirSync(lockPath));
+    // Lock exists — remove if broken, stale, or held by this PID (re-entrancy)
+    const info = readLockPidInfo(lockPath);
+    if (info?.pid === process.pid) {
+      lockDepth = 1;
+      return true;
+    }
+
+    const removeResult = tryCatch(() => {
+      if (shouldForceRemoveLock(lockPath)) {
+        forceRemoveLock(lockPath);
         return true;
       }
       return false;
     });
 
-    if (staleResult.ok && staleResult.data) {
-      continue; // Stale lock removed, retry immediately
+    if (removeResult.ok && removeResult.data) {
+      continue;
     }
 
-    // Wait and retry
     Bun.sleepSync(LOCK_POLL_MS);
   }
 
-  logWarn("Could not acquire history lock — proceeding without lock");
+  // Last resort: clear a broken lock so the next write is not penalized again
+  if (shouldForceRemoveLock(lockPath)) {
+    forceRemoveLock(lockPath);
+  }
+
+  warnLockOnce();
   return false;
 }
 
 function releaseLock(): void {
-  const lockPath = getLockPath();
-  tryCatch(() => unlinkSync(join(lockPath, "pid")));
-  tryCatch(() => rmdirSync(lockPath));
+  if (lockDepth > 1) {
+    lockDepth--;
+    return;
+  }
+  lockDepth = 0;
+  forceRemoveLock(getLockPath());
 }
 
 /** Run a function while holding the history file lock.
@@ -712,6 +773,14 @@ export function getActiveServers(): AgentseaRecord[] {
 export function getActiveLocalRecords(): AgentseaRecord[] {
   const records = loadHistory();
   return records.filter((r) => r.connection?.cloud === "local" && !r.connection.deleted);
+}
+
+/** Active cloud VMs plus local runs — used by `list` and `delete` pickers. */
+export function getActiveListRecords(): AgentseaRecord[] {
+  return [
+    ...getActiveServers(),
+    ...getActiveLocalRecords(),
+  ];
 }
 
 /**
