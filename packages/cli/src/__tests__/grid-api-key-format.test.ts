@@ -41,20 +41,21 @@ describe("validateGridConsumptionApiKeyFormat", () => {
     }
   });
 
-  it("rejects trading-style base64 keys without sk-or-v1 prefix", () => {
-    const tradingKey = "WoqALXMfSU2l2yf+Z3W6MMa5XmQCpYQfZvXkD4gbv1c";
-    const result = validateGridConsumptionApiKeyFormat(tradingKey);
-    expect(result.valid).toBe(false);
-    if (!result.valid) {
-      expect(result.message).toContain("trading");
-    }
+  it("accepts base64 consumption keys from app.thegrid.ai", () => {
+    const base64Key = "WoqALXMfSU2l2yf+Z3W6MMa5XmQCpYQfZvXkD4gbv1c";
+    expect(validateGridConsumptionApiKeyFormat(base64Key)).toEqual({ valid: true });
+  });
+
+  it("accepts base64 keys with + and / in the body", () => {
+    const key = "AXqjS4Yy6wTly+jw4G/dzZc7OCg36uzmJ8fDXczZfZg";
+    expect(validateGridConsumptionApiKeyFormat(key)).toEqual({ valid: true });
   });
 
   it("rejects other sk- prefixes (OpenAI, Anthropic, etc.)", () => {
     const result = validateGridConsumptionApiKeyFormat("sk-ant-api03-abcdefghijklmnopqrstuvwxyz");
     expect(result.valid).toBe(false);
     if (!result.valid) {
-      expect(result.message).toContain("sk-or-v1");
+      expect(result.message).toContain("app.thegrid.ai");
     }
   });
 
