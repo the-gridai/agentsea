@@ -55,12 +55,14 @@ import {
   openBrowser,
   prompt,
   retryOrQuit,
+  runWithSpinner,
   sanitizeTermValue,
   selectFromList,
   shellQuote,
   toKebabCase,
   validateRegionName,
   validateServerName,
+  type SpinnerHandle,
 } from "../shared/ui.js";
 import { isAgentseaVerbose } from "../shared/verbosity.js";
 import { digitaloceanBilling } from "./billing.js";
@@ -1241,13 +1243,12 @@ export async function createServer(
     : "ubuntu-24-04-x64";
   const imageLabel = imageOverride ?? "ubuntu-24-04-x64";
 
-  if (isAgentseaVerbose()) {
-    logStep(
-      `Creating DigitalOcean droplet '${name}' (size: ${size}, region: ${effectiveRegion}, image: ${imageLabel})...`,
-    );
-  } else {
-    logAlwaysStep("Creating DigitalOcean droplet…");
-  }
+  const spinnerLabel = isAgentseaVerbose()
+    ? `Creating DigitalOcean droplet '${name}' (size: ${size}, region: ${effectiveRegion}, image: ${imageLabel})...`
+    : "Creating DigitalOcean droplet…";
+
+  const createAndActivate = async (handle: SpinnerHandle): Promise<VMConnection> => {
+    handle.setDetail("preparing SSH keys");
 
   // Attach only the agentsea-managed key — user's other registered keys stay off
   // the droplet (privacy + avoids sshd MaxAuthTries flood on the client side).
@@ -1273,6 +1274,7 @@ export async function createServer(
     dropletConfig.user_data = getCloudInitUserdata(tier);
   }
 
+  handle.setDetail("submitting create request");
   await ensureAgentseaAttributionTag();
   dropletConfig.tags = [
     AGENTSEA_DIGITALOCEAN_ATTRIBUTION_TAG,
@@ -1312,7 +1314,7 @@ export async function createServer(
         if (retryDroplet?.id) {
           _state.dropletId = String(retryDroplet.id);
           logInfo(`Droplet created: ID=${_state.dropletId}`);
-          await waitForDropletActive(_state.dropletId);
+          await waitForDropletActive(_state.dropletId, 60, handle);
           return {
             ip: _state.serverIp,
             user: "root",
@@ -1364,7 +1366,8 @@ export async function createServer(
   logInfo(`Droplet created: ID=${_state.dropletId}`);
 
   // Wait for droplet to become active and get IP
-  await waitForDropletActive(_state.dropletId);
+  handle.setDetail("waiting for active");
+  await waitForDropletActive(_state.dropletId, 60, handle);
 
   return {
     ip: _state.serverIp,
@@ -1373,9 +1376,22 @@ export async function createServer(
     server_name: name,
     cloud: "digitalocean",
   };
+  };
+
+  if (isAgentseaVerbose()) {
+    logStep(spinnerLabel);
+    return createAndActivate({ setDetail: () => {} });
+  }
+  return runWithSpinner(spinnerLabel, createAndActivate, {
+    doneMessage: "DigitalOcean droplet ready",
+  });
 }
 
-async function waitForDropletActive(dropletId: string, maxAttempts = 60): Promise<void> {
+async function waitForDropletActive(
+  dropletId: string,
+  maxAttempts = 60,
+  handle?: SpinnerHandle,
+): Promise<void> {
   logStep("Waiting for droplet to become active...");
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -1386,6 +1402,7 @@ async function waitForDropletActive(dropletId: string, maxAttempts = 60): Promis
       const msg = r.error instanceof Error ? r.error.message : String(r.error);
       if (msg.includes("404")) {
         // Transient — droplet not yet visible in the API, retry
+        handle?.setDetail(`propagating (${attempt}/${maxAttempts})`);
         logStepInline(`Droplet not yet visible (${attempt}/${maxAttempts})`);
         await sleep(5000);
         continue;
@@ -1413,7 +1430,9 @@ async function waitForDropletActive(dropletId: string, maxAttempts = 60): Promis
       throw new Error("Droplet activation timeout");
     }
 
-    logStepInline(`Droplet status: ${status || "unknown"} (${attempt}/${maxAttempts})`);
+    const statusLabel = status || "unknown";
+    handle?.setDetail(`${statusLabel} (${attempt}/${maxAttempts})`);
+    logStepInline(`Droplet status: ${statusLabel} (${attempt}/${maxAttempts})`);
     await sleep(5000);
   }
   logStepDone();

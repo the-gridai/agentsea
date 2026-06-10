@@ -128,8 +128,125 @@ function defaultSpinnerMessage(ctx: { base: string; detail: string; elapsedSec: 
   return `${ctx.base} (${elapsed})`;
 }
 
+const UNICODE_SPINNER_FRAMES = ["◐", "◓", "◑", "◒"] as const;
+const ASCII_SPINNER_FRAMES = ["|", "/", "-", "\\"] as const;
+const SPINNER_ANIM_MS = 80;
+const THROTTLED_STEP_MIN_GAP_MS = 3000;
+const THROTTLED_STEP_HEARTBEAT_MS = 10_000;
+
+type SpinnerMode = "inline" | "throttled" | "plain";
+
+function spinnerFrames(): readonly string[] {
+  return process.env.TERM === "linux" ? ASCII_SPINNER_FRAMES : UNICODE_SPINNER_FRAMES;
+}
+
+function resolveSpinnerMode(): SpinnerMode {
+  if (!process.stderr.isTTY || process.env.AGENTSEA_NO_SPINNER === "1") {
+    return "plain";
+  }
+  if (process.env.AGENTSEA_INLINE_SPINNER === "0") {
+    return "throttled";
+  }
+  if (process.env.AGENTSEA_INLINE_SPINNER === "1") {
+    return "inline";
+  }
+  // WSL ConPTY often ignores carriage returns on stderr (frames append horizontally).
+  if (isWslLinux()) {
+    return "throttled";
+  }
+  return "inline";
+}
+
+/** Prefer stdout on WSL when forcing inline — `\r` overwrite is more reliable there. */
+function inlineSpinnerStream(): NodeJS.WriteStream {
+  if (isWslLinux() && process.stdout.isTTY) {
+    return process.stdout;
+  }
+  return process.stderr;
+}
+
+function clearInlineSpinnerLine(stream: NodeJS.WriteStream): void {
+  stream.write("\r\x1b[K");
+}
+
+async function runInlineSpinner<T>(
+  buildLabel: () => string,
+  handle: SpinnerHandle,
+  fn: (handle: SpinnerHandle) => Promise<T>,
+  options: RunWithSpinnerOptions | undefined,
+  message: string,
+): Promise<T> {
+  const stream = inlineSpinnerStream();
+  const frames = spinnerFrames();
+  let frameIdx = 0;
+  const paintFrame = () => {
+    const frame = frames[frameIdx % frames.length] ?? frames[0] ?? "…";
+    frameIdx += 1;
+    stream.write(`\r${frame}  ${buildLabel()}\x1b[K`);
+  };
+
+  paintFrame();
+  const tickTimer = setInterval(paintFrame, SPINNER_ANIM_MS);
+
+  const r = await asyncTryCatch(() => fn(handle));
+  clearInterval(tickTimer);
+  clearInlineSpinnerLine(stream);
+  if (r.ok) {
+    logAlwaysStep(options?.doneMessage ?? message.replace(/…$/, ""));
+    return r.data;
+  }
+  logError(options?.failMessage ?? "Failed");
+  throw r.error;
+}
+
+async function runThrottledStepSpinner<T>(
+  buildLabel: () => string,
+  handle: SpinnerHandle,
+  fn: (handle: SpinnerHandle) => Promise<T>,
+  options: RunWithSpinnerOptions | undefined,
+  message: string,
+): Promise<T> {
+  let lastPrintedAt = 0;
+  let lastPrintedDetail = "";
+
+  const publish = (label: string, force = false) => {
+    const now = Date.now();
+    if (!force && now - lastPrintedAt < THROTTLED_STEP_MIN_GAP_MS) {
+      return;
+    }
+    lastPrintedAt = now;
+    logAlwaysStep(label);
+  };
+
+  publish(message, true);
+
+  const wrappedHandle: SpinnerHandle = {
+    setDetail(next: string) {
+      handle.setDetail(next);
+      if (next !== lastPrintedDetail) {
+        lastPrintedDetail = next;
+        publish(buildLabel());
+      }
+    },
+  };
+
+  const heartbeat = setInterval(() => publish(buildLabel()), THROTTLED_STEP_HEARTBEAT_MS);
+
+  try {
+    const r = await asyncTryCatch(() => fn(wrappedHandle));
+    if (r.ok) {
+      logAlwaysStep(options?.doneMessage ?? message.replace(/…$/, ""));
+      return r.data;
+    }
+    logError(options?.failMessage ?? "Failed");
+    throw r.error;
+  } finally {
+    clearInterval(heartbeat);
+  }
+}
+
 /**
- * Run async work behind a Clack spinner (TTY) or periodic step lines (non-TTY).
+ * Run async work with progress feedback: inline spinner (TTY), throttled steps (WSL), or periodic lines.
  * Use {@link SpinnerHandle.setDetail} inside `fn` for incremental sub-status.
  */
 export async function runWithSpinner<T>(
@@ -146,6 +263,7 @@ export async function runWithSpinner<T>(
     },
   };
 
+  const start = Date.now();
   const buildLabel = () =>
     formatMessage({
       base: message,
@@ -153,33 +271,16 @@ export async function runWithSpinner<T>(
       elapsedSec: Math.floor((Date.now() - start) / 1000),
     });
 
-  const useSpinner = process.stderr.isTTY && process.env.AGENTSEA_NO_SPINNER !== "1";
-  const start = Date.now();
-  let tickTimer: ReturnType<typeof setInterval> | undefined;
-  let fallbackTimer: ReturnType<typeof setInterval> | undefined;
-  let lastFallbackLog = 0;
-
-  if (useSpinner) {
-    const s = p.spinner({
-      output: process.stderr,
-    });
-    s.start(message);
-    tickTimer = setInterval(() => {
-      s.message(buildLabel());
-    }, tickMs);
-
-    const r = await asyncTryCatch(() => fn(handle));
-    if (tickTimer) {
-      clearInterval(tickTimer);
-    }
-    if (r.ok) {
-      s.stop(options?.doneMessage ?? message.replace(/…$/, ""));
-      return r.data;
-    }
-    s.stop(options?.failMessage ?? "Failed");
-    throw r.error;
+  const mode = resolveSpinnerMode();
+  if (mode === "inline") {
+    return runInlineSpinner(buildLabel, handle, fn, options, message);
+  }
+  if (mode === "throttled") {
+    return runThrottledStepSpinner(buildLabel, handle, fn, options, message);
   }
 
+  let fallbackTimer: ReturnType<typeof setInterval> | undefined;
+  let lastFallbackLog = 0;
   logAlwaysStep(message);
   fallbackTimer = setInterval(() => {
     const elapsed = Math.floor((Date.now() - start) / 1000);
