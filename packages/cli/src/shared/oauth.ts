@@ -34,11 +34,15 @@ export const GRID_CONSUMPTION_API_KEY_HINT =
 
 // ─── Key Validation ──────────────────────────────────────────────────────────
 
-/** Consumption keys issued by The Grid app (OpenRouter-compatible `sk-or-v1-` + hex). */
-const GRID_CONSUMPTION_KEY_PATTERN = /^sk-or-v1-[a-f0-9]{32,}$/;
+/** OpenRouter-compatible consumption keys from The Grid app (`sk-or-v1-` + hex). */
+const GRID_OPENROUTER_CONSUMPTION_PATTERN = /^sk-or-v1-[a-f0-9]{32,}$/;
 
-/** Trading API keys from The Grid key management (32-byte base64, no `sk-or-v1-` prefix). */
-const GRID_TRADING_KEY_PATTERN = /^[A-Za-z0-9+/]{40,48}={0,2}$/;
+/** Base64 consumption keys from app.thegrid.ai (same shape as some trading keys — use network validation). */
+const GRID_BASE64_CONSUMPTION_PATTERN = /^[A-Za-z0-9+/]{32,}={0,2}$/;
+
+function isGridConsumptionKeyShape(key: string): boolean {
+  return GRID_OPENROUTER_CONSUMPTION_PATTERN.test(key) || GRID_BASE64_CONSUMPTION_PATTERN.test(key);
+}
 
 const GRID_API_KEY_PLACEHOLDER =
   /^(?:test|xxx+|changeme|placeholder|example|fake|dummy|none|null|undefined|your[-_]?api[-_]?key)$/i;
@@ -48,7 +52,7 @@ const GRID_API_KEY_PLACEHOLDER_FRAGMENT =
 
 export type GridApiKeyFormatResult = { valid: true } | { valid: false; message: string };
 
-/** Local format check — no network I/O. Rejects empty, placeholders, trading keys, and malformed prefixes. */
+/** Local format check — no network I/O. Rejects empty, placeholders, and malformed prefixes. */
 export function validateGridConsumptionApiKeyFormat(raw: string): GridApiKeyFormatResult {
   const key = raw.trim();
   if (!key) {
@@ -66,22 +70,17 @@ export function validateGridConsumptionApiKeyFormat(raw: string): GridApiKeyForm
       message: "That looks like a placeholder — paste your real consumption key from The Grid app",
     };
   }
-  if (!key.startsWith("sk-or-v1-") && GRID_TRADING_KEY_PATTERN.test(key)) {
-    return {
-      valid: false,
-      message: "That looks like a trading API key — create a consumption key at https://app.thegrid.ai",
-    };
-  }
   if (/^sk-(?!or-v1-)/.test(key)) {
     return {
       valid: false,
-      message: "That key prefix is not a Grid consumption key — expected sk-or-v1-...",
+      message: "That key prefix is not a Grid consumption key — use a key from https://app.thegrid.ai",
     };
   }
-  if (!GRID_CONSUMPTION_KEY_PATTERN.test(key)) {
+  if (!isGridConsumptionKeyShape(key)) {
     return {
       valid: false,
-      message: "Invalid format — consumption keys look like sk-or-v1- followed by at least 32 hex characters",
+      message:
+        "Invalid format — paste your consumption API key from https://app.thegrid.ai (sk-or-v1-… or the base64 key shown in the app)",
     };
   }
   return { valid: true };
@@ -280,7 +279,7 @@ async function promptApiKey(): Promise<string | null> {
   const message = GRID_CONSUMPTION_API_KEY_PROMPT_LABEL.replace(/:\s*$/, "").trim();
   const result = await p.text({
     message,
-    placeholder: "sk-or-v1-...",
+    placeholder: "Paste consumption API key from app.thegrid.ai",
     validate: (val) => {
       const format = validateGridConsumptionApiKeyFormat(val ?? "");
       return format.valid ? undefined : format.message;
