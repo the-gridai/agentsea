@@ -20,6 +20,9 @@ export const GRID_INFERENCE_DEFAULT_MODEL_ID = "agent-standard";
  */
 export const VENDOR_CHAT_MODEL_DEFAULT = GRID_INFERENCE_DEFAULT_MODEL_ID;
 
+/** Env var for heartbeat / utility model override (pairs with `MODEL_ID` for thinking). */
+export const AGENTSEA_HEARTBEAT_MODEL_ENV = "AGENTSEA_HEARTBEAT_MODEL_ID";
+
 /**
  * OpenClaw built-in namespaces like **`openrouter/*`** map to bundled provider auth profiles, not Grid.
  * We register **`models.providers.thegrid`** (`OPENCLAW_GRID_PROVIDER_ID`) targeting **only**
@@ -31,11 +34,17 @@ export const OPENCLAW_GRID_PROVIDER_ID = "thegrid";
 export const OPENCLAW_GRID_MODEL_MAX_TOKENS = 8192;
 export const OPENCLAW_GRID_MODEL_CONTEXT_WINDOW = 200_000;
 
-/** Kilo Code / similar: env value for multi-provider routing slot. */
-export const VENDOR_KILO_PROVIDER_TYPE_VALUE = LLM_ROUTING_SLOT;
+/** Kilo Code built-in provider id for The Grid (`thegrid/model` in kilo.jsonc). */
+export const KILO_GRID_PROVIDER_ID = "thegrid";
 
 /** Codex `config.toml` model_provider + TOML table key. */
-export const VENDOR_CODEX_MODEL_PROVIDER_KEY = LLM_ROUTING_SLOT;
+export const VENDOR_CODEX_MODEL_PROVIDER_KEY = "thegrid";
+
+/**
+ * Last @openai/codex release before wire_api=chat removal (0.137+ requires /v1/responses).
+ * The Grid inference API only exposes /v1/chat/completions today.
+ */
+export const CODEX_CLI_GRID_PINNED_VERSION = "0.136.0";
 
 /** Docker Hub / GHCR org hosting published agent images (until Grid publishes its own). */
 export const VENDOR_AGENT_IMAGE_REGISTRY = routingDecode("Z2hjci5pby9vcGVucm91dGVydGVhbQ==");

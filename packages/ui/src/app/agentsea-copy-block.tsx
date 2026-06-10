@@ -9,11 +9,18 @@ export type AgentseaCopyBlockProps = {
   code: string;
   className?: string;
   stretch?: boolean;
+  /** Larger monospace for hero deploy commands. */
+  prominent?: boolean;
 };
 
 type CopyState = "idle" | "copied" | "failed";
 
-export const AgentseaCopyBlock = memo(function AgentseaCopyBlockComp({ code, className, stretch }: AgentseaCopyBlockProps) {
+export const AgentseaCopyBlock = memo(function AgentseaCopyBlockComp({
+  code,
+  className,
+  stretch,
+  prominent,
+}: AgentseaCopyBlockProps) {
   const [state, setState] = useState<CopyState>("idle");
   const timeoutRef = useRef<number | null>(null);
 
@@ -37,7 +44,12 @@ export const AgentseaCopyBlock = memo(function AgentseaCopyBlockComp({ code, cla
   }, [code]);
 
   const buttonLabel = state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : "Copy";
-  const blockClassName = [styles["block"], stretch ? styles["block--stretch"] : "", className ?? ""]
+  const blockClassName = [
+    styles["block"],
+    stretch ? styles["block--stretch"] : "",
+    prominent ? styles["block--prominent"] : "",
+    className ?? "",
+  ]
     .filter(Boolean)
     .join(" ");
 

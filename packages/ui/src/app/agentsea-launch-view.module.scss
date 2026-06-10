@@ -50,7 +50,15 @@
   line-height: 1.2;
   letter-spacing: -0.02em;
   color: c(text-1);
-  margin: 0 0 pad(6);
+  margin: 0 0 pad(4);
+}
+
+.hero__lede {
+  @include text(text-m);
+  color: c(text-2);
+  line-height: 1.55;
+  margin: 0 auto pad(6);
+  max-width: 40rem;
 }
 
 .pickRow {
@@ -127,10 +135,115 @@
   line-height: 1.25;
 }
 
-/* --- Step 3: Agentsea --- */
 .band {
   padding: pad(10) 0;
   border-top: 1px solid c(stroke-2);
+}
+
+.stepLead {
+  @include text(text-m);
+  color: c(text-2);
+  line-height: 1.55;
+  margin: 0 0 pad(5);
+  max-width: 40rem;
+}
+
+.stepFoot {
+  margin: pad(4) 0 0;
+  @include text(text-s);
+  color: c(text-3);
+}
+
+.stepFoot__link {
+  color: rgb(var(--text-highlight));
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.inlineCode {
+  font-family: var(--font-dm-mono), ui-monospace, monospace;
+  @include text(text-s);
+  color: c(text-1);
+  background: c(base-2);
+  border: 1px solid c(stroke-2);
+  border-radius: br(s);
+  padding: 0 pad(1);
+}
+
+.details {
+  margin-top: pad(5);
+  max-width: 40rem;
+}
+
+.nextSteps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-width: 40rem;
+  display: grid;
+  gap: pad(4);
+}
+
+.nextStep {
+  @include text(text-m);
+  color: c(text-2);
+  line-height: 1.55;
+  padding-left: pad(5);
+  position: relative;
+
+  &::before {
+    content: "•";
+    position: absolute;
+    left: 0;
+    color: c(text-3);
+  }
+}
+
+.nextStep__text {
+  color: c(text-2);
+}
+
+.nextStep__link {
+  color: rgb(var(--text-highlight));
+  text-decoration: none;
+  white-space: nowrap;
+
+  &:hover {
+    text-decoration: underline;
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgb(var(--text-highlight));
+    outline-offset: 2px;
+    border-radius: br(s);
+  }
+}
+
+.details__summary {
+  @include text(text-s);
+  @include font(500);
+  color: c(text-2);
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    color: c(text-1);
+  }
+}
+
+.details__body {
+  margin-top: pad(3);
+}
+
+.altTitle {
+  margin: 0 0 pad(4);
+  @include font(700);
+  font-size: clamp(1.15rem, 2.5vw, 1.35rem);
+  color: c(text-1);
+  letter-spacing: -0.02em;
 }
 
 .sectionHead {

@@ -8,6 +8,7 @@ import { getCdnOrigin } from "../shared/cdn.js";
 import { parseJsonWith } from "../shared/parse.js";
 import { asyncTryCatch, isFileError, tryCatch, tryCatchIf } from "../shared/result.js";
 import { getInstallCmd, getInstallScriptUrl, isWindows } from "../shared/shell.js";
+import { logError } from "../shared/ui.js";
 import { getErrorMessage, PkgVersionSchema, VERSION } from "./shared.js";
 
 const INSTALL_URL = getInstallScriptUrl(getCdnOrigin());
@@ -132,7 +133,7 @@ async function performUpdate(runUpdate: () => void = defaultRunUpdate): Promise<
     p.log.success("Updated successfully!");
     p.log.info("Run agentsea again to use the new version.");
   } else {
-    p.log.error("Auto-update failed. Update manually:");
+    logError("Auto-update failed. Update manually:");
     console.log();
     console.log(`  ${pc.cyan(INSTALL_CMD)}`);
     console.log();

@@ -40,6 +40,7 @@ import { asyncTryCatch } from "../shared/result.js";
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
 import { ensureSshKeys, getSshKeyOpts } from "../shared/ssh-keys.js";
 import { makeSshRunner } from "../shared/ssh-runner.js";
+import { logError } from "../shared/ui.js";
 import { buildRecordLabel, buildRecordSubtitle } from "./list.js";
 import { handleCancel } from "./shared.js";
 
@@ -454,7 +455,7 @@ export async function cmdExport(target: string | undefined, options?: ExportOpti
   if (target) {
     picked = matchTarget(exportable, target);
     if (!picked) {
-      p.log.error(`No claude agentsea matches ${pc.bold(target)}.`);
+      logError(`No claude agentsea matches ${pc.bold(target)}.`);
       p.log.info(`Run ${pc.cyan(`${AGENTSEA_CLI} list -a claude`)} to see available targets.`);
       process.exit(1);
     }
@@ -477,7 +478,7 @@ export async function cmdExport(target: string | undefined, options?: ExportOpti
   if (!conn) {
     // exportableClaudeRecords guarantees connection is present — a missing
     // connection here means state was mutated between filter and use.
-    p.log.error("Internal error: selected agentsea has no connection info.");
+    logError("Internal error: selected agentsea has no connection info.");
     process.exit(1);
   }
 
@@ -558,7 +559,7 @@ export async function cmdExport(target: string | undefined, options?: ExportOpti
 
   if (!parsed.ok) {
     // Any remaining non-ok shape is a hard error.
-    p.log.error("error" in parsed ? parsed.error : "Export ran but produced no parseable result.");
+    logError("error" in parsed ? parsed.error : "Export ran but produced no parseable result.");
     process.exit(1);
   }
 
@@ -589,7 +590,7 @@ async function runPassAndParseResult(
   // 10-min timeout — large repos take time to push.
   const runResult = await asyncTryCatch(() => runner.runServer(script, 600));
   if (!runResult.ok) {
-    p.log.error(`Export failed: ${getErrorMessage(runResult.error)}`);
+    logError(`Export failed: ${getErrorMessage(runResult.error)}`);
     p.log.info("Check that `gh` is authenticated on the VM (`gh auth status`).");
     process.exit(1);
   }
@@ -602,7 +603,7 @@ async function runPassAndParseResult(
       recursive: true,
       force: true,
     });
-    p.log.error(`Could not read export result: ${getErrorMessage(dlResult.error)}`);
+    logError(`Could not read export result: ${getErrorMessage(dlResult.error)}`);
     process.exit(1);
   }
   const text = readFileSync(localResult, "utf8");
@@ -612,7 +613,7 @@ async function runPassAndParseResult(
   });
   const parsed = parseJsonWith(text, ResultSchema);
   if (!parsed) {
-    p.log.error("Export ran but produced no parseable result.");
+    logError("Export ran but produced no parseable result.");
     process.exit(1);
   }
   return parsed;

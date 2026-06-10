@@ -44,8 +44,16 @@ export function logWarn(msg: string): void {
   captureWarning(msg);
 }
 
+/** Reset stderr SGR after Clack log output so later writes don't inherit red/error styling. */
+export function resetStderrAttributes(): void {
+  if (process.stderr.isTTY) {
+    process.stderr.write(NC);
+  }
+}
+
 export function logError(msg: string): void {
   p.log.error(msg, CLACK_LOG_OPTS);
+  resetStderrAttributes();
   captureError("log_error", msg);
 }
 
@@ -85,6 +93,127 @@ export function logStepDone(): void {
   if (process.stderr.isTTY) {
     process.stderr.write("\r\x1b[K");
   }
+}
+
+/** Compact elapsed time for provision spinners (`45s`, `2m 15s`). */
+export function formatProvisionElapsed(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  if (s < 60) {
+    return `${s}s`;
+  }
+  const minutes = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem > 0 ? `${minutes}m ${rem}s` : `${minutes}m`;
+}
+
+export type SpinnerHandle = {
+  /** Sub-status shown beside the main spinner label (e.g. `check 3/60`). */
+  setDetail: (detail: string) => void;
+};
+
+export type RunWithSpinnerOptions = {
+  doneMessage?: string;
+  failMessage?: string;
+  /** Spinner label refresh interval. Default 1000ms. */
+  tickMs?: number;
+  /** Build the animated label; defaults to message + detail + elapsed. */
+  formatMessage?: (ctx: { base: string; detail: string; elapsedSec: number }) => string;
+};
+
+function defaultSpinnerMessage(ctx: { base: string; detail: string; elapsedSec: number }): string {
+  const elapsed = formatProvisionElapsed(ctx.elapsedSec);
+  if (ctx.detail) {
+    return `${ctx.base} — ${ctx.detail} (${elapsed})`;
+  }
+  return `${ctx.base} (${elapsed})`;
+}
+
+/**
+ * Run async work behind a Clack spinner (TTY) or periodic step lines (non-TTY).
+ * Use {@link SpinnerHandle.setDetail} inside `fn` for incremental sub-status.
+ */
+export async function runWithSpinner<T>(
+  message: string,
+  fn: (handle: SpinnerHandle) => Promise<T>,
+  options?: RunWithSpinnerOptions,
+): Promise<T> {
+  const tickMs = options?.tickMs ?? 1000;
+  const formatMessage = options?.formatMessage ?? defaultSpinnerMessage;
+  let detail = "";
+  const handle: SpinnerHandle = {
+    setDetail(next: string) {
+      detail = next;
+    },
+  };
+
+  const buildLabel = () =>
+    formatMessage({
+      base: message,
+      detail,
+      elapsedSec: Math.floor((Date.now() - start) / 1000),
+    });
+
+  const useSpinner = process.stderr.isTTY && process.env.AGENTSEA_NO_SPINNER !== "1";
+  const start = Date.now();
+  let tickTimer: ReturnType<typeof setInterval> | undefined;
+  let fallbackTimer: ReturnType<typeof setInterval> | undefined;
+  let lastFallbackLog = 0;
+
+  if (useSpinner) {
+    const s = p.spinner({
+      output: process.stderr,
+    });
+    s.start(message);
+    tickTimer = setInterval(() => {
+      s.message(buildLabel());
+    }, tickMs);
+
+    const r = await asyncTryCatch(() => fn(handle));
+    if (tickTimer) {
+      clearInterval(tickTimer);
+    }
+    if (r.ok) {
+      s.stop(options?.doneMessage ?? message.replace(/…$/, ""));
+      return r.data;
+    }
+    s.stop(options?.failMessage ?? "Failed");
+    throw r.error;
+  }
+
+  logAlwaysStep(message);
+  fallbackTimer = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - start) / 1000);
+    if (elapsed - lastFallbackLog >= 5) {
+      lastFallbackLog = elapsed;
+      logAlwaysStep(buildLabel());
+    }
+  }, tickMs);
+
+  try {
+    return await fn(handle);
+  } finally {
+    if (fallbackTimer) {
+      clearInterval(fallbackTimer);
+    }
+  }
+}
+
+/** Yes/no confirm via @clack/prompts — avoids nested free-text prompts that corrupt stdin after p.text. */
+export async function confirm(message: string, initialValue = false): Promise<boolean> {
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
+    throw new Error("Cannot prompt: AGENTSEA_NON_INTERACTIVE is set");
+  }
+  resetStderrAttributes();
+  process.stderr.write("\n");
+  const result = await p.confirm({
+    message,
+    initialValue,
+  });
+  if (p.isCancel(result)) {
+    process.stderr.write("\n");
+    process.exit(0);
+  }
+  return result === true;
 }
 
 /** Prompt for a line of user input. Throws if non-interactive.
@@ -379,9 +508,8 @@ export async function retryOrQuit(message: string): Promise<void> {
   if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
     throw new Error("Non-interactive mode: cannot retry");
   }
-  process.stderr.write("\n");
-  const answer = await prompt(`${message} (Y/n): `);
-  if (!answer || /^[Nn]/.test(answer)) {
+  const shouldRetry = await confirm(message, true);
+  if (!shouldRetry) {
     throw new Error("User chose to exit");
   }
 }
@@ -504,6 +632,74 @@ export function validateModelId(id: string): boolean {
 
 const GRID_MODEL_OTHER = "__grid_agentsea_model_other__";
 
+export type HarnessGridModelSelection = {
+  primary?: string;
+  utility?: string;
+};
+
+/**
+ * Prompt separately for thinking (main) and heartbeat models from the catalogue.
+ * Skips heartbeat when the agent profile has no utility tier.
+ */
+export async function promptHarnessGridModels(
+  entries: Array<{ id: string; displayName?: string; funded: boolean }>,
+  suggestedPrimary: string,
+  agentSlug: string,
+  options?: { heartbeatOnly?: boolean },
+): Promise<HarnessGridModelSelection> {
+  if (entries.length === 0) {
+    return {};
+  }
+
+  const { agentSupportsHeartbeatModel, resolveGridInstrumentProfile } = await import("./grid-instruments.js");
+  const profile = resolveGridInstrumentProfile(agentSlug);
+  const catalogueIds = entries.map((entry) => entry.id);
+
+  if (options?.heartbeatOnly) {
+    if (!profile.utility) {
+      return {};
+    }
+    const utilitySuggested = catalogueIds.includes(profile.utility) ? profile.utility : suggestedPrimary;
+    const utility = await promptGridCatalogModelId(
+      entries,
+      utilitySuggested,
+      agentSlug,
+      "Which model for heartbeats?",
+      profile.utility,
+    );
+    return utility ? { utility } : {};
+  }
+
+  const primary = await promptGridCatalogModelId(
+    entries,
+    suggestedPrimary,
+    agentSlug,
+    "Which model for thinking?",
+    profile.primary,
+  );
+  if (!primary) {
+    return {};
+  }
+
+  if (!agentSupportsHeartbeatModel(agentSlug) || !profile.utility) {
+    return { primary };
+  }
+
+  const utilitySuggested = catalogueIds.includes(profile.utility) ? profile.utility : primary;
+  const utility = await promptGridCatalogModelId(
+    entries,
+    utilitySuggested,
+    agentSlug,
+    "Which model for heartbeats?",
+    profile.utility,
+  );
+  if (!utility) {
+    return {};
+  }
+
+  return { primary, utility };
+}
+
 /**
  * Let the user choose a model from The Grid catalogue.
  * Unfunded models are shown with a hint; caller should gate provisioning on credits.
@@ -511,21 +707,42 @@ const GRID_MODEL_OTHER = "__grid_agentsea_model_other__";
 export async function promptGridCatalogModelId(
   entries: Array<{ id: string; displayName?: string; funded: boolean }>,
   suggestedId: string,
+  agentSlug?: string,
+  message?: string,
+  recommended?: string,
 ): Promise<string | undefined> {
   if (entries.length === 0) {
     return undefined;
   }
 
+  let resolvedRecommended = recommended;
+  if (!resolvedRecommended && agentSlug) {
+    const { resolveGridInstrumentProfile } = await import("./grid-instruments.js");
+    resolvedRecommended = resolveGridInstrumentProfile(agentSlug).primary;
+  }
+
   const catalogueIds = entries.map((entry) => entry.id);
   const initial = catalogueIds.includes(suggestedId) ? suggestedId : catalogueIds[0]!;
 
+  resetStderrAttributes();
+  process.stderr.write("\n");
+
   const choice = await p.select({
-    message: "Which Grid model should this server use?",
+    message:
+      message ??
+      (resolvedRecommended
+        ? `Which Grid model should this server use? (recommended: ${resolvedRecommended})`
+        : "Which Grid model should this server use?"),
     options: [
       ...entries.map((entry) => ({
         value: entry.id,
-        label: entry.id,
-        hint: entry.funded ? "credits available" : "no credits yet",
+        label: entry.id === resolvedRecommended ? `${entry.id} ★` : entry.id,
+        hint:
+          entry.id === resolvedRecommended
+            ? "recommended for this agent"
+            : entry.funded
+              ? "credits available"
+              : "no credits yet",
       })),
       {
         value: GRID_MODEL_OTHER,
@@ -610,9 +827,23 @@ export function dropletNameWithUuidSuffix(baseKebabInput: string): string {
   return uuid.length >= 3 && uuid.length <= 63 && validateServerName(uuid) ? uuid : `s-${uuid.slice(0, 60)}`;
 }
 
-/** Generate a default agentsea name (`agentsea-<uuid>`). */
-export function defaultAgentseaName(): string {
-  return dropletNameWithUuidSuffix("agentsea");
+/**
+ * Default hostname base for cloud resources: the installed agent (`hermes`), not `agentsea`.
+ * AgentSea is implied by tooling; the droplet label should read as what's running on it.
+ */
+export function defaultCloudHostnameBase(agentSlug?: string): string {
+  const slug = typeof agentSlug === "string" ? toKebabCase(agentSlug.trim()) : "";
+  return slug || "agentsea";
+}
+
+/** Default in-app / prompt label — same as cloud hostname base (`hermes`). */
+export function defaultAgentseaLabel(agentSlug: string): string {
+  return defaultCloudHostnameBase(agentSlug);
+}
+
+/** Generate a default cloud hostname (`<agent>-<uuid>`, e.g. `hermes-<uuid>`). */
+export function defaultAgentseaName(agentSlug?: string): string {
+  return dropletNameWithUuidSuffix(defaultCloudHostnameBase(agentSlug));
 }
 
 /**
@@ -632,8 +863,9 @@ export function getServerNameFromEnv(cloudEnvVar: string): string {
     return cloudName;
   }
 
+  const agentSlug = process.env.AGENTSEA_AGENT_SLUG?.trim();
   const kebab = process.env.AGENTSEA_NAME_KEBAB || (process.env.AGENTSEA_NAME ? toKebabCase(process.env.AGENTSEA_NAME) : "");
-  return kebab || defaultAgentseaName();
+  return kebab || defaultAgentseaName(agentSlug || undefined);
 }
 
 /**
@@ -648,14 +880,17 @@ export async function promptAgentseaNameShared(cloudLabel: string): Promise<void
   }
 
   let kebab: string;
+  const agentSlug = process.env.AGENTSEA_AGENT_SLUG?.trim();
   if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
-    kebab = (process.env.AGENTSEA_NAME ? toKebabCase(process.env.AGENTSEA_NAME) : "") || defaultAgentseaName();
+    kebab =
+      (process.env.AGENTSEA_NAME ? toKebabCase(process.env.AGENTSEA_NAME) : "") ||
+      defaultAgentseaName(agentSlug || undefined);
   } else {
     const derived = process.env.AGENTSEA_NAME ? toKebabCase(process.env.AGENTSEA_NAME) : "";
-    const fallback = derived || defaultAgentseaName();
+    const fallback = derived || defaultAgentseaName(agentSlug || undefined);
     process.stderr.write("\n");
     const answer = await prompt(`${cloudLabel} name [${fallback}]: `);
-    kebab = toKebabCase(answer || fallback) || defaultAgentseaName();
+    kebab = toKebabCase(answer || fallback) || defaultAgentseaName(agentSlug || undefined);
   }
 
   process.env.AGENTSEA_NAME_DISPLAY = kebab;

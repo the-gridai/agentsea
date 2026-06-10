@@ -4,14 +4,16 @@ import Image from "next/image";
 import Link from "next/link";
 import { memo } from "react";
 
+import type { NextStep } from "@agentsea/sdk";
+
 import { CloudLogo, LocalMachineLogo } from "./cloud-logos";
 import {
   AGENTSEA_INSTALL_URL,
   AGENTSEA_PUBLIC_ORIGIN,
+  isAgentSeaCdnConfigured,
   THE_GRID_EXTERNAL_URL,
 } from "./home-public-constants";
 import { AgentseaCopyBlock } from "./agentsea-copy-block";
-import { WHY_AGENTSEA_CARDS } from "./why-agentsea-cards";
 import styles from "./agentsea-launch-view.module.scss";
 
 export type AgentseaLaunchViewProps = {
@@ -20,7 +22,24 @@ export type AgentseaLaunchViewProps = {
   agentImage: string | null;
   cloudSlug: string;
   cloudName: string;
+  nextSteps?: NextStep[];
 };
+
+function NextStepItem({ step }: { step: NextStep }) {
+  return (
+    <li className={styles["nextStep"]}>
+      <span className={styles["nextStep__text"]}>{step.text}</span>
+      {step.link ? (
+        <>
+          {" "}
+          <a href={step.link.url} rel="noopener noreferrer" className={styles["nextStep__link"]}>
+            {step.link.label}
+          </a>
+        </>
+      ) : null}
+    </li>
+  );
+}
 
 function cloudSummaryLogo(cloudSlug: string) {
   return (
@@ -33,59 +52,14 @@ function cloudSummaryLogo(cloudSlug: string) {
   );
 }
 
-function buildAgentseaSnippet(agentSlug: string, cloudSlug: string): string {
-  return `# Install AgentSea
-curl -fsSL ${AGENTSEA_INSTALL_URL} | bash
+const ONE_COMMAND_INSTALL = (installUrl: string, agentSlug: string, cloudSlug: string) =>
+  `curl -fsSL ${installUrl} | bash -s -- ${agentSlug} ${cloudSlug}`;
 
-# Launch
-agentsea ${agentSlug} ${cloudSlug}`;
-}
+const INSTALL_ONLY_SNIPPET = (installUrl: string) => `curl -fsSL ${installUrl} | bash`;
 
-function hoodSteps(cloudSlug: string) {
-  if (cloudSlug === "local") {
-    return [
-      {
-        title: "Install",
-        body: "Installs the agent and dependencies on this machine. No cloud account needed.",
-      },
-      {
-        title: "Authenticate",
-        body: "Prompts for your The Grid API key and saves it under ~/.config/agentsea/ when you confirm.",
-      },
-      {
-        title: "Configure",
-        body: "Wires environment variables, Grid API endpoints, and model routing.",
-      },
-      {
-        title: "Connect",
-        body: "Launches the agent in your terminal with full TTY support.",
-      },
-    ];
-  }
-
-  return [
-    {
-      title: "Provision",
-      body: "Spins up a fresh VM in your cloud account. No Terraform or YAML configs.",
-    },
-    {
-      title: "Install",
-      body: "Cloud-init installs the agent and dependencies on the new server.",
-    },
-    {
-      title: "Authenticate",
-      body: "Injects your The Grid API key and cloud credentials into the VM.",
-    },
-    {
-      title: "Configure",
-      body: "Sets environment, OpenAI-compatible endpoints, and model routing to The Grid.",
-    },
-    {
-      title: "Connect",
-      body: "Opens an SSH session. Drive the interactive agent from your terminal.",
-    },
-  ];
-}
+const COMMON_COMMANDS_SNIPPET = `agentsea                              # Interactive picker
+agentsea ls                            # List your deployments
+agentsea matrix                        # Agent x cloud matrix`;
 
 export const AgentseaLaunchView = memo(function AgentseaLaunchViewComp({
   agentSlug,
@@ -93,15 +67,10 @@ export const AgentseaLaunchView = memo(function AgentseaLaunchViewComp({
   agentImage,
   cloudSlug,
   cloudName,
+  nextSteps,
 }: AgentseaLaunchViewProps) {
-  const agentseaSnippet = buildAgentseaSnippet(agentSlug, cloudSlug);
-  const steps = hoodSteps(cloudSlug);
-
+  const oneCommand = ONE_COMMAND_INSTALL(AGENTSEA_INSTALL_URL, agentSlug, cloudSlug);
   const withoutCliSnippet = `bash <(curl -fsSL ${AGENTSEA_PUBLIC_ORIGIN}/${cloudSlug}/${agentSlug}.sh)`;
-
-  const cliRefSnippet = `agentsea                              # Interactive picker
-agentsea ls                            # List your deployments
-agentsea matrix                        # Agent x cloud matrix`;
 
   return (
     <div className={styles["page"]}>
@@ -111,10 +80,15 @@ agentsea matrix                        # Agent x cloud matrix`;
         </Link>
       </nav>
 
-      <section className={styles["hero"]} aria-labelledby="agentsea-title">
-        <h1 id="agentsea-title" className={styles["hero__title"]}>
-          Launch {agentName} on {cloudName}
+      <section className={styles["hero"]} aria-labelledby="deploy-title">
+        <h1 id="deploy-title" className={styles["hero__title"]}>
+          Deploy {agentName} on {cloudName}
         </h1>
+        <p className={styles["hero__lede"]}>
+          Run {agentName} on {cloudName} with AgentSea — the easiest way to deploy Grid-backed AI agents on
+          infrastructure you control. Copy the command below: it installs the CLI, then walks you through
+          deployment interactively.
+        </p>
         <div className={styles["pickRow"]}>
           <div className={styles["pickCard"]}>
             <div className={styles["pickCard__logo"]} aria-hidden>
@@ -145,80 +119,105 @@ agentsea matrix                        # Agent x cloud matrix`;
               {cloudSummaryLogo(cloudSlug)}
             </div>
             <div className={styles["pickCard__body"]}>
-              <span className={styles["pickCard__label"]}>Cloud</span>
+              <span className={styles["pickCard__label"]}>Environment</span>
               <span className={styles["pickCard__name"]}>{cloudName}</span>
             </div>
           </div>
         </div>
       </section>
 
-      <section className={styles["band"]} aria-labelledby="agentsea-step-title">
+      <section className={styles["band"]} aria-labelledby="step-run-title">
         <div className={styles["sectionHead"]}>
           <span className={styles["sectionHead__index"]} aria-hidden>
-            3
+            1
           </span>
-          <h2 id="agentsea-step-title" className={styles["sectionHead__title"]}>
-            Launch
+          <h2 id="step-run-title" className={styles["sectionHead__title"]}>
+            Run this command
           </h2>
         </div>
 
-        <AgentseaCopyBlock code={agentseaSnippet} />
-
-        <p className={styles["agentseaFoot"]}>
-          <Link href="/" className={styles["agentseaFoot__link"]}>
-            &larr; Pick another agent
-          </Link>
-          {" | "}
-          <Link href={`/?agent=${encodeURIComponent(agentSlug)}`} className={styles["agentseaFoot__link"]}>
-            Change provider
-          </Link>
+        <p className={styles["stepLead"]}>
+          Paste this in your terminal (macOS, Linux, or WSL). It installs AgentSea, then starts{" "}
+          <code className={styles["inlineCode"]}>agentsea {agentSlug} {cloudSlug}</code> and guides you through
+          the rest — API keys, provisioning, and connecting to your agent.
         </p>
-      </section>
 
-      <section className={styles["band"]} aria-labelledby="hood-title">
-        <h2 id="hood-title" className={styles["bandTitle"]}>
-          Under the Hood
-        </h2>
+        <AgentseaCopyBlock code={oneCommand} prominent />
 
-        <ol className={styles["hoodSteps"]}>
-          {steps.map((step, i) => (
-            <li key={step.title} className={styles["hoodStep"]}>
-              <span className={styles["hoodStep__n"]}>{i + 1}</span>
-              <div className={styles["hoodStep__body"]}>
-                <h3 className={styles["hoodStep__h"]}>{step.title}</h3>
-                <p className={styles["hoodStep__p"]}>{step.body}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-
-        <div className={styles["hoodCodeSection"]}>
-          <div className={styles["hoodCodeGrid"]}>
-            <div className={styles["hoodCodeCard"]}>
-              <h3 className={styles["hoodCodeCard__title"]}>CLI reference</h3>
-              <AgentseaCopyBlock code={cliRefSnippet} stretch />
-            </div>
-            <div className={styles["hoodCodeCard"]}>
-              <h3 className={styles["hoodCodeCard__title"]}>Without the CLI</h3>
-              <AgentseaCopyBlock code={withoutCliSnippet} stretch />
-            </div>
+        <details className={styles["details"]}>
+          <summary className={styles["details__summary"]}>Already installed? Run deploy only</summary>
+          <div className={styles["details__body"]}>
+            <AgentseaCopyBlock code={`agentsea ${agentSlug} ${cloudSlug}`} />
           </div>
-        </div>
+        </details>
+
+        <details className={styles["details"]}>
+          <summary className={styles["details__summary"]}>Install CLI without deploying</summary>
+          <div className={styles["details__body"]}>
+            <AgentseaCopyBlock code={INSTALL_ONLY_SNIPPET(AGENTSEA_INSTALL_URL)} />
+          </div>
+        </details>
+
+        <p className={styles["stepFoot"]}>
+          Install options and flags in the{" "}
+          <Link href="/cli" className={styles["stepFoot__link"]}>
+            CLI Reference
+          </Link>
+          .
+        </p>
+
+        <details className={styles["details"]}>
+          <summary className={styles["details__summary"]}>Common commands</summary>
+          <div className={styles["details__body"]}>
+            <AgentseaCopyBlock code={COMMON_COMMANDS_SNIPPET} />
+          </div>
+        </details>
       </section>
 
-      <section className={styles["band"]} aria-labelledby="why-title">
-        <h2 id="why-title" className={styles["bandTitle"]}>
-          Why AgentSea?
-        </h2>
-        <div className={styles["whyGrid"]}>
-          {WHY_AGENTSEA_CARDS.slice(0, 2).map((c) => (
-            <div key={c.title} className={styles["whyCard"]}>
-              <h3 className={styles["whyCard__h"]}>{c.title}</h3>
-              <p className={styles["whyCard__p"]}>{c.body}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+      {nextSteps && nextSteps.length > 0 ? (
+        <section className={styles["band"]} aria-labelledby="after-install-title">
+          <div className={styles["sectionHead"]}>
+            <span className={styles["sectionHead__index"]} aria-hidden>
+              2
+            </span>
+            <h2 id="after-install-title" className={styles["sectionHead__title"]}>
+              After install — what to do next
+            </h2>
+          </div>
+          <p className={styles["stepLead"]}>
+            Once AgentSea finishes provisioning <strong>{agentName}</strong> on{" "}
+            <strong>{cloudName}</strong>, here&apos;s how to get the most from your agent.
+          </p>
+          <ul className={styles["nextSteps"]}>
+            {nextSteps.map((step, index) => (
+              <NextStepItem key={`${index}-${step.text.slice(0, 24)}`} step={step} />
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {isAgentSeaCdnConfigured && (
+        <section className={styles["band"]} aria-labelledby="without-cli-title">
+          <h2 id="without-cli-title" className={styles["altTitle"]}>
+            Prefer not to install the CLI?
+          </h2>
+          <p className={styles["stepLead"]}>
+            Run this one-liner instead — no global install required. It downloads and runs the bootstrap script
+            for <strong>{agentName}</strong> on <strong>{cloudName}</strong>.
+          </p>
+          <AgentseaCopyBlock code={withoutCliSnippet} />
+        </section>
+      )}
+
+      <p className={styles["agentseaFoot"]}>
+        <Link href="/" className={styles["agentseaFoot__link"]}>
+          &larr; Pick another agent
+        </Link>
+        {" | "}
+        <Link href={`/?agent=${encodeURIComponent(agentSlug)}`} className={styles["agentseaFoot__link"]}>
+          Change environment
+        </Link>
+      </p>
 
       <footer className={styles["footer"]}>
         <a href={THE_GRID_EXTERNAL_URL} rel="noopener noreferrer" className={styles["footer__link"]}>

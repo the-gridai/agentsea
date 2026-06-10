@@ -1,0 +1,987 @@
+#!/bin/bash
+# sh/e2e/e2e.sh — Unified multi-cloud E2E test orchestrator
+#
+# Usage:
+#   e2e.sh --cloud aws                          # AWS only, all agents
+#   e2e.sh --cloud hetzner claude codex         # Hetzner, specific agents
+#   e2e.sh --cloud aws --cloud hetzner          # Both clouds IN PARALLEL
+#   e2e.sh --cloud all                          # ALL clouds IN PARALLEL
+#   e2e.sh --cloud all --parallel 3             # All clouds, 3 agents parallel per cloud
+#   e2e.sh --cloud aws --skip-input-test        # Skip live input tests
+#   e2e.sh --cloud digitalocean --sequential --agents-from-manifest digitalocean --first-agent openclaw
+set -eo pipefail
+
+# ---------------------------------------------------------------------------
+# Resolve script directory and source libraries
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Auto-set AGENTSEA_CLI_DIR to repo root so shell scripts use local source instead
+# of downloading pre-bundled .js from GitHub releases. Can be overridden by env.
+if [ -z "${AGENTSEA_CLI_DIR:-}" ]; then
+  _repo_root="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+  if [ -f "${_repo_root}/packages/cli/src/index.ts" ]; then
+    export AGENTSEA_CLI_DIR="${_repo_root}"
+  fi
+  unset _repo_root
+fi
+
+source "${SCRIPT_DIR}/lib/common.sh"
+source "${SCRIPT_DIR}/lib/provision.sh"
+source "${SCRIPT_DIR}/lib/verify.sh"
+source "${SCRIPT_DIR}/lib/teardown.sh"
+source "${SCRIPT_DIR}/lib/soak.sh"
+source "${SCRIPT_DIR}/lib/interactive.sh"
+source "${SCRIPT_DIR}/lib/ai-review.sh"
+
+# ---------------------------------------------------------------------------
+# Auto-load Resend email credentials when not already set.
+# Sources /etc/agentsea-key-server-auth.env (QA VM) or ~/.config/agentsea/resend.env
+# (local dev) to populate RESEND_API_KEY and KEY_REQUEST_EMAIL.
+# This ensures send_matrix_email fires on manual runs, not just QA-cycle runs.
+# ---------------------------------------------------------------------------
+if [ -z "${RESEND_API_KEY:-}" ] || [ -z "${KEY_REQUEST_EMAIL:-}" ]; then
+  for _cred_file in /etc/agentsea-key-server-auth.env "${HOME}/.config/agentsea/resend.env"; do
+    if [ -f "${_cred_file}" ]; then
+      # shellcheck source=/dev/null  # path is dynamic
+      set -a; source "${_cred_file}" 2>/dev/null; set +a
+      break
+    fi
+  done
+  unset _cred_file
+fi
+
+# ---------------------------------------------------------------------------
+# All supported clouds (excluding local — no infra to provision)
+# ---------------------------------------------------------------------------
+ALL_CLOUDS="aws hetzner digitalocean gcp daytona sprite"
+
+# ---------------------------------------------------------------------------
+# Parse arguments
+# ---------------------------------------------------------------------------
+CLOUDS=""
+AGENTS_TO_TEST=""
+PARALLEL_COUNT=99
+SKIP_CLEANUP=0
+SKIP_INPUT_TEST="${SKIP_INPUT_TEST:-0}"
+SEQUENTIAL_MODE=0
+SOAK_MODE=0
+INTERACTIVE_MODE=0
+FAST_MODE=0
+AGENTS_FROM_MANIFEST_CLOUD=""
+FIRST_AGENT=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --cloud)
+      shift
+      if [ $# -eq 0 ]; then
+        printf "Error: --cloud requires a cloud name\n" >&2
+        exit 1
+      fi
+      if [ "$1" = "all" ]; then
+        CLOUDS="${ALL_CLOUDS}"
+      else
+        # Validate cloud name
+        local_valid=0
+        for c in ${ALL_CLOUDS}; do
+          if [ "$1" = "${c}" ]; then
+            local_valid=1
+            break
+          fi
+        done
+        if [ "${local_valid}" -eq 0 ]; then
+          printf "Unknown cloud: %s\nAvailable: %s all\n" "$1" "${ALL_CLOUDS}" >&2
+          exit 1
+        fi
+        if [ -z "${CLOUDS}" ]; then
+          CLOUDS="$1"
+        else
+          CLOUDS="${CLOUDS} $1"
+        fi
+      fi
+      shift
+      ;;
+    --parallel)
+      shift
+      if [ $# -eq 0 ]; then
+        printf "Error: --parallel requires a number\n" >&2
+        exit 1
+      fi
+      PARALLEL_COUNT="$1"
+      if ! printf '%s' "${PARALLEL_COUNT}" | grep -qE '^[0-9]+$' || [ "${PARALLEL_COUNT}" -lt 1 ] || [ "${PARALLEL_COUNT}" -gt 50 ]; then
+        printf "Error: --parallel must be between 1 and 50\n" >&2
+        exit 1
+      fi
+      shift
+      ;;
+    --sequential)
+      SEQUENTIAL_MODE=1
+      shift
+      ;;
+    --skip-cleanup)
+      SKIP_CLEANUP=1
+      shift
+      ;;
+    --skip-input-test)
+      SKIP_INPUT_TEST=1
+      shift
+      ;;
+    --soak)
+      SOAK_MODE=1
+      shift
+      ;;
+    --interactive)
+      INTERACTIVE_MODE=1
+      shift
+      ;;
+    --fast)
+      FAST_MODE=1
+      shift
+      ;;
+    --agents-from-manifest)
+      shift
+      if [ $# -eq 0 ]; then
+        printf "Error: --agents-from-manifest requires a cloud name\n" >&2
+        exit 1
+      fi
+      AGENTS_FROM_MANIFEST_CLOUD="$1"
+      shift
+      ;;
+    --first-agent)
+      shift
+      if [ $# -eq 0 ]; then
+        printf "Error: --first-agent requires an agent slug\n" >&2
+        exit 1
+      fi
+      FIRST_AGENT="$1"
+      shift
+      ;;
+    --help|-h)
+      printf "Usage: %s --cloud CLOUD [--cloud CLOUD2 ...] [agents...] [options]\n\n" "$0"
+      printf "Clouds: %s\n" "${ALL_CLOUDS}"
+      printf "         Use --cloud all for all clouds in parallel.\n\n"
+      printf "Agents: %s\n\n" "${ALL_AGENTS}"
+      printf "Options:\n"
+      printf "  --cloud CLOUD       Cloud to test (repeatable, or 'all')\n"
+      printf "  --parallel N        Run N agents in parallel per cloud (default: all at once)\n"
+      printf "  --sequential        Force sequential agent execution\n"
+      printf "  --skip-cleanup      Skip stale e2e-* instance cleanup\n"
+      printf "  --skip-input-test   Skip live input tests\n"
+      printf "  --fast              Provision with --fast flag (images + tarballs + parallel)\n"
+      printf "  --agents-from-manifest CLOUD  Use agents with matrix CLOUD/slug=implemented (manifest order by stars)\n"
+      printf "  --first-agent SLUG  With --agents-from-manifest, run this slug first if implemented\n"
+      printf "  --soak              Run Telegram soak test (OpenClaw on Sprite)\n"
+      printf "  --interactive       AI-driven interactive test (requires THEGRID_API_KEY for harness + agent)\n"
+      printf "  --help              Show this help\n"
+      exit 0
+      ;;
+    -*)
+      printf "Unknown option: %s\n" "$1" >&2
+      exit 1
+      ;;
+    *)
+      # Agent name
+      local_valid=0
+      for a in ${ALL_AGENTS}; do
+        if [ "$1" = "${a}" ]; then
+          local_valid=1
+          break
+        fi
+      done
+      if [ "${local_valid}" -eq 0 ]; then
+        printf "Unknown agent: %s\nAvailable: %s\n" "$1" "${ALL_AGENTS}" >&2
+        exit 1
+      fi
+      if [ -z "${AGENTS_TO_TEST}" ]; then
+        AGENTS_TO_TEST="$1"
+      else
+        AGENTS_TO_TEST="${AGENTS_TO_TEST} $1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+# Soak mode: run Telegram soak test and exit (no --cloud required)
+if [ "${SOAK_MODE}" -eq 1 ]; then
+  LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/agentsea-e2e.XXXXXX")
+  export LOG_DIR
+  run_soak_test "${LOG_DIR}"
+  exit $?
+fi
+
+# Require at least one cloud
+if [ -z "${CLOUDS}" ]; then
+  printf "Error: --cloud is required. Use --cloud aws, --cloud all, etc.\n" >&2
+  printf "Run %s --help for usage.\n" "$0" >&2
+  exit 1
+fi
+
+if [ -n "${FIRST_AGENT:-}" ] && [ -z "${AGENTS_FROM_MANIFEST_CLOUD:-}" ]; then
+  log_warn "--first-agent is ignored without --agents-from-manifest"
+fi
+
+# Agent list from manifest (exclusive with explicit positional agents)
+if [ -n "${AGENTS_FROM_MANIFEST_CLOUD:-}" ]; then
+  if [ -n "${AGENTS_TO_TEST}" ]; then
+    printf "Error: do not pass explicit agent names together with --agents-from-manifest\n" >&2
+    exit 1
+  fi
+  for _mfc in ${ALL_CLOUDS}; do
+    if [ "${AGENTS_FROM_MANIFEST_CLOUD}" = "${_mfc}" ]; then
+      _manifest_cloud_ok=1
+      break
+    fi
+  done
+  if [ "${_manifest_cloud_ok:-0}" -eq 0 ]; then
+    printf "Error: --agents-from-manifest %s is not a supported cloud (use one of: %s)\n" \
+      "${AGENTS_FROM_MANIFEST_CLOUD}" "${ALL_CLOUDS}" >&2
+    exit 1
+  fi
+  unset _mfc _manifest_cloud_ok
+  _repo_root="${AGENTSEA_CLI_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
+  _list_script="${_repo_root}/scripts/list-e2e-agents.mjs"
+  if [ ! -f "${_list_script}" ]; then
+    printf "Error: manifest agent list script not found: %s\n" "${_list_script}" >&2
+    exit 1
+  fi
+  if ! command -v node >/dev/null 2>&1; then
+    printf "Error: node is required for --agents-from-manifest\n" >&2
+    exit 1
+  fi
+  AGENTS_TO_TEST=$(node "${_list_script}" "${AGENTS_FROM_MANIFEST_CLOUD}" ${FIRST_AGENT:+--first "${FIRST_AGENT}"})
+  if [ -z "${AGENTS_TO_TEST}" ]; then
+    printf "Error: no implemented agents for cloud %s in manifest.json\n" "${AGENTS_FROM_MANIFEST_CLOUD}" >&2
+    exit 1
+  fi
+  unset _repo_root _list_script
+fi
+
+# Default to all agents
+if [ -z "${AGENTS_TO_TEST}" ]; then
+  AGENTS_TO_TEST="${ALL_AGENTS}"
+fi
+
+# Sanity-check list sizes to prevent unbounded string growth (#3190)
+_cloud_count=$(printf '%s\n' "${CLOUDS}" | wc -w | tr -d ' ')
+_agent_count=$(printf '%s\n' "${AGENTS_TO_TEST}" | wc -w | tr -d ' ')
+if [ "${_cloud_count}" -gt 50 ]; then
+  printf "Error: too many clouds (%s) — max 50\n" "${_cloud_count}" >&2
+  exit 1
+fi
+if [ "${_agent_count}" -gt 100 ]; then
+  printf "Error: too many agents (%s) — max 100\n" "${_agent_count}" >&2
+  exit 1
+fi
+unset _cloud_count _agent_count
+
+# ---------------------------------------------------------------------------
+# Count clouds to decide single vs multi-cloud mode
+# ---------------------------------------------------------------------------
+cloud_count=$(printf '%s\n' "${CLOUDS}" | wc -w | tr -d ' ')
+
+# ---------------------------------------------------------------------------
+# run_single_agent AGENT
+#
+# Provisions, verifies, and tears down a single agent.
+# Sets result in a temp file for parallel collection.
+# ---------------------------------------------------------------------------
+run_single_agent() {
+  local agent="$1"
+  local result_file="${2:-}"
+  local agent_start
+  agent_start=$(date +%s)
+
+  log_header "Testing agent: ${agent}"
+
+  local app_name
+  app_name=$(make_app_name "${agent}")
+  track_app "${app_name}"
+
+  local status="fail"
+
+  # ---------------------------------------------------------------------------
+  # Per-agent timeout: run provision/verify/input_test in a subshell with a
+  # wall-clock timeout. This prevents any single step from hanging indefinitely
+  # and ensures a result file is always written (pass, fail, or timeout).
+  # Fixes #2714: digitalocean-opencode stalling with no result.
+  # ---------------------------------------------------------------------------
+  local effective_agent_timeout
+  effective_agent_timeout=$(get_agent_timeout "${agent}")
+  log_info "Agent timeout: ${effective_agent_timeout}s"
+
+  local status_file="${LOG_DIR}/${app_name}.agent-status"
+  rm -f "${status_file}"
+
+  # Run core logic in a subshell so we can kill it on timeout
+  (
+    local _inner_status="fail"
+    if [ "${INTERACTIVE_MODE}" -eq 1 ]; then
+      # AI-driven interactive mode: harness drives the CLI through PTY.
+      # After harness exits (on "Starting agent..." marker), the install is still
+      # running on the remote VM. Run verify_agent to wait for .agentsearc before
+      # the input test — same as headless mode.
+      if interactive_provision "${agent}" "${app_name}" "${LOG_DIR}"; then
+        if verify_agent "${agent}" "${app_name}"; then
+          if run_input_test "${agent}" "${app_name}"; then
+            _inner_status="pass"
+          fi
+        fi
+      fi
+    else
+      # Standard headless mode
+      if provision_agent "${agent}" "${app_name}" "${LOG_DIR}"; then
+        # AI review of provision logs — advisory only, runs regardless of verify result
+        ai_review_logs "${agent}" "${app_name}" "${LOG_DIR}" || true
+        if verify_agent "${agent}" "${app_name}"; then
+          if run_input_test "${agent}" "${app_name}"; then
+            _inner_status="pass"
+          fi
+        fi
+      fi
+    fi
+    printf '%s' "${_inner_status}" > "${status_file}"
+  ) &
+  local agent_pid=$!
+
+  # Poll for completion or timeout (bash 3.2 compatible — no wait -n)
+  local agent_waited=0
+  while [ "${agent_waited}" -lt "${effective_agent_timeout}" ]; do
+    if [ -f "${status_file}" ]; then
+      break
+    fi
+    # Also break if the subshell exited without writing (crash/error)
+    if ! kill -0 "${agent_pid}" 2>/dev/null; then
+      break
+    fi
+    sleep 5
+    agent_waited=$((agent_waited + 5))
+  done
+
+  # Collect result or handle timeout
+  if [ -f "${status_file}" ]; then
+    status=$(cat "${status_file}")
+    wait "${agent_pid}" 2>/dev/null || true
+  elif kill -0 "${agent_pid}" 2>/dev/null; then
+    # Timed out — kill the subshell and its children
+    log_err "${agent} timed out after ${effective_agent_timeout}s — killing"
+    pkill -P "${agent_pid}" 2>/dev/null || true
+    kill "${agent_pid}" 2>/dev/null || true
+    wait "${agent_pid}" 2>/dev/null || true
+    status="fail"
+  else
+    # Subshell exited without writing status file (unexpected error)
+    log_err "${agent} subshell exited without writing status"
+    wait "${agent_pid}" 2>/dev/null || true
+    status="fail"
+  fi
+
+  rm -f "${status_file}"
+
+  # Teardown (always attempt, even after timeout)
+  teardown_agent "${app_name}" || log_warn "Teardown failed for ${app_name}"
+
+  local agent_end
+  agent_end=$(date +%s)
+  local agent_duration=$((agent_end - agent_start))
+  local duration_str
+  duration_str=$(format_duration "${agent_duration}")
+
+  if [ "${status}" = "pass" ]; then
+    log_ok "${agent} PASSED (${duration_str})"
+  else
+    log_err "${agent} FAILED (${duration_str})"
+  fi
+
+  # Write result to file (for parallel collection)
+  if [ -n "${result_file}" ]; then
+    printf '%s' "${status}" > "${result_file}"
+  fi
+
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# run_agents_for_cloud CLOUD LOG_DIR
+#
+# Runs all agents for a single cloud. Supports parallel batching.
+# Writes per-agent results to LOG_DIR/{cloud}-{agent}.result.
+# Writes cloud summary to LOG_DIR/{cloud}.summary.
+# ---------------------------------------------------------------------------
+run_agents_for_cloud() {
+  local cloud="$1"
+  local log_dir="$2"
+  local cloud_start
+  cloud_start=$(date +%s)
+
+  # Load the cloud driver
+  load_cloud_driver "${cloud}"
+
+  # Set log prefix for multi-cloud output
+  if [ "${cloud_count}" -gt 1 ]; then
+    CLOUD_LOG_PREFIX="[${cloud}] "
+  fi
+
+  log_header "E2E Tests: ${cloud}"
+  log_info "Agents: ${AGENTS_TO_TEST}"
+
+  # Validate environment for this cloud
+  if ! require_env; then
+    log_warn "Credentials not configured for ${cloud} — skipping"
+    printf 'SKIPPED (no credentials)' > "${log_dir}/${cloud}.summary"
+    return 0
+  fi
+
+  local cloud_passed=""
+  local cloud_failed=""
+
+  # Pre-run stale cleanup: remove orphaned e2e instances from previous
+  # interrupted runs before starting new agents. Uses a shorter max_age (5 min)
+  # than the default (30 min) so that orphans from recently-failed runs are
+  # cleaned before they can exhaust the account's instance quota (#2793).
+  if [ "${SKIP_CLEANUP}" -eq 0 ]; then
+    _CLEANUP_MAX_AGE=300 cloud_cleanup_stale || log_warn "Pre-run stale cleanup encountered errors"
+  fi
+
+  # Resolve effective parallelism (respect per-cloud cap)
+  local effective_parallel="${PARALLEL_COUNT}"
+  if [ "${SEQUENTIAL_MODE}" -eq 0 ]; then
+    local cloud_max
+    cloud_max=$(cloud_max_parallel)
+    if [ "${effective_parallel}" -gt "${cloud_max}" ]; then
+      effective_parallel="${cloud_max}"
+    fi
+  fi
+
+  # Bail out early if the cloud reports zero capacity (e.g. droplet limit reached).
+  # All agents would fail anyway — skip with an actionable error instead of wasting
+  # time on retries that cannot succeed. (#3059)
+  if [ "${effective_parallel}" -eq 0 ] && [ "${SEQUENTIAL_MODE}" -eq 0 ]; then
+    log_err "No capacity available on ${cloud} — all ${cloud} agents will be marked as failed."
+    log_err "Delete existing instances or request a limit increase, then re-run."
+    for agent in ${AGENTS_TO_TEST}; do
+      printf 'fail' > "${log_dir}/${cloud}-${agent}.result"
+      if [ -z "${cloud_failed}" ]; then cloud_failed="${agent}"; else cloud_failed="${cloud_failed} ${agent}"; fi
+    done
+    printf '%s %s %s %s %s' "0" "$(printf '%s\n' "${AGENTS_TO_TEST}" | wc -w | tr -d ' ')" "0s" "" "|${cloud_failed}" \
+      > "${log_dir}/${cloud}.summary"
+    return 1
+  fi
+
+  if [ "${effective_parallel}" -gt 0 ] && [ "${SEQUENTIAL_MODE}" -eq 0 ]; then
+    # Parallel mode: batch agents
+    log_info "Running agents in parallel (batch size: ${effective_parallel})"
+
+    local batch_agents=""
+    local batch_count=0
+    local batch_num=0
+
+    for agent in ${AGENTS_TO_TEST}; do
+      batch_agents="${batch_agents} ${agent}"
+      batch_count=$((batch_count + 1))
+
+      if [ "${batch_count}" -ge "${effective_parallel}" ]; then
+        batch_num=$((batch_num + 1))
+        log_header "Batch ${batch_num} (${cloud})"
+
+        # Refresh auth before each batch — prevents token expiry in long
+        # E2E runs (60+ min). No-op for clouds without refresh support. #2934
+        cloud_refresh_auth || log_warn "Auth refresh failed before batch ${batch_num}"
+
+        pids=""
+        for ba in ${batch_agents}; do
+          local_result_file="${log_dir}/${cloud}-${ba}.result"
+          run_single_agent "${ba}" "${local_result_file}" &
+          if [ -z "${pids}" ]; then pids="$!"; else pids="${pids} $!"; fi
+        done
+
+        for p in ${pids}; do
+          wait "${p}" 2>/dev/null || true
+        done
+
+        # Collect batch results
+        for ba in ${batch_agents}; do
+          local_result_file="${log_dir}/${cloud}-${ba}.result"
+          if [ -f "${local_result_file}" ] && [ "$(cat "${local_result_file}")" = "pass" ]; then
+            if [ -z "${cloud_passed}" ]; then cloud_passed="${ba}"; else cloud_passed="${cloud_passed} ${ba}"; fi
+          else
+            if [ -z "${cloud_failed}" ]; then cloud_failed="${ba}"; else cloud_failed="${cloud_failed} ${ba}"; fi
+          fi
+        done
+
+        batch_agents=""
+        batch_count=0
+      fi
+    done
+
+    # Handle remaining agents in last partial batch
+    if [ -n "${batch_agents}" ]; then
+      batch_num=$((batch_num + 1))
+      log_header "Batch ${batch_num} (${cloud})"
+
+      # Refresh auth before partial batch too — same reason as above. #2934
+      cloud_refresh_auth || log_warn "Auth refresh failed before batch ${batch_num}"
+
+      pids=""
+      for ba in ${batch_agents}; do
+        local_result_file="${log_dir}/${cloud}-${ba}.result"
+        run_single_agent "${ba}" "${local_result_file}" &
+        if [ -z "${pids}" ]; then pids="$!"; else pids="${pids} $!"; fi
+      done
+
+      for p in ${pids}; do
+        wait "${p}" 2>/dev/null || true
+      done
+
+      for ba in ${batch_agents}; do
+        local_result_file="${log_dir}/${cloud}-${ba}.result"
+        if [ -f "${local_result_file}" ] && [ "$(cat "${local_result_file}")" = "pass" ]; then
+          if [ -z "${cloud_passed}" ]; then cloud_passed="${ba}"; else cloud_passed="${cloud_passed} ${ba}"; fi
+        else
+          if [ -z "${cloud_failed}" ]; then cloud_failed="${ba}"; else cloud_failed="${cloud_failed} ${ba}"; fi
+        fi
+      done
+    fi
+
+  else
+    # Sequential mode
+    for agent in ${AGENTS_TO_TEST}; do
+      local_result_file="${log_dir}/${cloud}-${agent}.result"
+      run_single_agent "${agent}" "${local_result_file}"
+
+      if [ -f "${local_result_file}" ] && [ "$(cat "${local_result_file}")" = "pass" ]; then
+        if [ -z "${cloud_passed}" ]; then cloud_passed="${agent}"; else cloud_passed="${cloud_passed} ${agent}"; fi
+      else
+        if [ -z "${cloud_failed}" ]; then cloud_failed="${agent}"; else cloud_failed="${cloud_failed} ${agent}"; fi
+      fi
+    done
+  fi
+
+  # Stale cleanup
+  if [ "${SKIP_CLEANUP}" -eq 0 ]; then
+    cloud_cleanup_stale || log_warn "Stale cleanup encountered errors"
+  fi
+
+  # Write cloud summary
+  local cloud_end
+  cloud_end=$(date +%s)
+  local cloud_duration=$((cloud_end - cloud_start))
+  local cloud_duration_str
+  cloud_duration_str=$(format_duration "${cloud_duration}")
+
+  local pass_count=0
+  local fail_count=0
+  if [ -n "${cloud_passed}" ]; then pass_count=$(printf '%s\n' "${cloud_passed}" | wc -w | tr -d ' '); fi
+  if [ -n "${cloud_failed}" ]; then fail_count=$(printf '%s\n' "${cloud_failed}" | wc -w | tr -d ' '); fi
+
+  printf '%s %s %s %s %s' "${pass_count}" "${fail_count}" "${cloud_duration_str}" "${cloud_passed}" "|${cloud_failed}" \
+    > "${log_dir}/${cloud}.summary"
+
+  if [ "${fail_count}" -gt 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# send_matrix_email LOG_DIR CLOUDS AGENTS TOTAL_PASS TOTAL_FAIL DURATION_STR
+#
+# Sends an agent x cloud matrix report via Resend.
+# Requires: RESEND_API_KEY, KEY_REQUEST_EMAIL env vars (silently skips if absent).
+# ---------------------------------------------------------------------------
+send_matrix_email() {
+  local log_dir="$1"
+  local clouds="$2"
+  local agents="$3"
+  local total_pass="$4"
+  local total_fail="$5"
+  local duration_str="$6"
+
+  # Skip email for targeted re-runs (partial agent/cloud subset).
+  # Set AGENTSEA_E2E_SKIP_EMAIL=1 to suppress the email (used by quality cycle
+  # when re-running only failed agents — a partial email looks like all-passed).
+  if [ "${AGENTSEA_E2E_SKIP_EMAIL:-0}" = "1" ]; then
+    log_info "Matrix email skipped (AGENTSEA_E2E_SKIP_EMAIL=1)"
+    return 0
+  fi
+
+  local resend_key="${RESEND_API_KEY:-}"
+  local to_email="${KEY_REQUEST_EMAIL:-}"
+
+  if [ -z "${resend_key}" ] || [ -z "${to_email}" ]; then
+    log_info "Matrix email skipped (RESEND_API_KEY or KEY_REQUEST_EMAIL not set)"
+    return 0
+  fi
+
+  # Build results string: "cloud:agent:result,..." for bun to process
+  # Sanitize cloud/agent names to alphanumeric, dash, underscore only (#3189)
+  local results=""
+  for cloud in ${clouds}; do
+    local safe_cloud
+    safe_cloud=$(printf '%s' "${cloud}" | tr -cd 'a-zA-Z0-9_-')
+    for agent in ${agents}; do
+      local safe_agent
+      safe_agent=$(printf '%s' "${agent}" | tr -cd 'a-zA-Z0-9_-')
+      local result="skip"
+      local result_file="${log_dir}/${cloud}-${agent}.result"
+      if [ -f "${result_file}" ]; then
+        result=$(cat "${result_file}")
+      fi
+      # Sanitize result to known values only
+      case "${result}" in
+        pass|fail|skip) ;;
+        *) result="skip" ;;
+      esac
+      if [ -n "${results}" ]; then results="${results},"; fi
+      results="${results}${safe_cloud}:${safe_agent}:${result}"
+    done
+  done
+
+  local ts_file old_umask
+  old_umask=$(umask)
+  umask 077
+  ts_file=$(mktemp /tmp/e2e-email-XXXXXX.ts)
+  umask "${old_umask}"
+
+  cat > "${ts_file}" << 'TS_EOF'
+const results = (process.env._E2E_RESULTS ?? "").split(",").filter(Boolean);
+const clouds = (process.env._E2E_CLOUDS ?? "").split(" ").filter(Boolean);
+const agents = (process.env._E2E_AGENTS ?? "").split(" ").filter(Boolean);
+const totalPass = process.env._E2E_TOTAL_PASS ?? "0";
+const totalFail = process.env._E2E_TOTAL_FAIL ?? "0";
+const duration = process.env._E2E_DURATION ?? "?";
+const toEmail = process.env.KEY_REQUEST_EMAIL ?? "";
+const resendKey = process.env.RESEND_API_KEY ?? "";
+const timestamp = new Date().toUTCString();
+
+// Build lookup map: "cloud:agent" -> result
+const resultMap: Record<string, string> = {};
+for (const entry of results) {
+  const parts = entry.split(":");
+  resultMap[`${parts[0]}:${parts[1]}`] = parts[2] ?? "skip";
+}
+
+// Cell styles per result
+const cellStyle = (result: string): string => {
+  if (result === "pass") return "background:#22c55e;color:#fff;font-weight:bold;padding:4px 10px;border-radius:4px;";
+  if (result === "fail") return "background:#ef4444;color:#fff;font-weight:bold;padding:4px 10px;border-radius:4px;";
+  return "background:#e2e8f0;color:#94a3b8;padding:4px 10px;border-radius:4px;";
+};
+
+const headerCells = clouds
+  .map(c => `<th style="padding:8px 14px;background:#1e293b;color:#fff;text-transform:uppercase;font-size:11px;letter-spacing:.05em;">${c}</th>`)
+  .join("");
+
+const bodyRows = agents
+  .map(agent => {
+    const cells = clouds
+      .map(cloud => {
+        const r = resultMap[`${cloud}:${agent}`] ?? "skip";
+        return `<td style="padding:6px 14px;text-align:center;"><span style="${cellStyle(r)}">${r.toUpperCase()}</span></td>`;
+      })
+      .join("");
+    return `<tr><td style="padding:6px 14px;font-weight:600;white-space:nowrap;color:#1e293b;">${agent}</td>${cells}</tr>`;
+  })
+  .join("");
+
+const status = totalFail === "0" ? "✅ All Passed" : `❌ ${totalFail} Failed`;
+
+const html = `<!DOCTYPE html>
+<html><body style="font-family:system-ui,-apple-system,sans-serif;max-width:860px;margin:0 auto;padding:24px;color:#1e293b;">
+<h2 style="margin:0 0 4px;">${status} — Agentsea E2E Matrix</h2>
+<p style="margin:0 0 20px;color:#64748b;font-size:14px;">Completed ${timestamp}</p>
+<table style="border-collapse:collapse;width:100%;">
+  <thead>
+    <tr>
+      <th style="padding:8px 14px;background:#1e293b;color:#fff;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;">Agent</th>
+      ${headerCells}
+    </tr>
+  </thead>
+  <tbody>
+    ${bodyRows}
+  </tbody>
+</table>
+<p style="margin-top:18px;color:#64748b;font-size:13px;">
+  <strong style="color:#1e293b;">Total:</strong> ${totalPass} passed, ${totalFail} failed
+  &nbsp;·&nbsp;
+  <strong style="color:#1e293b;">Duration:</strong> ${duration}
+</p>
+</body></html>`;
+
+const subject = totalFail === "0"
+  ? `✅ E2E Matrix: ${totalPass} passed · ${duration}`
+  : `❌ E2E Matrix: ${totalFail} failed, ${totalPass} passed · ${duration}`;
+
+const res = await fetch("https://api.resend.com/emails", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${resendKey}`,
+  },
+  body: JSON.stringify({
+    from: "Agentsea QA <onboarding@resend.dev>",
+    to: [toEmail],
+    subject,
+    html,
+  }),
+});
+
+if (!res.ok) {
+  const body = await res.text();
+  console.error(`Resend API error ${res.status}: ${body}`);
+  process.exit(1);
+}
+console.log(`Matrix email sent to ${toEmail}`);
+TS_EOF
+
+  log_info "Sending matrix email to ${to_email}..."
+  _E2E_RESULTS="${results}" \
+  _E2E_CLOUDS="${clouds}" \
+  _E2E_AGENTS="${agents}" \
+  _E2E_TOTAL_PASS="${total_pass}" \
+  _E2E_TOTAL_FAIL="${total_fail}" \
+  _E2E_DURATION="${duration_str}" \
+    bun run "${ts_file}" 2>&1 || log_warn "Failed to send matrix email"
+
+  rm -f "${ts_file}" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# Final cleanup trap
+# ---------------------------------------------------------------------------
+final_cleanup() {
+  if [ -n "${_TRACKED_APPS}" ]; then
+    printf "\n"
+    log_warn "Cleaning up tracked instances on exit..."
+    for app in ${_TRACKED_APPS}; do
+      log_step "Tearing down ${app}..."
+      teardown_agent "${app}" 2>/dev/null || log_warn "Failed to tear down ${app}"
+    done
+  fi
+  if [ -n "${LOG_DIR:-}" ] && [ -d "${LOG_DIR:-}" ]; then
+    if [ "${LOG_DIR}" != "${_E2E_CREATED_LOG_DIR:-}" ]; then
+      log_warn "Refusing to rm -rf LOG_DIR not created by this script: ${LOG_DIR}"
+    else
+      # Reject symlinks to prevent TOCTOU races (CWE-367, #3233):
+      # Previous code resolved symlinks then operated on the resolved path,
+      # but an attacker could swap the symlink target between resolve and rm.
+      # Fix: refuse to delete symlinks entirely — LOG_DIR should never be one.
+      if [ -L "${LOG_DIR}" ]; then
+        log_warn "LOG_DIR is a symlink, refusing deletion to prevent symlink attacks: ${LOG_DIR}"
+        return
+      fi
+      SAFE_TMP_ROOT="${TMP_ROOT:-${TMPDIR:-/tmp}}"
+      SAFE_TMP_ROOT="${SAFE_TMP_ROOT%/}"
+      # Use realpath -P to resolve, then verify the original path matches
+      # (ensures LOG_DIR is not inside a symlinked parent directory)
+      local resolved_log_dir
+      resolved_log_dir=$(realpath -P "${LOG_DIR}" 2>/dev/null)
+      if [ -z "${resolved_log_dir}" ]; then
+        log_warn "Failed to resolve LOG_DIR path, skipping cleanup"
+        return
+      fi
+      # Re-check symlink after resolve to narrow the TOCTOU window
+      if [ -L "${LOG_DIR}" ]; then
+        log_warn "LOG_DIR became a symlink during cleanup, aborting: ${LOG_DIR}"
+        return
+      fi
+      # Verify ownership on the original path (not the resolved one)
+      if [ ! -O "${LOG_DIR}" ]; then
+        log_warn "LOG_DIR not owned by current user, refusing deletion: ${LOG_DIR}"
+      else
+        case "${resolved_log_dir}" in
+          "${SAFE_TMP_ROOT}"/agentsea-e2e.*)
+            # Delete the original path — if it became a symlink between check
+            # and here, rm -rf on a symlink just removes the link itself when
+            # the target no longer matches. The double -L check above minimizes
+            # this window.
+            rm -rf "${LOG_DIR}"
+            ;;
+          *)
+            log_warn "Refusing to rm -rf unexpected path: ${resolved_log_dir}"
+            ;;
+        esac
+      fi
+    fi
+  fi
+}
+trap final_cleanup EXIT
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+log_header "Agentsea E2E Test Suite (Multi-Cloud)"
+log_info "Clouds: ${CLOUDS}"
+log_info "Agents: ${AGENTS_TO_TEST}"
+if [ "${SEQUENTIAL_MODE}" -eq 1 ]; then
+  log_info "Agent parallelism: sequential"
+elif [ "${PARALLEL_COUNT}" -ge 99 ]; then
+  log_info "Agent parallelism: all at once (per-cloud caps may apply)"
+else
+  log_info "Agent parallelism: ${PARALLEL_COUNT} per cloud"
+fi
+if [ "${SKIP_INPUT_TEST}" -eq 1 ]; then
+  log_info "Input tests: SKIPPED"
+fi
+if [ "${FAST_MODE}" -eq 1 ]; then
+  log_info "Fast mode: ENABLED (--fast passed to agentsea)"
+fi
+
+# Export FAST_MODE so provision.sh can read it
+export E2E_FAST_MODE="${FAST_MODE}"
+
+# Create temp log directory
+TMP_ROOT="${TMPDIR:-/tmp}"
+TMP_ROOT="${TMP_ROOT%/}"
+LOG_DIR=$(mktemp -d "${TMP_ROOT}/agentsea-e2e.XXXXXX")
+_E2E_CREATED_LOG_DIR="${LOG_DIR}"
+export LOG_DIR
+log_info "Log directory: ${LOG_DIR}"
+
+START_TIME=$(date +%s)
+
+# ---------------------------------------------------------------------------
+# Execute: single-cloud or multi-cloud
+# ---------------------------------------------------------------------------
+if [ "${cloud_count}" -eq 1 ]; then
+  # Single cloud — run directly in this process
+  run_agents_for_cloud "${CLOUDS}" "${LOG_DIR}" || true
+
+else
+  # Multi-cloud — each cloud runs as a separate background process
+  cloud_pids=""
+  for cloud in ${CLOUDS}; do
+    (
+      # Reset parent's EXIT trap — the main process handles LOG_DIR cleanup
+      trap - EXIT
+      _TRACKED_APPS=""
+      run_agents_for_cloud "${cloud}" "${LOG_DIR}"
+    ) > "${LOG_DIR}/${cloud}.log" 2>&1 &
+    cloud_pid=$!
+    if [ -z "${cloud_pids}" ]; then
+      cloud_pids="${cloud_pid}"
+    else
+      cloud_pids="${cloud_pids} ${cloud_pid}"
+    fi
+    log_info "Started ${cloud} tests (PID: ${cloud_pid})"
+  done
+
+  # Wait for all clouds to finish
+  any_failed=0
+  for pid in ${cloud_pids}; do
+    wait "${pid}" 2>/dev/null || any_failed=1
+  done
+
+  # Print per-cloud logs
+  for cloud in ${CLOUDS}; do
+    if [ -f "${LOG_DIR}/${cloud}.log" ]; then
+      printf "\n"
+      log_header "Output: ${cloud}"
+      cat "${LOG_DIR}/${cloud}.log"
+    fi
+  done
+fi
+
+# ---------------------------------------------------------------------------
+# Unified Summary
+# ---------------------------------------------------------------------------
+END_TIME=$(date +%s)
+TOTAL_DURATION=$((END_TIME - START_TIME))
+DURATION_STR=$(format_duration "${TOTAL_DURATION}")
+
+printf "\n"
+log_header "E2E Test Summary"
+
+total_pass=0
+total_fail=0
+any_cloud_failed=0
+
+for cloud in ${CLOUDS}; do
+  printf "\n  ${BOLD}%s:${NC}\n" "${cloud}"
+
+  cloud_pass=0
+  cloud_fail=0
+  cloud_skip=0
+
+  # Check if this cloud was skipped (no credentials) — no result files written
+  cloud_has_results=0
+  for agent in ${AGENTS_TO_TEST}; do
+    if [ -f "${LOG_DIR}/${cloud}-${agent}.result" ]; then
+      cloud_has_results=1
+      break
+    fi
+  done
+
+  if [ "${cloud_has_results}" -eq 0 ]; then
+    printf "    ${YELLOW}(skipped — credentials not configured)${NC}\n"
+    continue
+  fi
+
+  for agent in ${AGENTS_TO_TEST}; do
+    result_file="${LOG_DIR}/${cloud}-${agent}.result"
+    if [ -f "${result_file}" ] && [ "$(cat "${result_file}")" = "pass" ]; then
+      printf "    ${GREEN}%-12s PASS${NC}\n" "${agent}"
+      cloud_pass=$((cloud_pass + 1))
+      total_pass=$((total_pass + 1))
+    else
+      printf "    ${RED}%-12s FAIL${NC}\n" "${agent}"
+      cloud_fail=$((cloud_fail + 1))
+      total_fail=$((total_fail + 1))
+    fi
+  done
+
+  if [ "${cloud_fail}" -gt 0 ]; then
+    printf "    ${RED}%d passed, %d failed${NC}\n" "${cloud_pass}" "${cloud_fail}"
+    any_cloud_failed=1
+  else
+    printf "    ${GREEN}%d passed, 0 failed${NC}\n" "${cloud_pass}"
+  fi
+done
+
+printf "\n"
+printf "  ${BOLD}Total:${NC} ${GREEN}%d passed${NC}" "${total_pass}"
+if [ "${total_fail}" -gt 0 ]; then
+  printf ", ${RED}%d failed${NC}" "${total_fail}"
+fi
+printf "\n  Duration: %s\n" "${DURATION_STR}"
+
+# Machine-readable pass/fail list at repo root (for CI and local triage)
+_results_root="${AGENTSEA_CLI_DIR:-}"
+if [ -z "${_results_root}" ]; then
+  _results_root="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+fi
+_RESULTS_FILE="${_results_root}/e2e-agent-results.txt"
+{
+  printf '# agentsea E2E results (generated by sh/e2e/e2e.sh)\n'
+  printf 'generated_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'duration=%s\n' "${DURATION_STR}"
+  printf 'log_dir=%s\n' "${LOG_DIR}"
+  printf 'total_pass=%s\n' "${total_pass}"
+  printf 'total_fail=%s\n' "${total_fail}"
+  printf '\n# cloud\tagent\tresult\n'
+  for _r_cloud in ${CLOUDS}; do
+    for _r_agent in ${AGENTS_TO_TEST}; do
+      _rf="${LOG_DIR}/${_r_cloud}-${_r_agent}.result"
+      if [ -f "${_rf}" ]; then
+        printf '%s\t%s\t%s\n' "${_r_cloud}" "${_r_agent}" "$(tr -d '\n' < "${_rf}")"
+      else
+        printf '%s\t%s\t(no result file)\n' "${_r_cloud}" "${_r_agent}"
+      fi
+    done
+  done
+} > "${_RESULTS_FILE}"
+log_info "Wrote ${_RESULTS_FILE}"
+
+# Send matrix email report
+send_matrix_email "${LOG_DIR}" "${CLOUDS}" "${AGENTS_TO_TEST}" "${total_pass}" "${total_fail}" "${DURATION_STR}"
+
+# Exit with failure if any agent on any cloud failed
+if [ "${total_fail}" -gt 0 ]; then
+  exit 1
+fi
+
+# All tests passed — advance the e2e-last-green tag for diff-aware reviews
+mark_e2e_green
+
+exit 0

@@ -13,7 +13,7 @@ import { PkgVersionSchema, parseJsonObj } from "../shared/parse.js";
 import { getAgentseaCloudConfigPath } from "../shared/paths.js";
 import { getCloudProvider } from "../shared/cloud-provider-registry.js";
 import { asyncTryCatch, tryCatch, unwrapOr } from "../shared/result.js";
-import { CLACK_LOG_OPTS } from "../shared/ui.js";
+import { CLACK_LOG_OPTS, logError } from "../shared/ui.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -55,7 +55,7 @@ export async function loadManifestWithSpinner(): Promise<Manifest> {
 
 export function validateNonEmptyString(value: string, fieldName: string, helpCommand: string): void {
   if (!value || value.trim() === "") {
-    p.log.error(`${fieldName} is required but was not provided.`);
+    logError(`${fieldName} is required but was not provided.`);
     p.log.info(`Run ${pc.cyan(helpCommand)} to see all available options.`);
     process.exit(1);
   }
@@ -291,7 +291,7 @@ export function checkEntity(manifest: Manifest, value: string, kind: "agent" | "
   const collection = getEntityCollection(manifest, kind);
   if (collection[value]) {
     if (kind === "agent" && manifest.agents[value].disabled) {
-      p.log.error(`${pc.bold(manifest.agents[value].name)} is temporarily disabled.`);
+      logError(`${pc.bold(manifest.agents[value].name)} is temporarily disabled.`);
       if (manifest.agents[value].disabled_reason) {
         p.log.info(manifest.agents[value].disabled_reason);
       }
@@ -300,7 +300,7 @@ export function checkEntity(manifest: Manifest, value: string, kind: "agent" | "
     return true;
   }
 
-  p.log.error(`Unknown ${def.label}: ${pc.bold(value)}`);
+  logError(`Unknown ${def.label}: ${pc.bold(value)}`);
 
   // Try different correction strategies
   if (checkWrongKind(value, kind, manifest, def)) {
@@ -336,7 +336,7 @@ export async function validateAndGetEntity(
   const capitalLabel = def.label.charAt(0).toUpperCase() + def.label.slice(1);
   const r = tryCatch(() => validateIdentifier(value, `${capitalLabel} name`));
   if (!r.ok) {
-    p.log.error(getErrorMessage(r.error));
+    logError(getErrorMessage(r.error));
     process.exit(1);
   }
 
@@ -355,7 +355,7 @@ export function validateImplementation(manifest: Manifest, cloud: string, agent:
   if (status !== "implemented") {
     const agentName = manifest.agents[agent].name;
     const cloudName = manifest.clouds[cloud].name;
-    p.log.error(`${agentName} on ${cloudName} is not yet implemented.`);
+    logError(`${agentName} on ${cloudName} is not yet implemented.`);
 
     const availableClouds = getImplementedClouds(manifest, agent);
     if (availableClouds.length > 0) {
@@ -670,7 +670,7 @@ export function validateRunSecurity(agent: string, cloud: string, prompt?: strin
     }
   });
   if (!r.ok) {
-    p.log.error(getErrorMessage(r.error));
+    logError(getErrorMessage(r.error));
     process.exit(1);
   }
 

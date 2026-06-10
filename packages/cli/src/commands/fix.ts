@@ -18,7 +18,7 @@ import { asyncTryCatch, tryCatch } from "../shared/result.js";
 import { ensureSshKeys, getSshKeyOpts } from "../shared/ssh-keys.js";
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
 import { makeSshRunner } from "../shared/ssh-runner.js";
-import { logWarn, withRetry } from "../shared/ui.js";
+import { logError, logWarn, withRetry } from "../shared/ui.js";
 import { buildRecordLabel, buildRecordSubtitle } from "./list.js";
 import { handleCancel, isInteractiveTTY } from "./shared.js";
 
@@ -53,16 +53,16 @@ export interface FixOptions {
 export async function fixAgentsea(record: AgentseaRecord, manifest: Manifest | null, options?: FixOptions): Promise<void> {
   const conn = record.connection;
   if (!conn) {
-    p.log.error("Cannot fix: agentsea has no connection information.");
+    logError("Cannot fix: agentsea has no connection information.");
     p.log.info("This usually means provisioning failed before SSH was established.");
     return;
   }
   if (conn.deleted) {
-    p.log.error("Cannot fix: server has been deleted.");
+    logError("Cannot fix: server has been deleted.");
     return;
   }
   if (conn.ip === "sprite-console") {
-    p.log.error(`Cannot fix: Sprite console connections are not supported by '${AGENTSEA_CLI} fix'.`);
+    logError(`Cannot fix: Sprite console connections are not supported by '${AGENTSEA_CLI} fix'.`);
     p.log.info("SSH directly into the VM and re-run the setup script manually.");
     return;
   }
@@ -87,7 +87,7 @@ export async function fixAgentsea(record: AgentseaRecord, manifest: Manifest | n
     }
   });
   if (!validationResult.ok) {
-    p.log.error(`Security validation failed: ${getErrorMessage(validationResult.error)}`);
+    logError(`Security validation failed: ${getErrorMessage(validationResult.error)}`);
     p.log.info("Your agentsea history file may be corrupted or tampered with.");
     p.log.info(`Location: ${getHistoryPath()}`);
     return;
@@ -98,7 +98,7 @@ export async function fixAgentsea(record: AgentseaRecord, manifest: Manifest | n
   if (!man) {
     const manifestResult = await asyncTryCatch(() => loadManifest());
     if (!manifestResult.ok) {
-      p.log.error(`Failed to load manifest: ${getErrorMessage(manifestResult.error)}`);
+      logError(`Failed to load manifest: ${getErrorMessage(manifestResult.error)}`);
       return;
     }
     man = manifestResult.data;
@@ -106,7 +106,7 @@ export async function fixAgentsea(record: AgentseaRecord, manifest: Manifest | n
 
   const agentManifest = man.agents[record.agent];
   if (!agentManifest) {
-    p.log.error(`Unknown agent: ${pc.bold(record.agent)}`);
+    logError(`Unknown agent: ${pc.bold(record.agent)}`);
     p.log.info("This agentsea may have been created with an agent that no longer exists.");
     return;
   }
@@ -117,7 +117,7 @@ export async function fixAgentsea(record: AgentseaRecord, manifest: Manifest | n
     if (savedKey) {
       process.env.THEGRID_API_KEY = savedKey;
     } else {
-      p.log.error("No Grid API key found.");
+      logError("No Grid API key found.");
       p.log.info("Set THEGRID_API_KEY in your environment, or run a new agentsea to authenticate via OAuth.");
       return;
     }
@@ -149,14 +149,14 @@ export async function fixAgentsea(record: AgentseaRecord, manifest: Manifest | n
 
     const fixResult = await asyncTryCatch(() => runDaytonaFixScript(conn.server_id!, script));
     if (!fixResult.ok) {
-      p.log.error(`Fix failed: ${getErrorMessage(fixResult.error)}`);
+      logError(`Fix failed: ${getErrorMessage(fixResult.error)}`);
       return;
     }
     if (fixResult.data.output) {
       process.stdout.write(fixResult.data.output + "\n");
     }
     if (fixResult.data.exitCode !== 0) {
-      p.log.error("Fix script exited with an error. Check the output above for details.");
+      logError("Fix script exited with an error. Check the output above for details.");
       return;
     }
 
@@ -181,7 +181,7 @@ export async function fixAgentsea(record: AgentseaRecord, manifest: Manifest | n
   const { resolveAgent } = createCloudAgentsFromModules(runner);
   const agentResult = tryCatch(() => resolveAgent(record.agent));
   if (!agentResult.ok) {
-    p.log.error(`Unknown agent: ${pc.bold(record.agent)}`);
+    logError(`Unknown agent: ${pc.bold(record.agent)}`);
     return;
   }
   const agent = agentResult.data;
@@ -259,7 +259,7 @@ export async function cmdFix(agentseaId?: string, options?: FixOptions): Promise
   if (agentseaId) {
     const record = servers.find((r) => r.id === agentseaId || r.name === agentseaId || r.connection?.server_name === agentseaId);
     if (!record) {
-      p.log.error(`Agentsea not found: ${pc.bold(agentseaId)}`);
+      logError(`Agentsea not found: ${pc.bold(agentseaId)}`);
       p.log.info(`Run ${pc.cyan(`${AGENTSEA_CLI} list`)} to see your active agentseas.`);
       process.exit(1);
     }
@@ -275,7 +275,7 @@ export async function cmdFix(agentseaId?: string, options?: FixOptions): Promise
 
   // Non-interactive fallback (multiple servers require picking)
   if (!isInteractiveTTY()) {
-    p.log.error(`${AGENTSEA_CLI} fix requires an interactive terminal or a agentsea name/ID.`);
+    logError(`${AGENTSEA_CLI} fix requires an interactive terminal or a agentsea name/ID.`);
     p.log.info(`Usage: ${pc.cyan(`${AGENTSEA_CLI} fix <agentsea-id>`)}`);
     process.exit(1);
   }
@@ -298,7 +298,7 @@ export async function cmdFix(agentseaId?: string, options?: FixOptions): Promise
 
   const record = servers.find((r) => (r.id || r.timestamp) === selected);
   if (!record) {
-    p.log.error("Agentsea not found.");
+    logError("Agentsea not found.");
     process.exit(1);
   }
 

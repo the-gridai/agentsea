@@ -39,6 +39,7 @@ import {
 } from "../shared/ssh.js";
 import { ensureSshKeys, getAgentseaKey, getSshFingerprint, getSshKeyOpts, AGENTSEA_KEY_NAME } from "../shared/ssh-keys.js";
 import {
+  defaultCloudHostnameBase,
   dropletNameWithUuidSuffix,
   getServerNameFromEnv,
   loadApiToken,
@@ -1721,7 +1722,10 @@ export async function getServerName(): Promise<string> {
 export async function promptAgentseaName(): Promise<void> {
   /** Every DO droplet hostname is `<kebab-base>-<uuid>` except when `DO_DROPLET_NAME` pins an exact label (e2e/headless). */
   const finalize = (baseInput: string): void => {
-    const final = dropletNameWithUuidSuffix(baseInput.trim() || "agentsea");
+    const agentSlug = process.env.AGENTSEA_AGENT_SLUG?.trim();
+    const final = dropletNameWithUuidSuffix(
+      baseInput.trim() || defaultCloudHostnameBase(agentSlug || undefined),
+    );
     process.env.AGENTSEA_NAME_DISPLAY = final;
     process.env.AGENTSEA_NAME_KEBAB = final;
     logInfo(`Using droplet name: ${final}`);
@@ -1743,16 +1747,20 @@ export async function promptAgentseaName(): Promise<void> {
   if (process.env.AGENTSEA_NAME_KEBAB?.trim()) {
     baseForSuffix = process.env.AGENTSEA_NAME_KEBAB.trim();
   } else if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
-    baseForSuffix = (process.env.AGENTSEA_NAME ? toKebabCase(process.env.AGENTSEA_NAME) : "").trim() || "agentsea";
+    const agentSlug = process.env.AGENTSEA_AGENT_SLUG?.trim();
+    baseForSuffix =
+      (process.env.AGENTSEA_NAME ? toKebabCase(process.env.AGENTSEA_NAME) : "").trim() ||
+      defaultCloudHostnameBase(agentSlug || undefined);
   } else {
+    const agentSlug = process.env.AGENTSEA_AGENT_SLUG?.trim();
     const derived = process.env.AGENTSEA_NAME ? toKebabCase(process.env.AGENTSEA_NAME) : "";
-    const fallback = derived || "agentsea";
+    const fallback = derived || defaultCloudHostnameBase(agentSlug || undefined);
     process.stderr.write("\n");
     const answer = await prompt(`DigitalOcean droplet label [${fallback}]: `);
-    baseForSuffix = toKebabCase((answer || "").trim() || fallback) || "agentsea";
+    baseForSuffix = toKebabCase((answer || "").trim() || fallback) || defaultCloudHostnameBase(agentSlug || undefined);
   }
 
-  finalize(baseForSuffix ?? "agentsea");
+  finalize(baseForSuffix ?? defaultCloudHostnameBase(process.env.AGENTSEA_AGENT_SLUG?.trim() || undefined));
 }
 
 // ─── Lifecycle ───────────────────────────────────────────────────────────────

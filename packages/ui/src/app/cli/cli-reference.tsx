@@ -13,6 +13,9 @@ import styles from "./page.module.scss";
 
 const INSTALL_SNIPPET = `curl -fsSL ${AGENTSEA_INSTALL_URL} | bash`;
 
+const INSTALL_AND_LAUNCH_SNIPPET = (agent: string, cloud: string) =>
+  `curl -fsSL ${AGENTSEA_INSTALL_URL} | bash -s -- ${agent} ${cloud}`;
+
 const COMMON_COMMANDS_SNIPPET = `agentsea                                # Interactive picker
 agentsea <agent> <cloud>                # Launch directly (e.g. openclaw digitalocean)
 agentsea ls                             # List your deployments
@@ -32,14 +35,13 @@ export HCLOUD_TOKEN=...                   # Hetzner
  * Previously this fallback was a one-line "Pick an agent and provider" stub,
  * which made the "CLI guide" link in the header land on something that
  * looked broken instead of a guide. Header link points here; the
- * homepage's launch flow continues to deep-link with `?agent=&cloud=`
- * to the launch view in the same route.
+ * homepage's launch flow deep-links to `/{agent}/{cloud}` launch pages.
  */
 export function CliReference({ agentSlug, agentName }: { agentSlug?: string; agentName?: string }) {
   return (
     <div className={styles["reference"]}>
       <header className={styles["referenceHero"]}>
-        <h1 className={styles["referenceHero__title"]}>AgentSea CLI</h1>
+        <h1 className={styles["referenceHero__title"]}>CLI Reference</h1>
         <p className={styles["referenceHero__p"]}>
           {agentSlug && agentName ? (
             <>
@@ -69,9 +71,22 @@ export function CliReference({ agentSlug, agentName }: { agentSlug?: string; age
         </h2>
         <p className={styles["referenceSection__p"]}>
           One curl pipe. Works on macOS, Linux, and WSL — installs to <code className={styles["inlineCode"]}>~/.local/bin</code>{" "}
-          and adds it to <code className={styles["inlineCode"]}>PATH</code> for new shells.
+          and adds it to <code className={styles["inlineCode"]}>PATH</code> for new shells. Pass agent and cloud to
+          install and start deployment in one step:
         </p>
-        <CopyCode label="install" code={INSTALL_SNIPPET} />
+        {agentSlug ? (
+          <CopyCode
+            label="install and deploy"
+            code={INSTALL_AND_LAUNCH_SNIPPET(agentSlug, "digitalocean")}
+          />
+        ) : (
+          <CopyCode
+            label="install and deploy (example)"
+            code={INSTALL_AND_LAUNCH_SNIPPET("openclaw", "digitalocean")}
+          />
+        )}
+        <p className={styles["referenceSection__p"]}>CLI only (no auto-launch):</p>
+        <CopyCode label="install only" code={INSTALL_SNIPPET} />
       </section>
 
       <section className={styles["referenceSection"]} aria-labelledby="ref-commands">

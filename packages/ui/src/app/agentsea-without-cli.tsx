@@ -77,7 +77,7 @@ export const WithoutCli = memo(function WithoutCliComp({
   const resolved = useMemo(() => {
     // Mirror HomeLaunchFlow: only honor agents that are launchable (available + chat-verified).
     const selected = agentParam ? agents.find((a) => a.slug === agentParam) : undefined;
-    const valid = selected && selected.available && selected.chatVerified ? selected : undefined;
+    const valid = selected && !selected.disabled && selected.available && selected.chatVerified ? selected : undefined;
     if (!valid) {
       return {
         agentSlug: DEFAULT_AGENT_SLUG,

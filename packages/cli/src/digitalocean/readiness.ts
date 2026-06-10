@@ -305,6 +305,7 @@ export async function runDigitalOceanReadinessGate(opts: { agentName: string }):
     await resolveFirstBlocker(first, agentName, state);
   }
 
+  logAlwaysStep("Registering SSH key with DigitalOcean…");
   await ensureSshKey();
   if (!process.env.THEGRID_API_KEY) {
     const saved = loadSavedTheGridApiKey();
@@ -312,5 +313,7 @@ export async function runDigitalOceanReadinessGate(opts: { agentName: string }):
       process.env.THEGRID_API_KEY = saved;
     }
   }
-  await getOrPromptApiKey(agentName, "digitalocean");
+  if (!(await hasValidGridApiKey())) {
+    await getOrPromptApiKey(agentName, "digitalocean");
+  }
 }

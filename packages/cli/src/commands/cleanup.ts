@@ -5,6 +5,7 @@ import pc from "picocolors";
 import { getErrorMessage } from "@agentsea/sdk";
 import { asyncTryCatch } from "../shared/result.js";
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
+import { logError } from "../shared/ui.js";
 import { handleCancel, isInteractiveTTY } from "./shared.js";
 
 const DEFAULT_TTL_HOURS = 168;
@@ -24,20 +25,20 @@ export async function cmdCleanup(
   const cloud = (cloudArg ?? "digitalocean").toLowerCase();
 
   if (cloud !== "digitalocean") {
-    p.log.error(`Cleanup is only implemented for ${pc.cyan("digitalocean")} today.`);
+    logError(`Cleanup is only implemented for ${pc.cyan("digitalocean")} today.`);
     process.exit(1);
   }
 
   const doMod = await import("../digitalocean/digitalocean.js");
   const tokenResult = await asyncTryCatch(() => doMod.ensureDoToken());
   if (!tokenResult.ok) {
-    p.log.error("DigitalOcean authentication failed.");
+    logError("DigitalOcean authentication failed.");
     process.exit(1);
   }
 
   const listResult = await asyncTryCatch(() => doMod.listAgentSeaDroplets());
   if (!listResult.ok) {
-    p.log.error(`Could not list droplets: ${getErrorMessage(listResult.error)}`);
+    logError(`Could not list droplets: ${getErrorMessage(listResult.error)}`);
     process.exit(1);
   }
 
@@ -85,7 +86,7 @@ export async function cmdCleanup(
 
   if (!confirmed) {
     if (!isInteractiveTTY()) {
-      p.log.error(`${AGENTSEA_CLI} cleanup requires ${pc.cyan("--yes")} when not running interactively.`);
+      logError(`${AGENTSEA_CLI} cleanup requires ${pc.cyan("--yes")} when not running interactively.`);
       process.exit(1);
     }
     p.log.info("Cancelled.");

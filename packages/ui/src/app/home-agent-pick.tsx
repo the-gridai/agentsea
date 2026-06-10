@@ -3,8 +3,15 @@
 import Image from "next/image";
 import { memo, useMemo, useState } from "react";
 
+import type { AgentSortMode } from "@agentsea/sdk";
+
 import { GridRecipesLogo } from "./agent-logos";
-import type { HomeAgentVm } from "./landing-from-manifest";
+import {
+  AGENT_SORT_OPTIONS,
+  DEFAULT_AGENT_SORT_MODE,
+  sortHomeAgents,
+  type HomeAgentVm,
+} from "./landing-from-manifest";
 import { AGENTSEA_REQUEST_AGENT_MAILTO } from "./home-public-constants";
 import styles from "./page.module.scss";
 
@@ -14,31 +21,66 @@ export type HomeAgentPickProps = {
   onSelectAgent: (slug: string) => void;
 };
 
+function agentCardDisabledReason(a: HomeAgentVm): string | null {
+  if (a.disabled) {
+    return "Unavailable";
+  }
+  if (!a.available) {
+    return "Coming soon";
+  }
+  if (!a.chatVerified) {
+    return "In testing";
+  }
+  return null;
+}
+
 export const HomeAgentPick = memo(function HomeAgentPickComp({
   agents,
   selectedAgentSlug,
   onSelectAgent,
 }: HomeAgentPickProps) {
   const [q, setQ] = useState("");
+  const [sortMode, setSortMode] = useState<AgentSortMode>(DEFAULT_AGENT_SORT_MODE);
+
+  const sorted = useMemo(() => sortHomeAgents(agents, sortMode), [agents, sortMode]);
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
-    if (!s) return agents;
-    return agents.filter(
+    if (!s) return sorted;
+    return sorted.filter(
       (a) =>
         a.name.toLowerCase().includes(s) || a.desc.toLowerCase().includes(s) || a.publisher.toLowerCase().includes(s),
     );
-  }, [agents, q]);
+  }, [sorted, q]);
 
   return (
     <section className={styles["band"]} aria-labelledby="pick-title">
       <div className={styles["sectionHead"]}>
-        <span className={styles["sectionHead__index"]} aria-hidden="true">
-          1
-        </span>
-        <h2 id="pick-title" className={styles["sectionHead__title"]}>
-          Pick an Agent
-        </h2>
+        <div className={styles["sectionHead__lead"]}>
+          <span className={styles["sectionHead__index"]} aria-hidden="true">
+            1
+          </span>
+          <h2 id="pick-title" className={styles["sectionHead__title"]}>
+            Pick an Agent
+          </h2>
+        </div>
+        <div className={styles["sectionHead__sort"]}>
+          <label htmlFor="agent-sort" className={styles["sectionHead__sortLabel"]}>
+            Sort
+          </label>
+          <select
+            id="agent-sort"
+            className={styles["sectionHead__sortSelect"]}
+            value={sortMode}
+            onChange={(e) => setSortMode(e.target.value as AgentSortMode)}
+          >
+            {AGENT_SORT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className={styles["searchRow"]}>
@@ -66,16 +108,10 @@ export const HomeAgentPick = memo(function HomeAgentPickComp({
 
       <ul className={styles["agentGrid"]}>
         {filtered.map((a) => {
-          const selectable = a.chatVerified && a.available;
+          const selectable = !a.disabled && a.chatVerified && a.available;
           const muted = !selectable;
           const selected = selectedAgentSlug === a.slug;
-
-          let disabledReason: string | null = null;
-          if (!a.available) {
-            disabledReason = "Coming soon";
-          } else if (!a.chatVerified) {
-            disabledReason = "In testing";
-          }
+          const disabledReason = agentCardDisabledReason(a);
 
           const cardClass = [
             styles["agentCard"],
@@ -141,7 +177,11 @@ export const HomeAgentPick = memo(function HomeAgentPickComp({
                   {inner}
                 </button>
               ) : (
-                <div className={cardClass} aria-disabled="true">
+                <div
+                  className={cardClass}
+                  aria-disabled="true"
+                  title={a.disabled && a.disabledReason ? a.disabledReason : undefined}
+                >
                   {inner}
                 </div>
               )}

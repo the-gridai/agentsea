@@ -13,6 +13,7 @@ export const PROVISION_PHASES = [
   "env_injecting",
   "env_injected",
   "post_install",
+  "agent_configured",
   "complete",
 ] as const;
 

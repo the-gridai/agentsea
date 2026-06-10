@@ -16,7 +16,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { canRunDigitalOceanE2e, e2eAgentListFromEnv } from "./e2e-agents.js";
+import { canRunDigitalOceanE2e, E2E_SPREADSHEET_ISSUE_BY_AGENT, e2eAgentListFromEnv } from "./e2e-agents.js";
 
 const REPO_ROOT = join(import.meta.dir, "..", "..", "..", "..", "..");
 const E2E_SH = join(REPO_ROOT, "sh", "e2e", "e2e.sh");
@@ -69,8 +69,9 @@ describe("DigitalOcean E2E (real provision + verify via e2e.sh)", () => {
 
   const agents = e2eAgentListFromEnv();
   for (const agent of agents) {
+    const issueTag = E2E_SPREADSHEET_ISSUE_BY_AGENT[agent] ?? "";
     it.skipIf(!canRun)(
-      `${agent}: agentsea provision, install, verify on DigitalOcean`,
+      `${agent}${issueTag ? ` (${issueTag})` : ""}: agentsea provision, install, verify on DigitalOcean`,
       async () => {
         await runSerial(async () => {
           const r = await runE2eForAgent(agent);

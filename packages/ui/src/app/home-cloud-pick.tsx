@@ -4,7 +4,7 @@ import Link from "next/link";
 import { memo, type RefObject } from "react";
 
 import { CloudLogo } from "./cloud-logos";
-import type { HomeAgentVm, HomeCloudVm } from "./landing-from-manifest";
+import { agentCloudPath, type HomeAgentVm, type HomeCloudVm } from "./landing-from-manifest";
 import styles from "./page.module.scss";
 
 export type HomeCloudPickProps = {
@@ -15,10 +15,6 @@ export type HomeCloudPickProps = {
   sectionRef: RefObject<HTMLElement | null>;
   titleRef: RefObject<HTMLHeadingElement | null>;
 };
-
-function cliHref(agentSlug: string, cloudSlug: string): string {
-  return `/cli?agent=${encodeURIComponent(agentSlug)}&cloud=${encodeURIComponent(cloudSlug)}`;
-}
 
 export const HomeCloudPick = memo(function HomeCloudPickComp({
   cloudOptions,
@@ -95,7 +91,7 @@ export const HomeCloudPick = memo(function HomeCloudPickComp({
           return (
             <li key={c.slug}>
               {selectable ? (
-                <Link href={cliHref(selectedAgentSlug, c.slug)} className={cardClass}>
+                <Link href={agentCloudPath(selectedAgentSlug, c.slug)} className={cardClass}>
                   {inner}
                 </Link>
               ) : (

@@ -25,7 +25,8 @@ import {
   startT3PairingBrowserWatcher,
   T3_REMOTE_PORT,
 } from "../shared/t3-config.js";
-import { logWarn, openBrowser, rewriteLocalhostHttpUrlForWindowsBrowserFromWsl, shellQuote } from "../shared/ui.js";
+import { buildHermesDashboardStartScript } from "../shared/hermes-dashboard.js";
+import { logError, logWarn, openBrowser, rewriteLocalhostHttpUrlForWindowsBrowserFromWsl, shellQuote } from "../shared/ui.js";
 import { getErrorMessage } from "./shared.js";
 
 /** Strip persisted tunnel template down to path?query (Daytona preview host is prepended). */
@@ -132,7 +133,7 @@ async function runInteractiveCommand(
     ]),
   );
   if (!r.ok) {
-    p.log.error(`Failed to connect: ${getErrorMessage(r.error)}`);
+    logError(`Failed to connect: ${getErrorMessage(r.error)}`);
     p.log.info(`Try manually: ${pc.cyan(manualCmd)}`);
     throw r.error;
   }
@@ -185,7 +186,7 @@ export async function cmdConnect(connection: VMConnection, agentKey?: string): P
     }
   });
   if (!connectValidation.ok) {
-    p.log.error(`Security validation failed: ${getErrorMessage(connectValidation.error)}`);
+    logError(`Security validation failed: ${getErrorMessage(connectValidation.error)}`);
     p.log.info("Your agentsea history file may be corrupted or tampered with.");
     p.log.info(`Location: ${getHistoryPath()}`);
     p.log.info(`To fix: edit the file and remove the invalid entry, or run '${AGENTSEA_CLI} list --clear'`);
@@ -265,7 +266,7 @@ export async function cmdEnterAgent(
     }
   });
   if (!enterValidation.ok) {
-    p.log.error(`Security validation failed: ${getErrorMessage(enterValidation.error)}`);
+    logError(`Security validation failed: ${getErrorMessage(enterValidation.error)}`);
     p.log.info("Your agentsea history file may be corrupted or tampered with.");
     p.log.info(`Location: ${getHistoryPath()}`);
     p.log.info(`To fix: edit the file and remove the invalid entry, or run '${AGENTSEA_CLI} list --clear'`);
@@ -365,7 +366,7 @@ export async function cmdEnterAgent(
       }
     });
     if (!tunnelValidation.ok) {
-      p.log.error(`Security validation failed: ${getErrorMessage(tunnelValidation.error)}`);
+      logError(`Security validation failed: ${getErrorMessage(tunnelValidation.error)}`);
       p.log.info("Your agentsea history file may be corrupted or tampered with.");
       p.log.info(`Location: ${getHistoryPath()}`);
       p.log.info(`To fix: edit the file and remove the invalid entry, or run '${AGENTSEA_CLI} list --clear'`);
@@ -433,12 +434,12 @@ export async function cmdOpenDashboard(connection: VMConnection, agentKey?: stri
     const { validateDaytonaConnection } = await import("../daytona/daytona.js");
     const validation = tryCatch(() => validateDaytonaConnection(connection));
     if (!validation.ok) {
-      p.log.error(`Security validation failed: ${getErrorMessage(validation.error)}`);
+      logError(`Security validation failed: ${getErrorMessage(validation.error)}`);
       return;
     }
     const opened = await openDaytonaDashboard(connection);
     if (!opened) {
-      p.log.error("No dashboard metadata found for this Daytona sandbox.");
+      logError("No dashboard metadata found for this Daytona sandbox.");
       return;
     }
     p.log.success("Opened Daytona preview URL in your browser.");
@@ -450,14 +451,14 @@ export async function cmdOpenDashboard(connection: VMConnection, agentKey?: stri
     validateUsername(connection.user);
   });
   if (!validation.ok) {
-    p.log.error(`Security validation failed: ${getErrorMessage(validation.error)}`);
+    logError(`Security validation failed: ${getErrorMessage(validation.error)}`);
     return;
   }
 
   const tunnelPort = connection.metadata?.tunnel_remote_port;
   const urlTemplate = connection.metadata?.tunnel_browser_url_template;
   if (!tunnelPort) {
-    p.log.error("No dashboard tunnel info found for this server.");
+    logError("No dashboard tunnel info found for this server.");
     return;
   }
 
@@ -469,15 +470,46 @@ export async function cmdOpenDashboard(connection: VMConnection, agentKey?: stri
     }
   });
   if (!tunnelValidation.ok) {
-    p.log.error(`Security validation failed: ${getErrorMessage(tunnelValidation.error)}`);
+    logError(`Security validation failed: ${getErrorMessage(tunnelValidation.error)}`);
     p.log.info("Your agentsea history file may be corrupted or tampered with.");
     p.log.info(`Location: ${getHistoryPath()}`);
     p.log.info(`To fix: edit the file and remove the invalid entry, or run '${AGENTSEA_CLI} list --clear'`);
     return;
   }
 
-  p.log.step("Opening SSH tunnel to dashboard...");
   const keys = await ensureSshKeys();
+  const resolvedAgent = agentKey ?? "";
+
+  if (resolvedAgent === "hermes") {
+    p.log.step("Ensuring Hermes dashboard is running on the VM...");
+    const hermesScript = buildHermesDashboardStartScript(120);
+    const hermesResult = await asyncTryCatchIf(isOperationalError, async () => {
+      const proc = Bun.spawn(
+        [
+          "ssh",
+          ...SSH_BASE_OPTS,
+          ...getSshKeyOpts(keys),
+          `${connection.user}@${connection.ip}`,
+          hermesScript,
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const exitCode = await proc.exited;
+      if (exitCode !== 0) {
+        throw new Error("Hermes dashboard did not become healthy on the VM");
+      }
+    });
+    if (!hermesResult.ok) {
+      logError(
+        `Hermes dashboard is not running on this server (${getErrorMessage(hermesResult.error)}).`,
+      );
+      p.log.info("SSH to the VM and check: tail -40 /tmp/hermes-dashboard.log");
+      p.log.info("The Hermes TUI still works via agentsea connect.");
+      return;
+    }
+  }
+
+  p.log.step("Opening SSH tunnel to dashboard...");
   const tunnelResult = await asyncTryCatchIf(isOperationalError, () =>
     startSshTunnel({
       host: connection.ip,
@@ -487,12 +519,11 @@ export async function cmdOpenDashboard(connection: VMConnection, agentKey?: stri
     }),
   );
   if (!tunnelResult.ok) {
-    p.log.error("Failed to open SSH tunnel to dashboard.");
+    logError("Failed to open SSH tunnel to dashboard.");
     return;
   }
 
   const handle = tunnelResult.data;
-  const resolvedAgent = agentKey ?? "";
   if (resolvedAgent === "t3code") {
     logT3PairingHandoff(handle.localPort);
     const watcher = startT3PairingBrowserWatcher({

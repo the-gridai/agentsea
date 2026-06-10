@@ -16,6 +16,7 @@ import { loadManifest } from "../manifest.js";
 import { asyncTryCatch } from "../shared/result.js";
 import { resumeOrchestrationFromRecord } from "../shared/orchestrate.js";
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
+import { logError } from "../shared/ui.js";
 import { buildRecordLabel, buildRecordSubtitle } from "./list.js";
 import { handleCancel, isInteractiveTTY } from "./shared.js";
 
@@ -60,7 +61,7 @@ export async function cmdResume(agentseaId?: string, opts?: { recoverOnly?: bool
 
   const manifestResult = await asyncTryCatch(() => loadManifest());
   if (!manifestResult.ok) {
-    p.log.error(`Failed to load manifest: ${getErrorMessage(manifestResult.error)}`);
+    logError(`Failed to load manifest: ${getErrorMessage(manifestResult.error)}`);
     process.exit(1);
   }
   const manifest = manifestResult.data;
@@ -74,7 +75,7 @@ export async function cmdResume(agentseaId?: string, opts?: { recoverOnly?: bool
       (r) => r.id === agentseaId || r.name === agentseaId || r.connection?.server_name === agentseaId,
     );
     if (!record) {
-      p.log.error(
+      logError(
         `No incomplete agentsea matched ${pc.bold(agentseaId)}. Try ` +
           pc.cyan(`${AGENTSEA_CLI} list`) +
           " or " +
@@ -90,7 +91,7 @@ export async function cmdResume(agentseaId?: string, opts?: { recoverOnly?: bool
     p.log.info("If a VM was created but history was lost, run " + pc.cyan(`${AGENTSEA_CLI} resume --recover`) + " first.");
     return;
   } else if (!isInteractiveTTY()) {
-    p.log.error(`${AGENTSEA_CLI} resume needs a agentsea id when multiple incomplete spawns exist.`);
+    logError(`${AGENTSEA_CLI} resume needs a agentsea id when multiple incomplete spawns exist.`);
     p.log.info("Usage: " + pc.cyan(AGENTSEA_CLI + " resume <agentsea-id>"));
     process.exit(1);
   } else {
@@ -109,7 +110,7 @@ export async function cmdResume(agentseaId?: string, opts?: { recoverOnly?: bool
   }
 
   if (!record) {
-    p.log.error("Agentsea not found.");
+    logError("Agentsea not found.");
     process.exit(1);
   }
 
@@ -122,7 +123,7 @@ export async function cmdResume(agentseaId?: string, opts?: { recoverOnly?: bool
       provision_status: "failed",
       provision_error: msg.replace(/\s+/g, " ").trim().slice(0, 400),
     });
-    p.log.error(msg);
+    logError(msg);
     process.exit(1);
   }
 }
