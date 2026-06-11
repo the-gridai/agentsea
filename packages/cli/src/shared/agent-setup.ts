@@ -1084,9 +1084,28 @@ export async function startGateway(runner: CloudRunner): Promise<void> {
  * Hermes v0.14+ reads model/provider from ~/.hermes/config.yaml (not ~/.agentsearc OPENAI_*).
  * Without this, install defaults to provider:auto → OpenRouter + claude-opus-4.6.
  */
+/** Deployed on the VM; auto-update re-runs this after every Hermes install.sh. */
+export const HERMES_GRID_REDIRECT_PATCH_REMOTE = "$HOME/.hermes/agentsea-grid-redirect-patch.sh";
+
+/** Hermes install.sh with git SSH→HTTPS rewrite (pip deps on cloud VMs). */
+export function hermesInstallShellCmd(): string {
+  return (
+    'git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" && ' +
+    'git config --global url."https://github.com/".insteadOf "git@github.com:" && ' +
+    "curl --proto '=https' -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup"
+  );
+}
+
+/** Hermes auto-update: reinstall then re-apply Grid redirect patch (install overwrites run_agent.py). */
+export function hermesUpdateShellCmd(): string {
+  return `${hermesInstallShellCmd()} && bash ${HERMES_GRID_REDIRECT_PATCH_REMOTE}`;
+}
+
 /** Hermes docs: patch httpx client to follow Grid /v1 → /r/v1 redirects. */
-async function applyHermesRedirectPatch(runner: CloudRunner): Promise<void> {
-  const patchScript = [
+export function hermesRedirectPatchShellScript(): string {
+  return [
+    "#!/bin/bash",
+    "set -eo pipefail",
     'RUN_AGENT="$HOME/.hermes/hermes-agent/run_agent.py"',
     'test -f "$RUN_AGENT" || { echo "Hermes run_agent.py not found — skip redirect patch" >&2; exit 0; }',
     'grep -q "follow_redirects=True" "$RUN_AGENT" && exit 0',
@@ -1118,7 +1137,20 @@ async function applyHermesRedirectPatch(runner: CloudRunner): Promise<void> {
     "  exit 1",
     "fi",
   ].join("\n");
-  const result = await asyncTryCatchIf(isOperationalError, () => runner.runServer(patchScript, 120));
+}
+
+async function deployHermesRedirectPatchScript(runner: CloudRunner): Promise<void> {
+  await runner.runServer("mkdir -p ~/.hermes");
+  await uploadConfigFile(runner, `${hermesRedirectPatchShellScript()}\n`, HERMES_GRID_REDIRECT_PATCH_REMOTE);
+  await runner.runServer(`chmod 700 ${HERMES_GRID_REDIRECT_PATCH_REMOTE}`);
+}
+
+/** Hermes docs: patch httpx client to follow Grid /v1 → /r/v1 redirects. */
+async function applyHermesRedirectPatch(runner: CloudRunner): Promise<void> {
+  await deployHermesRedirectPatchScript(runner);
+  const result = await asyncTryCatchIf(isOperationalError, () =>
+    runner.runServer(`bash ${HERMES_GRID_REDIRECT_PATCH_REMOTE}`, 120),
+  );
   if (!result.ok) {
     logWarn("Could not patch Hermes redirect follower — chat may 307 without follow_redirects");
   }
@@ -1926,17 +1958,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
       modelDefault: defaultGridModelForAgent("hermes"),
       modelEnvVar: "LLM_MODEL",
       preProvision: detectGithubAuth,
-      install: () =>
-        installAgent(
-          runner,
-          "Hermes Agent",
-          // Force git to use HTTPS instead of SSH for GitHub URLs — pip dependencies
-          // using git+ssh:// timeout on cloud VMs where outbound SSH is blocked/slow.
-          'git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" && ' +
-            'git config --global url."https://github.com/".insteadOf "git@github.com:" && ' +
-            "curl --proto '=https' -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup",
-          600,
-        ),
+      install: () => installAgent(runner, "Hermes Agent", hermesInstallShellCmd(), 600),
       envVars: (apiKey) => [
         `THEGRID_API_KEY=${apiKey}`,
         `OPENAI_BASE_URL=${resolveGridInferenceApiBase()}`,
@@ -1963,11 +1985,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         remotePort: 9119,
         browserUrl: (localPort: number) => `http://localhost:${localPort}/`,
       },
-      updateCmd:
-        // Same SSH→HTTPS rewrite for auto-update runs
-        'git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" && ' +
-        'git config --global url."https://github.com/".insteadOf "git@github.com:" && ' +
-        "curl --proto '=https' -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup",
+      updateCmd: hermesUpdateShellCmd(),
     },
 
     junie: {

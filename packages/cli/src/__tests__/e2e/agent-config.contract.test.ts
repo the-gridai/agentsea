@@ -131,6 +131,11 @@ describe("agent config contract (createCloudAgents, no cloud)", () => {
     expect(typeof agents.hermes.configure).toBe("function");
   });
 
+  it("hermes auto-update reinstalls then re-applies Grid redirect patch", () => {
+    expect(agents.hermes.updateCmd).toContain("install.sh");
+    expect(agents.hermes.updateCmd).toContain("agentsea-grid-redirect-patch.sh");
+  });
+
   it("junie targets The Grid via ~/.junie custom model profile (skip auth wizard)", () => {
     expect(agents.junie.modelDefault).toBe("code-prime");
     expect(typeof agents.junie.configure).toBe("function");
