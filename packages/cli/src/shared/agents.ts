@@ -229,7 +229,7 @@ export function generateEnvConfig(pairs: string[]): string {
     "export LANG='C.UTF-8'",
     "export LC_ALL='C.UTF-8'",
     "# Ensure agent binaries are in PATH on reconnect",
-    'export PATH="$HOME/.opencode/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.claude/local/bin:/usr/local/bin:$PATH"',
+    'export PATH="$HOME/.hermes/hermes-agent/venv/bin:$HOME/.opencode/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.claude/local/bin:/usr/local/bin:$PATH"',
   ];
   for (const pair of pairs) {
     const eqIdx = pair.indexOf("=");

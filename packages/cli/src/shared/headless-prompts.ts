@@ -1,5 +1,6 @@
 // Headless one-shot commands for E2E and `agentsea run --prompt`.
 
+import { HERMES_GRID_CUSTOM_PROVIDER } from "./grid-api.js";
 import { shellQuote } from "./ui.js";
 import { KILO_GRID_PROVIDER_ID, OPENCLAW_GRID_PROVIDER_ID } from "./vendor-routing.js";
 import { JUNIE_LAUNCH_SHELL_PREFIX } from "./junie-config.js";
@@ -56,7 +57,7 @@ export function hermesHeadlessPrompt(prompt: string, modelId: string): string {
   return [
     HERMES_PATH,
     `hermes -z ${shellQuote(prompt)}`,
-    "--provider custom",
+    `--provider ${HERMES_GRID_CUSTOM_PROVIDER}`,
     `-m ${shellQuote(modelId)}`,
     "--yolo",
   ].join(" ");

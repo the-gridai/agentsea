@@ -75,8 +75,8 @@ const DOC_PARITY: Record<E2eAgentSlug, DocParityExpectation> = {
   },
   hermes: {
     primaryInstrument: resolveGridInstrumentProfile("hermes").primary,
-    baseUrlFragment: "api.thegrid.ai/v1",
-    forbiddenEnvFragments: ["127.0.0.1:4142"],
+    baseUrlFragment: "messages-beta.api.thegrid.ai",
+    forbiddenEnvFragments: ["127.0.0.1:4142", "https://api.thegrid.ai/v1"],
     headlessSubcommand: "hermes -z",
   },
   junie: {
@@ -148,13 +148,13 @@ describe("grid doc parity (static expectations)", () => {
     expect(blob).not.toContain("ANTHROPIC_API_KEY=test-key");
   });
 
-  it("Hermes setup applies redirect patch with grep count=1 verification", () => {
+  it("Hermes setup uses messages-beta custom provider with anthropic_messages api_mode", () => {
     const src = readFileSync(AGENT_SETUP_TS, "utf-8");
-    expect(src).toContain("agentsea-grid-redirect-patch.sh");
-    expect(src).toContain("hermesUpdateShellCmd");
-    expect(src).toContain("_build_keepalive_http_client");
-    expect(src).toContain('grep -c "follow_redirects=True"');
-    expect(src).toContain('api_key: ${THEGRID_API_KEY}');
+    expect(src).toContain("api_mode: anthropic_messages");
+    expect(src).toContain("resolveGridHermesMessagesBase");
+    expect(src).toContain("key_env: THEGRID_API_KEY");
+    expect(src).toContain("HERMES_GRID_CUSTOM_PROVIDER");
+    expect(src).not.toContain("follow_redirects=True");
     expect(src).toContain("supports_vision: false");
     expect(src).toContain("resolveGridInstrumentModelSpec");
   });
@@ -175,9 +175,9 @@ describe("grid doc parity (static expectations)", () => {
     }
     expect(verifySh).toContain("messages-beta.api.thegrid.ai");
     expect(verifySh).toContain('models.mode is merge');
-    expect(verifySh).toContain("api_key:");
+    expect(verifySh).toContain("key_env: THEGRID_API_KEY");
     expect(verifySh).toContain("THEGRID_API_KEY");
-    expect(verifySh).toContain('follow_redirects=True patch (count=1)');
+    expect(verifySh).toContain("api_mode: anthropic_messages");
     expect(verifySh).toContain("--model thegrid/code-prime");
     expect(verifySh).toContain("--agent main --session-key agentsea-e2e");
   });
@@ -189,9 +189,11 @@ describe("grid doc parity (configure uploads)", () => {
     const { agents: localAgents } = createCloudAgents(runner);
     await localAgents.hermes.configure!("test-key");
     const uploaded = [...runner.uploads.values()].join("\n");
-    expect(uploaded).toContain("api.thegrid.ai");
-    expect(uploaded).toContain("api_key: ${THEGRID_API_KEY}");
-    expect(uploaded).toContain("provider: custom");
+    expect(uploaded).toContain("messages-beta.api.thegrid.ai");
+    expect(uploaded).not.toMatch(/base_url:.*messages-beta\.api\.thegrid\.ai\/v1/);
+    expect(uploaded).toContain("api_mode: anthropic_messages");
+    expect(uploaded).toContain("key_env: THEGRID_API_KEY");
+    expect(uploaded).toContain("provider: custom:thegrid");
     expect(uploaded).toContain("default: agent-prime");
     expect(uploaded).toContain("context_length: 128000");
     expect(uploaded).toContain("supports_vision: false");
@@ -201,8 +203,7 @@ describe("grid doc parity (configure uploads)", () => {
     expect(uploaded).toContain("agent_max:");
     expect(uploaded).toContain("auxiliary:");
     expect(uploaded).toContain("compression:");
-    expect(uploaded).toContain("follow_redirects=True");
-    expect(runner.commands.some((c) => c.includes("agentsea-grid-redirect-patch.sh"))).toBe(true);
+    expect(uploaded).not.toContain("https://api.thegrid.ai");
   });
 
   it("OpenCode configure uploads thegrid provider in opencode.json", async () => {

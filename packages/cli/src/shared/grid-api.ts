@@ -1,7 +1,7 @@
 /** Env var for overriding The Grid OpenAI-compatible inference API base (e.g. dev/staging). */
 export const THEGRID_API_URL_ENV = "THEGRID_API_URL";
 
-/** Production inference API base (`GET ù/models`, `POST ù/chat/completions`). */
+/** Production inference API base (`GET ?/models`, `POST ?/chat/completions`). */
 export const DEFAULT_GRID_INFERENCE_API_BASE = "https://api.thegrid.ai/v1";
 
 /** Trim trailing slashes from a Grid inference API base URL. */
@@ -29,7 +29,7 @@ export function gridInferenceChatCompletionsUrl(): string {
   return `${resolveGridInferenceApiBase()}/chat/completions`;
 }
 
-/** Optional `THEGRID_API_URL=ù` line for ~/.agentsearc when a local override is active. */
+/** Optional `THEGRID_API_URL=?` line for ~/.agentsearc when a local override is active. */
 export function gridInferenceOverrideEnvLine(): string | undefined {
   const override = process.env[THEGRID_API_URL_ENV]?.trim();
   if (!override) {
@@ -62,6 +62,21 @@ export function resolveGridAnthropicMessagesClientBase(): string {
 /** OpenClaw custom provider base URL (Anthropic-compatible, includes `/v1`). */
 export function resolveGridOpenClawMessagesBase(): string {
   return `${resolveGridAnthropicMessagesClientBase()}/v1`;
+}
+
+/** Hermes named custom provider slug in config.yaml (`provider: custom:thegrid`). */
+export const HERMES_GRID_CUSTOM_PROVIDER_NAME = "thegrid";
+
+/** Hermes `custom_providers[].name` reference for headless CLI (`--provider custom:thegrid`). */
+export const HERMES_GRID_CUSTOM_PROVIDER = `custom:${HERMES_GRID_CUSTOM_PROVIDER_NAME}`;
+
+/**
+ * Hermes `custom_providers[].base_url` for `api_mode: anthropic_messages`.
+ * Must NOT include `/v1` ? the Anthropic SDK appends `/v1/messages` itself.
+ * (OpenClaw uses {@link resolveGridOpenClawMessagesBase} which includes `/v1`.)
+ */
+export function resolveGridHermesMessagesBase(): string {
+  return resolveGridAnthropicMessagesClientBase();
 }
 
 export type OpenClawGridProviderWire = "openai-completions" | "anthropic-messages";

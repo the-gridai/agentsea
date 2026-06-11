@@ -39,7 +39,7 @@ const GRID_ENV_SUBSTRINGS: Record<E2eAgentSlug, string[]> = {
   ],
   openclaw: [
     "THEGRID_API_KEY=test-key",
-    "OPENAI_BASE_URL=https://messages-beta.api.thegrid.ai/v1",
+    "OPENAI_BASE_URL=https://messages-beta.api.thegrid.ai",
     "OPENAI_API_KEY=test-key",
   ],
   codex: [
@@ -51,7 +51,7 @@ const GRID_ENV_SUBSTRINGS: Record<E2eAgentSlug, string[]> = {
   kilocode: ["THEGRID_API_KEY=test-key"],
   hermes: [
     "THEGRID_API_KEY=test-key",
-    "OPENAI_BASE_URL=https://api.thegrid.ai/v1",
+    "OPENAI_BASE_URL=https://messages-beta.api.thegrid.ai",
     "OPENAI_API_KEY=test-key",
   ],
   junie: ["JUNIE_THEGRID_API_KEY=test-key", "THEGRID_API_KEY=test-key"],
@@ -131,9 +131,9 @@ describe("agent config contract (createCloudAgents, no cloud)", () => {
     expect(typeof agents.hermes.configure).toBe("function");
   });
 
-  it("hermes auto-update reinstalls then re-applies Grid redirect patch", () => {
+  it("hermes auto-update reinstalls from upstream only (messages-beta needs no source patch)", () => {
     expect(agents.hermes.updateCmd).toContain("install.sh");
-    expect(agents.hermes.updateCmd).toContain("agentsea-grid-redirect-patch.sh");
+    expect(agents.hermes.updateCmd).not.toContain("agentsea-grid-redirect-patch.sh");
   });
 
   it("junie targets The Grid via ~/.junie custom model profile (skip auth wizard)", () => {
@@ -174,9 +174,11 @@ describe("agent config contract (createCloudAgents, no cloud)", () => {
     expect(blob.includes("OPENAI_BASE_URL=https://api.thegrid.ai/v1")).toBe(true);
   });
 
-  it("hermes uses direct api.thegrid.ai (no local proxy on :4142)", () => {
+  it("hermes uses messages-beta (no api.thegrid.ai redirect, no local proxy on :4142)", () => {
     const lines = agents.hermes.envVars("test-key");
-    expect(lines.some((l) => l.startsWith("OPENAI_BASE_URL=https://api.thegrid.ai/v1"))).toBe(true);
+    expect(lines.some((l) => l.startsWith("OPENAI_BASE_URL=https://messages-beta.api.thegrid.ai"))).toBe(true);
+    expect(lines.some((l) => l.startsWith("OPENAI_BASE_URL=https://messages-beta.api.thegrid.ai/v1"))).toBe(false);
+    expect(lines.some((l) => l.startsWith("OPENAI_BASE_URL=https://api.thegrid.ai/v1"))).toBe(false);
     expect(lines.some((l) => l.startsWith("OPENAI_BASE_URL=http://127.0.0.1:4142/v1"))).toBe(false);
   });
 
@@ -214,7 +216,7 @@ describe("agent config contract (createCloudAgents, no cloud)", () => {
     expect(agents.junie.promptCmd?.("x").includes("--timeout 240000 --skip-update-check")).toBe(true);
     expect(agents.junie.promptCmd?.("x").includes("junie --prompt")).toBe(false);
     expect(agents.hermes.promptCmd?.("x").includes("hermes -z")).toBe(true);
-    expect(agents.hermes.promptCmd?.("x").includes("--provider custom")).toBe(true);
+    expect(agents.hermes.promptCmd?.("x").includes("--provider custom:thegrid")).toBe(true);
     expect(agents.hermes.promptCmd?.("x").includes("--yolo")).toBe(true);
     expect(agents.hermes.promptCmd?.("x").includes("-m 'agent-prime'")).toBe(true);
     expect(agents.hermes.promptCmd?.("x").includes("hermes 'x'")).toBe(false);
