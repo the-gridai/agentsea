@@ -11,6 +11,7 @@ import { parseJsonObj } from "./parse.js";
 import { getAgentseaCloudConfigPath } from "./paths.js";
 import { asyncTryCatch, tryCatch, unwrapOr } from "./result.js";
 import { isAgentseaVerbose } from "./verbosity.js";
+import { pickToTTY } from "../picker.js";
 import { isWslLinux } from "./shell.js";
 import { captureError, captureWarning } from "./telemetry.js";
 
@@ -49,6 +50,43 @@ export function resetStderrAttributes(): void {
   if (process.stderr.isTTY) {
     process.stderr.write(NC);
   }
+}
+
+/**
+ * Clack reads stdin (fd 0); on WSL ConPTY that stream often stops accepting keys
+ * after spinners/log output. Resume cooked mode and re-open the read side.
+ */
+export function prepareStdinForClack(): void {
+  process.stdin.removeAllListeners();
+  if (process.stdin.isTTY) {
+    tryCatch(() => process.stdin.setRawMode(false));
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+  }
+}
+
+/**
+ * Undo raw/paused stdin and Clack styling so the parent shell accepts input again
+ * after prompts or an interactive child (Hermes TUI) exits.
+ */
+export function restoreInteractiveTerminal(): void {
+  process.stdin.removeAllListeners();
+  if (process.stdin.isTTY) {
+    tryCatch(() => process.stdin.setRawMode(false));
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+  }
+  if (process.stderr.isTTY) {
+    process.stderr.write("\x1b[0m\x1b[?25h");
+  }
+  if (process.stdout.isTTY) {
+    process.stdout.write("\x1b[0m\x1b[?25h");
+  }
+  tryCatch(() =>
+    Bun.spawnSync(["stty", "sane"], {
+      stdio: "inherit",
+    }),
+  );
 }
 
 export function logError(msg: string): void {
@@ -511,14 +549,26 @@ export function openBrowser(url: string): void {
     ],
   ];
 
-  /** WSL: open Windows browser; default loopback URL keeps OpenClaw allowedOrigins happy (set AGENTSEA_WSL_OPEN_BROWSER_LAN_IP=1 if needed). */
+  /** WSL: prefer Windows Chrome/Edge — xdg-open launches Linux Chromium inside the distro. */
   const wslAttempts: [
     string,
     string[],
   ][] = [
     powerShellOpenUrlCommand(windowsBrowserUrl),
-    ...linuxFallback,
+    [
+      "cmd.exe",
+      [
+        "/d",
+        "/c",
+        "start",
+        "",
+        windowsBrowserUrl,
+      ],
+    ],
   ];
+  if (process.env.AGENTSEA_WSL_LINUX_BROWSER === "1") {
+    wslAttempts.push(...linuxFallback);
+  }
 
   /** Native Windows: never use `xdg-open` (not available). */
   const win32Attempts: [
@@ -826,35 +876,55 @@ export async function promptGridCatalogModelId(
   const initial = catalogueIds.includes(suggestedId) ? suggestedId : catalogueIds[0]!;
 
   resetStderrAttributes();
+  restoreInteractiveTerminal();
   process.stderr.write("\n");
 
-  const choice = await p.select({
-    message:
-      message ??
-      (resolvedRecommended
-        ? `Which Grid model should this server use? (recommended: ${resolvedRecommended})`
-        : "Which Grid model should this server use?"),
-    options: [
-      ...entries.map((entry) => ({
-        value: entry.id,
-        label: entry.id === resolvedRecommended ? `${entry.id} ★` : entry.id,
-        hint:
-          entry.id === resolvedRecommended
-            ? "recommended for this agent"
-            : entry.funded
-              ? "credits available"
-              : "no credits yet",
-      })),
-      {
-        value: GRID_MODEL_OTHER,
-        label: "Other…",
-        hint: "enter a catalogue model id manually",
-      },
-    ],
-    initialValue: initial,
-  });
+  const promptMessage =
+    message ??
+    (resolvedRecommended
+      ? `Which Grid model should this server use? (recommended: ${resolvedRecommended})`
+      : "Which Grid model should this server use?");
 
-  if (p.isCancel(choice)) {
+  const selectOptions = [
+    ...entries.map((entry) => ({
+      value: entry.id,
+      label: entry.id === resolvedRecommended ? `${entry.id} ★` : entry.id,
+      hint:
+        entry.id === resolvedRecommended
+          ? "recommended for this agent"
+          : entry.funded
+            ? "credits available"
+            : "no credits yet",
+    })),
+    {
+      value: GRID_MODEL_OTHER,
+      label: "Other…",
+      hint: "enter a catalogue model id manually",
+    },
+  ];
+
+  let choice: string | undefined;
+  // WSL: @clack/prompts select renders but often cannot read keys on ConPTY — use /dev/tty picker.
+  if (isWslLinux()) {
+    choice = pickToTTY({
+      message: promptMessage,
+      options: selectOptions,
+      defaultValue: initial,
+    }) ?? undefined;
+  } else {
+    prepareStdinForClack();
+    const picked = await p.select({
+      message: promptMessage,
+      options: selectOptions,
+      initialValue: initial,
+    });
+    if (p.isCancel(picked)) {
+      return undefined;
+    }
+    choice = picked;
+  }
+
+  if (choice === undefined) {
     return undefined;
   }
 

@@ -284,10 +284,10 @@
       "launch": "hermes",
       "env": {
         "THEGRID_API_KEY": "${THEGRID_API_KEY}",
-        "OPENAI_BASE_URL": "https://api.thegrid.ai/v1",
+        "OPENAI_BASE_URL": "https://messages-beta.api.thegrid.ai",
         "OPENAI_API_KEY": "${THEGRID_API_KEY}"
       },
-      "notes": "Uses THEGRID_API_KEY via ~/.hermes/config.yaml (provider: custom, base_url: https://api.thegrid.ai/v1). Agentsea applies follow_redirects patch to run_agent.py per Grid integration doc. Ships a local web dashboard (port 9119) — auto-exposed via SSH tunnel when run through AgentSea.",
+      "notes": "Uses THEGRID_API_KEY via ~/.hermes/config.yaml (custom_providers: thegrid → https://messages-beta.api.thegrid.ai, api_mode: anthropic_messages). No source patches — survives Hermes auto-update. Ships a local web dashboard (port 9119) — auto-exposed via SSH tunnel when run through AgentSea.",
       "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/agents/hermes.png",
       "featured_cloud": [
         "digitalocean",

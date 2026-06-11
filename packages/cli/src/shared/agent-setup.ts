@@ -9,7 +9,15 @@ import { join } from "node:path";
 import { getErrorMessage } from "@agentsea/sdk";
 import { getCdnOrigin } from "./cdn.js";
 import { setupCursorProxy, startCursorProxy } from "./cursor-proxy.js";
-import { gridInferenceOverrideEnvLine, resolveGridAnthropicMessagesClientBase, resolveGridInferenceApiBase, resolveGridOpenClawMessagesBase } from "./grid-api.js";
+import {
+  gridInferenceOverrideEnvLine,
+  HERMES_GRID_CUSTOM_PROVIDER,
+  HERMES_GRID_CUSTOM_PROVIDER_NAME,
+  resolveGridAnthropicMessagesClientBase,
+  resolveGridHermesMessagesBase,
+  resolveGridInferenceApiBase,
+  resolveGridOpenClawMessagesBase,
+} from "./grid-api.js";
 import {
   defaultGridModelForAgent,
   resolveGridInstrumentModelSpec,
@@ -1084,9 +1092,6 @@ export async function startGateway(runner: CloudRunner): Promise<void> {
  * Hermes v0.14+ reads model/provider from ~/.hermes/config.yaml (not ~/.agentsearc OPENAI_*).
  * Without this, install defaults to provider:auto → OpenRouter + claude-opus-4.6.
  */
-/** Deployed on the VM; auto-update re-runs this after every Hermes install.sh. */
-export const HERMES_GRID_REDIRECT_PATCH_REMOTE = "$HOME/.hermes/agentsea-grid-redirect-patch.sh";
-
 /** Hermes install.sh with git SSH→HTTPS rewrite (pip deps on cloud VMs). */
 export function hermesInstallShellCmd(): string {
   return (
@@ -1096,78 +1101,21 @@ export function hermesInstallShellCmd(): string {
   );
 }
 
-/** Hermes auto-update: reinstall then re-apply Grid redirect patch (install overwrites run_agent.py). */
-export function hermesUpdateShellCmd(): string {
-  return `${hermesInstallShellCmd()} && bash ${HERMES_GRID_REDIRECT_PATCH_REMOTE}`;
-}
-
-/** Hermes docs: patch httpx client to follow Grid /v1 → /r/v1 redirects. */
-export function hermesRedirectPatchShellScript(): string {
-  return [
-    "#!/bin/bash",
-    "set -eo pipefail",
-    'RUN_AGENT="$HOME/.hermes/hermes-agent/run_agent.py"',
-    'test -f "$RUN_AGENT" || { echo "Hermes run_agent.py not found — skip redirect patch" >&2; exit 0; }',
-    'grep -q "follow_redirects=True" "$RUN_AGENT" && exit 0',
-    "python3 - <<'PY'",
-    "from pathlib import Path",
-    "import os, re",
-    'p = Path(os.path.expanduser("~/.hermes/hermes-agent/run_agent.py"))',
-    "if not p.is_file():",
-    "    raise SystemExit(0)",
-    "text = p.read_text()",
-    'if "follow_redirects=True" in text:',
-    "    raise SystemExit(0)",
-    'm = re.search(r"(def _build_keepalive_http_client\\b.*?)(return _httpx\\.Client\\()", text, re.DOTALL)',
-    "if m:",
-    '    text = text[: m.start(2)] + "return _httpx.Client(follow_redirects=True, " + text[m.end(2) :]',
-    "else:",
-    '    for needle in ("return _httpx.Client(", "_httpx.Client(", "httpx.Client("):',
-    "        if needle in text:",
-    '            text = text.replace(needle, needle + "follow_redirects=True, ", 1)',
-    "            break",
-    "    else:",
-    '        raise SystemExit("httpx.Client( not found in run_agent.py")',
-    "p.write_text(text)",
-    "print('Patched Hermes run_agent.py for follow_redirects=True')",
-    "PY",
-    '_patch_count=$(grep -c "follow_redirects=True" "$RUN_AGENT" || true)',
-    'if [ "$_patch_count" != "1" ]; then',
-    '  echo "Hermes redirect patch verify failed: grep count=$_patch_count (expected 1)" >&2',
-    "  exit 1",
-    "fi",
-  ].join("\n");
-}
-
-async function deployHermesRedirectPatchScript(runner: CloudRunner): Promise<void> {
-  await runner.runServer("mkdir -p ~/.hermes");
-  await uploadConfigFile(runner, `${hermesRedirectPatchShellScript()}\n`, HERMES_GRID_REDIRECT_PATCH_REMOTE);
-  await runner.runServer(`chmod 700 ${HERMES_GRID_REDIRECT_PATCH_REMOTE}`);
-}
-
-/** Hermes docs: patch httpx client to follow Grid /v1 → /r/v1 redirects. */
-async function applyHermesRedirectPatch(runner: CloudRunner): Promise<void> {
-  await deployHermesRedirectPatchScript(runner);
-  const result = await asyncTryCatchIf(isOperationalError, () =>
-    runner.runServer(`bash ${HERMES_GRID_REDIRECT_PATCH_REMOTE}`, 120),
-  );
-  if (!result.ok) {
-    logWarn("Could not patch Hermes redirect follower — chat may 307 without follow_redirects");
-  }
-}
-
 async function setupHermesConfig(runner: CloudRunner, apiKey: string, modelId?: string): Promise<void> {
   logStep("Configuring Hermes Agent for The Grid...");
 
   const instruments = resolveHarnessGridInstruments("hermes", modelId);
-  const inferenceBase = resolveGridInferenceApiBase();
+  const messagesBase = resolveGridHermesMessagesBase();
 
   const configLines = [
+    "custom_providers:",
+    `  - name: ${HERMES_GRID_CUSTOM_PROVIDER_NAME}`,
+    `    base_url: ${messagesBase}`,
+    "    key_env: THEGRID_API_KEY",
+    "    api_mode: anthropic_messages",
     "model:",
     `  default: ${yamlScalar(instruments.primary)}`,
-    "  provider: custom",
-    `  base_url: ${inferenceBase}`,
-    "  api_key: ${THEGRID_API_KEY}",
+    `  provider: ${HERMES_GRID_CUSTOM_PROVIDER}`,
     ...hermesModelCapabilityYamlLines("  ", instruments.primary),
   ];
 
@@ -1178,8 +1126,7 @@ async function setupHermesConfig(runner: CloudRunner, apiKey: string, modelId?: 
       const aliasKey = id.replace(/-/g, "_");
       configLines.push(`  ${aliasKey}:`);
       configLines.push(`    model: ${yamlScalar(id)}`);
-      configLines.push("    provider: custom");
-      configLines.push(`    base_url: ${inferenceBase}`);
+      configLines.push(`    provider: ${HERMES_GRID_CUSTOM_PROVIDER}`);
       configLines.push(...hermesModelCapabilityYamlLines("    ", id));
     }
   }
@@ -1187,10 +1134,8 @@ async function setupHermesConfig(runner: CloudRunner, apiKey: string, modelId?: 
   if (instruments.utility) {
     configLines.push("auxiliary:");
     configLines.push("  compression:");
-    configLines.push("    provider: custom");
+    configLines.push(`    provider: ${HERMES_GRID_CUSTOM_PROVIDER}`);
     configLines.push(`    model: ${yamlScalar(instruments.utility)}`);
-    configLines.push(`    base_url: ${inferenceBase}`);
-    configLines.push("    api_key: ${THEGRID_API_KEY}");
   }
 
   const configYaml = configLines.join("\n");
@@ -1200,10 +1145,9 @@ async function setupHermesConfig(runner: CloudRunner, apiKey: string, modelId?: 
   await uploadConfigFile(runner, `${configYaml}\n`, "$HOME/.hermes/config.yaml");
   await uploadConfigFile(runner, `${hermesEnv}\n`, "$HOME/.hermes/.env");
   await runner.runServer("chmod 600 ~/.hermes/config.yaml ~/.hermes/.env");
-  await applyHermesRedirectPatch(runner);
 
   logInfo(
-    `Hermes Agent configured (primary: ${instruments.primary}, registered: ${instruments.registered.join(", ")}, provider: custom → ${inferenceBase})`,
+    `Hermes Agent configured (primary: ${instruments.primary}, registered: ${instruments.registered.join(", ")}, ${HERMES_GRID_CUSTOM_PROVIDER} → ${messagesBase}, api_mode: anthropic_messages)`,
   );
 }
 
@@ -1961,7 +1905,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
       install: () => installAgent(runner, "Hermes Agent", hermesInstallShellCmd(), 600),
       envVars: (apiKey) => [
         `THEGRID_API_KEY=${apiKey}`,
-        `OPENAI_BASE_URL=${resolveGridInferenceApiBase()}`,
+        `OPENAI_BASE_URL=${resolveGridHermesMessagesBase()}`,
         `OPENAI_API_KEY=${apiKey}`,
         "HERMES_YOLO_MODE=1",
       ],
@@ -1985,7 +1929,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         remotePort: 9119,
         browserUrl: (localPort: number) => `http://localhost:${localPort}/`,
       },
-      updateCmd: hermesUpdateShellCmd(),
+      updateCmd: hermesInstallShellCmd(),
     },
 
     junie: {

@@ -94,7 +94,7 @@ describe("hermes headless prompts", () => {
     expect(cmd).toContain("source ~/.agentsearc");
     expect(cmd).toContain("$HOME/.hermes/hermes-agent/venv/bin");
     expect(cmd).toContain("hermes -z 'do the thing'");
-    expect(cmd).toContain("--provider custom");
+    expect(cmd).toContain("--provider custom:thegrid");
     expect(cmd).toContain("-m 'agent-prime'");
     expect(cmd).toContain("--yolo");
     expect(cmd).not.toMatch(/\bhermes 'do the thing'/);

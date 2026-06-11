@@ -443,7 +443,7 @@ input_test_hermes() {
     _TIMEOUT=\$(cat /tmp/.e2e-timeout); \
     rm -rf /tmp/e2e-test && mkdir -p /tmp/e2e-test && cd /tmp/e2e-test && git init -q; \
     PROMPT=\$(cat /tmp/.e2e-prompt | base64 -d); \
-    timeout \"\$_TIMEOUT\" hermes -z \"\$PROMPT\" --provider custom -m agent-prime --yolo < /dev/null" 2>&1) || true
+    timeout \"\$_TIMEOUT\" hermes -z \"\$PROMPT\" --provider custom:thegrid -m agent-prime --yolo < /dev/null" 2>&1) || true
   _log_input_response "hermes" "${output}"
 
   _input_test_succeeds "${app}" "hermes" "${output}"
@@ -884,26 +884,18 @@ verify_hermes() {
     failures=$((failures + 1))
   fi
 
-  # Grid doc parity: top model block + api_key interpolation + redirect patch
+  # Grid doc parity: messages-beta custom provider (no run_agent.py redirect patch)
   log_step "Checking hermes config (~/.hermes/config.yaml)..."
-  if cloud_exec "${app}" "test -f ~/.hermes/config.yaml && grep -q 'api.thegrid.ai' ~/.hermes/config.yaml && grep -q 'provider: custom' ~/.hermes/config.yaml" >/dev/null 2>&1; then
-    log_ok "hermes config.yaml uses custom provider → api.thegrid.ai"
-    if cloud_exec "${app}" "grep -q 'api_key: \${THEGRID_API_KEY}' ~/.hermes/config.yaml || grep -q 'api_key: ${THEGRID_API_KEY}' ~/.hermes/config.yaml" >/dev/null 2>&1; then
-      log_ok "hermes config.yaml references api_key from THEGRID_API_KEY"
+  if cloud_exec "${app}" "test -f ~/.hermes/config.yaml && grep -q 'messages-beta.api.thegrid.ai' ~/.hermes/config.yaml && grep -q 'api_mode: anthropic_messages' ~/.hermes/config.yaml && grep -q 'provider: custom:thegrid' ~/.hermes/config.yaml" >/dev/null 2>&1; then
+    log_ok "hermes config.yaml uses custom:thegrid → messages-beta (anthropic_messages)"
+    if cloud_exec "${app}" "grep -q 'key_env: THEGRID_API_KEY' ~/.hermes/config.yaml" >/dev/null 2>&1; then
+      log_ok "hermes config.yaml references THEGRID_API_KEY via key_env"
     else
-      log_err "hermes config.yaml missing api_key: ${THEGRID_API_KEY} (Grid doc required)"
+      log_err "hermes config.yaml missing key_env: THEGRID_API_KEY"
       failures=$((failures + 1))
     fi
   else
-    log_err "hermes missing ~/.hermes/config.yaml with custom provider → api.thegrid.ai"
-    failures=$((failures + 1))
-  fi
-
-  log_step "Checking hermes redirect patch (follow_redirects=True)..."
-  if cloud_exec "${app}" 'test -f "$HOME/.hermes/hermes-agent/run_agent.py" && [ "$(grep -c "follow_redirects=True" "$HOME/.hermes/hermes-agent/run_agent.py" || echo 0)" = "1" ]' >/dev/null 2>&1; then
-    log_ok "hermes run_agent.py has follow_redirects=True patch (count=1)"
-  else
-    log_err "hermes run_agent.py missing follow_redirects=True patch (grep count must be 1)"
+    log_err "hermes missing ~/.hermes/config.yaml with messages-beta anthropic_messages provider"
     failures=$((failures + 1))
   fi
 
