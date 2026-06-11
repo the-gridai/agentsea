@@ -150,6 +150,8 @@ describe("grid doc parity (static expectations)", () => {
 
   it("Hermes setup applies redirect patch with grep count=1 verification", () => {
     const src = readFileSync(AGENT_SETUP_TS, "utf-8");
+    expect(src).toContain("agentsea-grid-redirect-patch.sh");
+    expect(src).toContain("hermesUpdateShellCmd");
     expect(src).toContain("_build_keepalive_http_client");
     expect(src).toContain('grep -c "follow_redirects=True"');
     expect(src).toContain('api_key: ${THEGRID_API_KEY}');
@@ -199,7 +201,8 @@ describe("grid doc parity (configure uploads)", () => {
     expect(uploaded).toContain("agent_max:");
     expect(uploaded).toContain("auxiliary:");
     expect(uploaded).toContain("compression:");
-    expect(runner.commands.some((c) => c.includes("follow_redirects=True"))).toBe(true);
+    expect(uploaded).toContain("follow_redirects=True");
+    expect(runner.commands.some((c) => c.includes("agentsea-grid-redirect-patch.sh"))).toBe(true);
   });
 
   it("OpenCode configure uploads thegrid provider in opencode.json", async () => {
