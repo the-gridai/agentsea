@@ -84,7 +84,7 @@ export function restoreInteractiveTerminal(): void {
   }
   tryCatch(() =>
     Bun.spawnSync(["stty", "sane"], {
-      stdio: "inherit",
+      stdio: ["inherit", "inherit", "inherit"],
     }),
   );
 }

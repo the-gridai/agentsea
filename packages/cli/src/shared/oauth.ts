@@ -21,6 +21,7 @@ import {
   logAlwaysInfo,
   logAlwaysStep,
   openBrowser,
+  prepareStdinForClack,
   resetStderrAttributes,
   retryOrQuit,
   runWithSpinner,
@@ -276,14 +277,16 @@ function showApiKeyIntro(): void {
 
 async function promptApiKey(): Promise<string | null> {
   resetStderrAttributes();
+  prepareStdinForClack();
   const message = GRID_CONSUMPTION_API_KEY_PROMPT_LABEL.replace(/:\s*$/, "").trim();
-  const result = await p.text({
+  logAlwaysStep("Paste your consumption API key from app.thegrid.ai (input is hidden).");
+  const result = await p.password({
     message,
-    placeholder: "Paste consumption API key from app.thegrid.ai",
     validate: (val) => {
       const format = validateGridConsumptionApiKeyFormat(val ?? "");
       return format.valid ? undefined : format.message;
     },
+    clearOnError: true,
   });
   if (p.isCancel(result)) {
     process.stderr.write("\n");
