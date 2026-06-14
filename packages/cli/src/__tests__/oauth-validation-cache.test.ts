@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import {
   resetGridApiKeyValidationCacheForTests,
@@ -65,5 +67,24 @@ describe("verifyTheGridApiKey validation cache", () => {
   it("rejects malformed keys before any network call", async () => {
     expect(await verifyTheGridApiKey("too-short")).toBe(false);
     expect(fetchCalls).toBe(0);
+  });
+});
+
+describe("Grid API key prompt", () => {
+  const oauthSrc = readFileSync(join(import.meta.dir, "../shared/oauth.ts"), "utf-8");
+
+  it("hides input via cooked-mode stty -echo rather than Clack's raw-mode prompt", () => {
+    // Clack's raw-mode keypress reader is what hangs on macOS/Bun when stdin is
+    // not resumed after a spinner; we read in cooked mode and mask with stty.
+    expect(oauthSrc).toContain("setTerminalEcho");
+    expect(oauthSrc).toContain('"-echo"');
+    expect(oauthSrc).not.toContain("p.password");
+    expect(oauthSrc).not.toContain('placeholder: "Paste consumption API key');
+  });
+
+  it("guarantees the prompt can never hang forever and Ctrl-C always aborts", () => {
+    expect(oauthSrc).toContain("KEY_PROMPT_TIMEOUT_MS");
+    expect(oauthSrc).toContain('process.on("SIGINT"');
+    expect(oauthSrc).toContain("setTimeout");
   });
 });

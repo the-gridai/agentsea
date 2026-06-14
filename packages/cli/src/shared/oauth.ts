@@ -8,7 +8,6 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import * as p from "@clack/prompts";
 import { getErrorMessage, isString } from "@agentsea/sdk";
 import { parseJsonObj } from "./parse.js";
 import { gridInferenceModelsUrl, resolveGridWebAppOrigin } from "./grid-api.js";
@@ -21,6 +20,7 @@ import {
   logAlwaysInfo,
   logAlwaysStep,
   openBrowser,
+  prepareStdinForClack,
   resetStderrAttributes,
   retryOrQuit,
   runWithSpinner,
@@ -274,22 +274,131 @@ function showApiKeyIntro(): void {
   openBrowser(gridAppUrl);
 }
 
+/**
+ * Max time to wait for the user to enter a key before bailing out with guidance.
+ * A hard ceiling guarantees the CLI can never hang indefinitely at this prompt
+ * (the macOS/Bun TTY symptom reported in the field). Override for slow pasters.
+ */
+const KEY_PROMPT_TIMEOUT_MS = Number(process.env.AGENTSEA_KEY_PROMPT_TIMEOUT_MS) || 300_000;
+
+/** Best-effort local-echo toggle via `stty` (POSIX TTYs only). Returns true if echo was disabled. */
+function setTerminalEcho(enabled: boolean): boolean {
+  if (process.platform === "win32") {
+    return false;
+  }
+  const r = tryCatch(() =>
+    Bun.spawnSync(["stty", enabled ? "echo" : "-echo"], {
+      stdio: ["inherit", "inherit", "inherit"],
+    }),
+  );
+  return r.ok && r.data.exitCode === 0;
+}
+
+/**
+ * Read one line of input with the key hidden, WITHOUT relying on Clack's raw-mode
+ * keypress reader.
+ *
+ * We stay in cooked/canonical mode and mask via `stty -echo` (the classic Unix
+ * password behavior). This is robust against the macOS + Bun TTY quirk where the
+ * stdin stream is not resumed after a spinner/`spawnSync`, which left Clack's
+ * raw-mode prompt unable to receive a paste (and Ctrl-C dead, since Clack reads
+ * Ctrl-C as a keypress rather than SIGINT).
+ *
+ * Guarantees:
+ * - Paste + Enter works (the line discipline buffers and delivers on newline).
+ * - Ctrl-C always aborts (cooked mode delivers SIGINT, not a swallowed byte).
+ * - A hard timeout means it can never hang forever.
+ */
+/** Bracketed-paste wrappers some terminals (macOS Terminal/iTerm) inject around pasted text. */
+const BRACKETED_PASTE_MARKERS = /\x1b\[20[01]~/g;
+
+/** Disable/enable terminal bracketed-paste mode so pasted keys don't arrive wrapped in escapes. */
+function setBracketedPaste(enabled: boolean): void {
+  if (process.stderr.isTTY) {
+    process.stderr.write(enabled ? "\x1b[?2004h" : "\x1b[?2004l");
+  }
+}
+
+export async function readHiddenLine(): Promise<string | null> {
+  const stdin = process.stdin;
+  const isTty = Boolean(stdin.isTTY);
+
+  // Undo any pause / raw mode / stale listeners left by earlier spinners or the
+  // in-process handoff so the stream actually flows here.
+  stdin.removeAllListeners("data");
+  if (isTty) {
+    tryCatch(() => stdin.setRawMode(false));
+  }
+  stdin.resume();
+  stdin.setEncoding("utf8");
+
+  // Turn off bracketed paste so a pasted key isn't surrounded by ESC[200~ / ESC[201~
+  // (which would corrupt the key and fail validation). We also strip them defensively.
+  setBracketedPaste(false);
+  const echoDisabled = isTty ? setTerminalEcho(false) : false;
+
+  return await new Promise<string | null>((resolve) => {
+    let buffer = "";
+    let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      stdin.removeListener("data", onData);
+      process.removeListener("SIGINT", onSigint);
+      if (echoDisabled) {
+        setTerminalEcho(true);
+      }
+      stdin.pause();
+    };
+
+    const settle = (value: string | null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      process.stderr.write("\n");
+      resolve(value === null ? null : value.replace(BRACKETED_PASTE_MARKERS, ""));
+    };
+
+    const onData = (chunk: string) => {
+      buffer += chunk;
+      const newlineIndex = buffer.search(/[\r\n]/);
+      if (newlineIndex !== -1) {
+        settle(buffer.slice(0, newlineIndex));
+      }
+    };
+
+    const onSigint = () => {
+      cleanup();
+      process.stderr.write("\n");
+      process.exit(130);
+    };
+
+    const timer = setTimeout(() => {
+      logError(
+        `No input received in ${Math.round(KEY_PROMPT_TIMEOUT_MS / 1000)}s. ` +
+          "Set THEGRID_API_KEY=<your consumption key> and re-run, then try again.",
+      );
+      settle(null);
+    }, KEY_PROMPT_TIMEOUT_MS);
+
+    process.on("SIGINT", onSigint);
+    stdin.on("data", onData);
+  });
+}
+
 async function promptApiKey(): Promise<string | null> {
   resetStderrAttributes();
-  const message = GRID_CONSUMPTION_API_KEY_PROMPT_LABEL.replace(/:\s*$/, "").trim();
-  const result = await p.text({
-    message,
-    placeholder: "Paste consumption API key from app.thegrid.ai",
-    validate: (val) => {
-      const format = validateGridConsumptionApiKeyFormat(val ?? "");
-      return format.valid ? undefined : format.message;
-    },
-  });
-  if (p.isCancel(result)) {
-    process.stderr.write("\n");
-    process.exit(0);
+  prepareStdinForClack();
+  logAlwaysStep("Paste your consumption API key from app.thegrid.ai, then press Enter (input is hidden).");
+  process.stderr.write(`${GRID_CONSUMPTION_API_KEY_PROMPT_LABEL} `);
+
+  const line = await readHiddenLine();
+  if (line === null) {
+    return null;
   }
-  const trimmed = result.trim();
+  const trimmed = line.trim();
   const format = validateGridConsumptionApiKeyFormat(trimmed);
   if (!format.valid) {
     logError(format.message);
