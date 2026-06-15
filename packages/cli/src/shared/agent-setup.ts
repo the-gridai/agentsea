@@ -1016,10 +1016,6 @@ export async function startGateway(runner: CloudRunner): Promise<void> {
     "#!/bin/bash",
     'source "$HOME/.agentsearc" 2>/dev/null',
     'export PATH="$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH"',
-    // Repair any config-schema drift (e.g. channels.telegram.streaming string→object
-    // across openclaw versions) before the gateway validates it, or it crash-loops.
-    // stdin from /dev/null so `doctor --fix` never blocks on an interactive prompt.
-    "command -v openclaw >/dev/null 2>&1 && openclaw doctor --fix </dev/null >> /tmp/openclaw-gateway.log 2>&1 || true",
     "while true; do",
     "  openclaw gateway",
     '  echo "openclaw gateway exited, restarting in 5s" >> /tmp/openclaw-gateway.log',
@@ -1047,26 +1043,46 @@ export async function startGateway(runner: CloudRunner): Promise<void> {
     "WantedBy=multi-user.target",
   ].join("\n");
 
+  // Deterministic config normalizer (replaces `openclaw doctor --fix`, which is an
+  // interactive TUI that hangs in non-interactive provisioning — even with stdin from
+  // /dev/null). Migrates the one known cross-version schema drift: a string
+  // `channels.telegram.streaming` (e.g. "partial") → the object form `{ mode: "partial" }`
+  // that newer openclaw validates. No subprocess, no prompts, can't hang.
+  const normalizeScript = [
+    "import fs from 'fs';",
+    "const p = process.env.HOME + '/.openclaw/openclaw.json';",
+    "try {",
+    "  const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));",
+    "  const tg = cfg.channels && cfg.channels.telegram;",
+    "  if (tg && typeof tg.streaming === 'string') {",
+    "    tg.streaming = { mode: tg.streaming };",
+    "    fs.writeFileSync(p, JSON.stringify(cfg, null, 2));",
+    "  }",
+    "} catch (e) {}",
+  ].join("\n");
+
   validateScriptTemplate(wrapperScript, "gateway-wrapper");
   validateScriptTemplate(unitFile, "gateway-unit");
+  validateScriptTemplate(normalizeScript, "gateway-config-normalize");
 
   const wrapperB64 = Buffer.from(wrapperScript).toString("base64");
   const unitB64 = Buffer.from(unitFile).toString("base64");
-  if (!/^[A-Za-z0-9+/=]+$/.test(wrapperB64)) {
-    throw new Error("Unexpected characters in base64 output");
-  }
-  if (!/^[A-Za-z0-9+/=]+$/.test(unitB64)) {
-    throw new Error("Unexpected characters in base64 output");
+  const normalizeB64 = Buffer.from(normalizeScript).toString("base64");
+  for (const b64 of [wrapperB64, unitB64, normalizeB64]) {
+    if (!/^[A-Za-z0-9+/=]+$/.test(b64)) {
+      throw new Error("Unexpected characters in base64 output");
+    }
   }
 
   const script = [
     "source ~/.agentsearc 2>/dev/null",
     "export PATH=$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH",
-    // Normalize the openclaw config (migrate any stale schema, e.g.
-    // channels.telegram.streaming) so the gateway passes validation on first start.
-    // Redirect stdin from /dev/null — `doctor --fix` blocks on an interactive prompt
-    // when stdin is a TTY, which hung the whole provision at "OpenClaw configured".
-    "command -v openclaw >/dev/null 2>&1 && openclaw doctor --fix </dev/null >/dev/null 2>&1 || true",
+    // Normalize the openclaw config (migrate stale channels.telegram.streaming
+    // string→object) so the gateway passes validation on first start. Deterministic
+    // and instant — replaces `openclaw doctor --fix`, which hung provisioning.
+    "printf '%s' '" + normalizeB64 + "' | base64 -d > /tmp/oc-normalize.mjs",
+    "(command -v node >/dev/null 2>&1 && node /tmp/oc-normalize.mjs || command -v bun >/dev/null 2>&1 && bun /tmp/oc-normalize.mjs) 2>/dev/null || true",
+    "rm -f /tmp/oc-normalize.mjs 2>/dev/null || true",
     "printf '%s' '" + wrapperB64 + "' | base64 -d > /tmp/openclaw-gateway-wrapper.tmp",
     "chmod +x /tmp/openclaw-gateway-wrapper.tmp",
     "if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then",
