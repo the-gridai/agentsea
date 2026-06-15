@@ -2,10 +2,10 @@
 
 import type { CloudOrchestrator } from "../shared/orchestrate.js";
 
-import * as p from "@clack/prompts";
 import { createCloudAgentsFromModules } from "../shared/agent-module-registry.js";
+import { pickToTTY } from "../picker.js";
 import { makeDockerRunner, runOrchestration } from "../shared/orchestrate.js";
-import { logWarn } from "../shared/ui.js";
+import { logInfo, logWarn } from "../shared/ui.js";
 import { resolveAgent } from "./agents.js";
 import {
   cleanupContainer,
@@ -51,13 +51,19 @@ export async function runLocalAgent(agentName: string): Promise<void> {
     logWarn("   The agent will have full access to your filesystem, shell, and network.");
     logWarn("   For isolation, consider running on a cloud VM instead.\n");
 
-    const confirmed = await p.confirm({
+    // Read the confirm straight from /dev/tty (pickToTTY) rather than via Clack's
+    // raw-mode stdin reader, which can hang on macOS/Bun after the in-process
+    // handoff (paste/keys never arrive, Ctrl-C dead). /dev/tty always works.
+    const choice = pickToTTY({
       message: "Continue with local installation?",
-      initialValue: true,
+      options: [
+        { value: "yes", label: "Yes" },
+        { value: "no", label: "No" },
+      ],
+      defaultValue: "yes",
     });
-
-    if (p.isCancel(confirmed) || !confirmed) {
-      p.log.info("Installation cancelled.");
+    if (choice !== "yes") {
+      logInfo("Installation cancelled.");
       process.exit(0);
     }
   }

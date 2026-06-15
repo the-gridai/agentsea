@@ -903,26 +903,15 @@ export async function promptGridCatalogModelId(
     },
   ];
 
-  let choice: string | undefined;
-  // WSL: @clack/prompts select renders but often cannot read keys on ConPTY — use /dev/tty picker.
-  if (isWslLinux()) {
-    choice = pickToTTY({
+  // Read the selection straight from /dev/tty (pickToTTY) on every platform.
+  // Clack's raw-mode stdin select can hang on macOS/Bun (and WSL ConPTY) after
+  // spinners / the in-process handoff; /dev/tty reading is reliable everywhere.
+  const choice =
+    pickToTTY({
       message: promptMessage,
       options: selectOptions,
       defaultValue: initial,
     }) ?? undefined;
-  } else {
-    prepareStdinForClack();
-    const picked = await p.select({
-      message: promptMessage,
-      options: selectOptions,
-      initialValue: initial,
-    });
-    if (p.isCancel(picked)) {
-      return undefined;
-    }
-    choice = picked;
-  }
 
   if (choice === undefined) {
     return undefined;

@@ -46,6 +46,19 @@ export const VENDOR_CODEX_MODEL_PROVIDER_KEY = "thegrid";
  */
 export const CODEX_CLI_GRID_PINNED_VERSION = "0.136.0";
 
+/**
+ * Pinned agent CLI versions. We install/update these exact versions instead of
+ * `@latest` so a new upstream release can't silently break provisioning (config
+ * schema drift, removed flags, etc.). Bump deliberately after validating.
+ * Captured 2026-06-15.
+ */
+export const CLAUDE_CODE_GRID_PINNED_VERSION = "2.1.177";
+export const OPENCLAW_GRID_PINNED_VERSION = "2026.6.6";
+export const KILOCODE_CLI_GRID_PINNED_VERSION = "7.3.46";
+export const JUNIE_CLI_GRID_PINNED_VERSION = "1468.30.0";
+export const PI_CODING_AGENT_GRID_PINNED_VERSION = "0.73.1";
+export const T3_CLI_GRID_PINNED_VERSION = "0.0.27";
+
 /** Docker Hub / GHCR org hosting published agent images (until Grid publishes its own). */
 export const VENDOR_AGENT_IMAGE_REGISTRY = routingDecode("Z2hjci5pby9vcGVucm91dGVydGVhbQ==");
 

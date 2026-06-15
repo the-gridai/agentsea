@@ -30,6 +30,7 @@ import {
   logError,
   logInfo,
   logStep,
+  prepareStdinForClack,
   prepareStdinForHandoff,
   defaultAgentseaLabel,
   toKebabCase,
@@ -778,7 +779,11 @@ export async function execScript(
     if (debug) {
       console.error(`[run] Executing ${agent} on local (in-process)...`);
     }
-    prepareStdinForHandoff();
+    // Local runs in-process — there is no child to hand off to. Pausing stdin here
+    // (as prepareStdinForHandoff does) leaves the in-process interactive prompts
+    // (openclaw install confirm, API key, model picker) unable to read input, which
+    // froze the CLI with Ctrl-C dead. Prime stdin for those prompts instead.
+    prepareStdinForClack();
     const localResult = await asyncTryCatch(() => runLocalAgent(agent));
     if (!localResult.ok) {
       const errMsg = getErrorMessage(localResult.error);
