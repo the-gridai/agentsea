@@ -10,6 +10,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { getErrorMessage, isString } from "@agentsea/sdk";
 import { parseJsonObj } from "./parse.js";
+import { readHiddenLineFromTTY } from "../picker.js";
 import { gridInferenceModelsUrl, resolveGridWebAppOrigin } from "./grid-api.js";
 import { getAgentseaCloudConfigPath } from "./paths.js";
 import { asyncTryCatchIf, isFileError, isNetworkError, tryCatch } from "./result.js";
@@ -320,6 +321,19 @@ function setBracketedPaste(enabled: boolean): void {
 }
 
 export async function readHiddenLine(): Promise<string | null> {
+  // Primary: read straight from /dev/tty. process.stdin can be unreadable when
+  // the installer reattaches stdin via `exec 0</dev/tty` (curl | bash) on
+  // macOS/Bun, which froze this prompt. /dev/tty reading is reliable there.
+  const tty = readHiddenLineFromTTY();
+  if (!tty.ttyUnavailable) {
+    process.stderr.write("\n");
+    if (tty.cancelled) {
+      process.exit(130);
+    }
+    return tty.value;
+  }
+
+  // Fallback: process.stdin cooked reader (e.g. piped input / no controlling tty).
   const stdin = process.stdin;
   const isTty = Boolean(stdin.isTTY);
 
