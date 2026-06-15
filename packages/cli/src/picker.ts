@@ -436,6 +436,74 @@ export function pickToTTYWithActions(config: PickConfig): PickResult {
   });
 }
 
+/**
+ * Read one line of input with the typed/pasted text hidden, reading keys
+ * directly from /dev/tty rather than process.stdin.
+ *
+ * This works in contexts where process.stdin can't be read — notably
+ * `curl | bash` installers that reattach stdin via `exec 0</dev/tty`, where
+ * Bun's process.stdin fails to deliver data on macOS (the key-paste hang).
+ *
+ * - Masking is automatic (raw -echo mode; we never echo the keys).
+ * - Ctrl-C / Esc cancel.
+ * - Bracketed paste is disabled and its markers stripped so a pasted key
+ *   isn't wrapped in escape sequences.
+ *
+ * Returns ttyUnavailable=true when /dev/tty can't be opened so the caller can
+ * fall back to a process.stdin reader.
+ */
+export function readHiddenLineFromTTY(): {
+  ttyUnavailable: boolean;
+  cancelled: boolean;
+  value: string;
+} {
+  let buffer = "";
+  let cancelled = false;
+  let ttyUnavailable = false;
+
+  withTTYKeyLoop<string>({
+    fallback: () => {
+      ttyUnavailable = true;
+      return "";
+    },
+    cancel: () => {
+      cancelled = true;
+      return "";
+    },
+    init: (w) => {
+      // Disable bracketed paste so a pasted key arrives as plain text.
+      w("\x1b[?2004l");
+    },
+    handleKey: (key) => {
+      const nl = key.search(/[\r\n]/);
+      if (nl !== -1) {
+        buffer += key.slice(0, nl);
+        return {
+          done: true,
+          result: buffer,
+        };
+      }
+      // Backspace / delete
+      if (key === "\x7f" || key === "\x08") {
+        buffer = buffer.slice(0, -1);
+        return {
+          done: false,
+        };
+      }
+      buffer += key;
+      return {
+        done: false,
+      };
+    },
+  });
+
+  return {
+    ttyUnavailable,
+    cancelled,
+    value: buffer.replace(/\x1b\[20[01]~/g, "").trim(),
+  };
+}
+
 // ── fallback picker ───────────────────────────────────────────────────────────
 
 /**
