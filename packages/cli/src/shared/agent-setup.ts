@@ -59,6 +59,12 @@ import {
 } from "./ui.js";
 import {
   CODEX_CLI_GRID_PINNED_VERSION,
+  CLAUDE_CODE_GRID_PINNED_VERSION,
+  OPENCLAW_GRID_PINNED_VERSION,
+  KILOCODE_CLI_GRID_PINNED_VERSION,
+  JUNIE_CLI_GRID_PINNED_VERSION,
+  PI_CODING_AGENT_GRID_PINNED_VERSION,
+  T3_CLI_GRID_PINNED_VERSION,
   GRID_INFERENCE_DEFAULT_MODEL_ID,
   KILO_GRID_PROVIDER_ID,
   OPENCLAW_GRID_MODEL_MAX_TOKENS,
@@ -267,7 +273,7 @@ async function installClaudeCode(runner: CloudRunner): Promise<void> {
     `if command -v claude >/dev/null 2>&1; then ${finalize}; exit 0; fi`,
     "if ! command -v node >/dev/null 2>&1; then export N_PREFIX=$HOME/.n; curl --proto '=https' -fsSL https://raw.githubusercontent.com/tj/n/master/bin/n | bash -s install 22 || true; export PATH=$N_PREFIX/bin:$PATH; fi",
     `echo "==> Installing Claude Code (method 2/2: npm)..."`,
-    "npm install -g @anthropic-ai/claude-code || true",
+    `npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_GRID_PINNED_VERSION} || true`,
     `export PATH="${claudePath}:$PATH"`,
     `if command -v claude >/dev/null 2>&1; then ${finalize}; exit 0; fi`,
     "exit 1",
@@ -1793,7 +1799,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         `source ~/.agentsearc 2>/dev/null; export PATH=$HOME/.claude/local/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH; claude --model "$ANTHROPIC_MODEL" -p --dangerously-skip-permissions ${shellQuote(prompt)}`,
       updateCmd:
         'export PATH="$HOME/.claude/local/bin:$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/.bun/bin:$HOME/.n/bin:$PATH"; ' +
-        "npm install -g @anthropic-ai/claude-code@latest 2>/dev/null || " +
+        `npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_GRID_PINNED_VERSION} 2>/dev/null || ` +
         "curl --proto '=https' -fsSL https://claude.ai/install.sh | bash",
     },
 
@@ -1841,7 +1847,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
           await installAgent(
             runner,
             "openclaw",
-            `source ~/.bashrc 2>/dev/null; ${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} openclaw && ${NPM_GLOBAL_PATH_PERSIST}`,
+            `source ~/.bashrc 2>/dev/null; ${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} openclaw@${OPENCLAW_GRID_PINNED_VERSION} && ${NPM_GLOBAL_PATH_PERSIST}`,
           );
         },
         envVars: (apiKey: string) => [
@@ -1865,7 +1871,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
               OPENCLAW_CONTROL_UI_DEFAULT_CHAT_SESSION,
             )}&token=${encodeURIComponent(dashboardToken)}#token=${dashboardToken}`,
         },
-        updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + "npm install -g $_NPM_G_FLAGS openclaw@latest",
+        updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + `npm install -g $_NPM_G_FLAGS openclaw@${OPENCLAW_GRID_PINNED_VERSION}`,
       };
     })(),
 
@@ -1895,14 +1901,14 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         installAgent(
           runner,
           "Kilo Code",
-          `cd "$HOME" && ${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} @kilocode/cli && ${NPM_GLOBAL_PATH_PERSIST} && ${KILOCODE_BINARY_VERIFY}`,
+          `cd "$HOME" && ${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} @kilocode/cli@${KILOCODE_CLI_GRID_PINNED_VERSION} && ${NPM_GLOBAL_PATH_PERSIST} && ${KILOCODE_BINARY_VERIFY}`,
         ),
       envVars: (apiKey) => [`THEGRID_API_KEY=${apiKey}`],
       configure: (_apiKey, modelId) => setupKiloConfig(runner, modelId),
       launchCmd: () => "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; kilocode",
       promptCmd: (prompt) =>
         kilocodeHeadlessPrompt(prompt, defaultGridModelForAgent("kilocode")),
-      updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + "npm install -g $_NPM_G_FLAGS @kilocode/cli@latest",
+      updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + `npm install -g $_NPM_G_FLAGS @kilocode/cli@${KILOCODE_CLI_GRID_PINNED_VERSION}`,
     },
 
     hermes: {
@@ -1950,7 +1956,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         installAgent(
           runner,
           "Junie",
-          `${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} @jetbrains/junie-cli && ${NPM_GLOBAL_PATH_PERSIST} && ${JUNIE_BINARY_VERIFY}`,
+          `${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} @jetbrains/junie-cli@${JUNIE_CLI_GRID_PINNED_VERSION} && ${NPM_GLOBAL_PATH_PERSIST} && ${JUNIE_BINARY_VERIFY}`,
         ),
       envVars: (apiKey) => [
         `JUNIE_THEGRID_API_KEY=${apiKey}`,
@@ -1960,7 +1966,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
       preLaunch: () => startJunieGridChatProxy(runner),
       launchCmd: () => `${JUNIE_LAUNCH_SHELL_PREFIX}; junie`,
       promptCmd: (prompt) => junieHeadlessPrompt(prompt),
-      updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + "npm install -g $_NPM_G_FLAGS @jetbrains/junie-cli@latest",
+      updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + `npm install -g $_NPM_G_FLAGS @jetbrains/junie-cli@${JUNIE_CLI_GRID_PINNED_VERSION}`,
     },
 
     pi: {
@@ -1972,7 +1978,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         installAgent(
           runner,
           "Pi",
-          `cd "$HOME" && ${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} @mariozechner/pi-coding-agent && ${NPM_GLOBAL_PATH_PERSIST}`,
+          `cd "$HOME" && ${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} @mariozechner/pi-coding-agent@${PI_CODING_AGENT_GRID_PINNED_VERSION} && ${NPM_GLOBAL_PATH_PERSIST}`,
         ),
       envVars: (apiKey) => [
         `THEGRID_API_KEY=${apiKey}`,
@@ -1981,7 +1987,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
       launchCmd: () => "source ~/.agentsearc 2>/dev/null; source ~/.zshrc 2>/dev/null; pi",
       promptCmd: (prompt) =>
         piHeadlessPrompt(prompt, defaultGridModelForAgent("pi")),
-      updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + "npm install -g $_NPM_G_FLAGS @mariozechner/pi-coding-agent@latest",
+      updateCmd: `${NPM_AUTO_UPDATE_SETUP} && ` + `npm install -g $_NPM_G_FLAGS @mariozechner/pi-coding-agent@${PI_CODING_AGENT_GRID_PINNED_VERSION}`,
     },
 
     t3code: {
@@ -1993,7 +1999,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         installAgent(
           runner,
           "T3 Code",
-          `${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} t3 @openai/codex@${CODEX_CLI_GRID_PINNED_VERSION} && ${NPM_GLOBAL_PATH_PERSIST}`,
+          `${NPM_PREFIX_SETUP} && npm install -g \${_NPM_G_FLAGS} t3@${T3_CLI_GRID_PINNED_VERSION} @openai/codex@${CODEX_CLI_GRID_PINNED_VERSION} && ${NPM_GLOBAL_PATH_PERSIST}`,
         ),
       // T3 Code spawns Codex CLI as its primary provider; child processes inherit Grid auth via .agentsearc.
       envVars: (apiKey) => [
@@ -2013,7 +2019,7 @@ function createAgents(runner: CloudRunner): Record<string, AgentConfig> {
         requiresPairing: true,
       },
       updateCmd:
-        `${NPM_AUTO_UPDATE_SETUP} && npm install -g $_NPM_G_FLAGS t3@latest @openai/codex@${CODEX_CLI_GRID_PINNED_VERSION}`,
+        `${NPM_AUTO_UPDATE_SETUP} && npm install -g $_NPM_G_FLAGS t3@${T3_CLI_GRID_PINNED_VERSION} @openai/codex@${CODEX_CLI_GRID_PINNED_VERSION}`,
     },
 
     cursor: {

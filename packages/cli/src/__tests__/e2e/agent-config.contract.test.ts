@@ -8,7 +8,15 @@ import type { AgentConfig } from "../../shared/agents.js";
 import { createCloudAgents, type CloudRunner } from "../../shared/agent-setup.js";
 import { createCloudAgentsFromModules } from "../../shared/agent-module-registry.js";
 import { buildJunieGridModelProfile } from "../../shared/junie-config.js";
-import { CODEX_CLI_GRID_PINNED_VERSION } from "../../shared/vendor-routing.js";
+import {
+  CODEX_CLI_GRID_PINNED_VERSION,
+  CLAUDE_CODE_GRID_PINNED_VERSION,
+  OPENCLAW_GRID_PINNED_VERSION,
+  KILOCODE_CLI_GRID_PINNED_VERSION,
+  JUNIE_CLI_GRID_PINNED_VERSION,
+  PI_CODING_AGENT_GRID_PINNED_VERSION,
+  T3_CLI_GRID_PINNED_VERSION,
+} from "../../shared/vendor-routing.js";
 import { type E2eAgentSlug, E2E_AGENT_SLUGS, E2E_DISABLED_AGENT_SLUGS } from "./e2e-agents.js";
 
 const ALL_E2E_AGENT_SLUGS = [...E2E_AGENT_SLUGS, ...E2E_DISABLED_AGENT_SLUGS] as const;
@@ -234,6 +242,26 @@ describe("agent config contract (createCloudAgents, no cloud)", () => {
     expect(agents.codex.install.toString()).toContain("CODEX_CLI_GRID_PINNED_VERSION");
     expect(agents.codex.updateCmd).toContain(`@openai/codex@${CODEX_CLI_GRID_PINNED_VERSION}`);
     expect(agents.codex.updateCmd).not.toContain("@openai/codex@latest");
+  });
+
+  it("pins all npm agent CLI versions so install/auto-update can't drift", () => {
+    // Drift in these (e.g. an openclaw release that changed config schema) has
+    // repeatedly broken provisioning. Every npm agent installs/updates an exact
+    // pinned version, never @latest. Bump the constant in vendor-routing.ts after
+    // validating a new release.
+    const pins: Record<string, string> = {
+      claude: CLAUDE_CODE_GRID_PINNED_VERSION,
+      openclaw: OPENCLAW_GRID_PINNED_VERSION,
+      kilocode: KILOCODE_CLI_GRID_PINNED_VERSION,
+      junie: JUNIE_CLI_GRID_PINNED_VERSION,
+      pi: PI_CODING_AGENT_GRID_PINNED_VERSION,
+      t3code: T3_CLI_GRID_PINNED_VERSION,
+    };
+    for (const [slug, pin] of Object.entries(pins)) {
+      const cmd = agents[slug]?.updateCmd ?? "";
+      expect(cmd, `${slug}.updateCmd must not use @latest`).not.toContain("@latest");
+      expect(cmd, `${slug}.updateCmd must pin ${pin}`).toContain(pin);
+    }
   });
 
   it("resolveAgent rejects unknown slugs", () => {
