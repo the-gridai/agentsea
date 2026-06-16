@@ -1126,12 +1126,31 @@ export async function startGateway(runner: CloudRunner): Promise<void> {
  * Hermes v0.14+ reads model/provider from ~/.hermes/config.yaml (not ~/.agentsearc OPENAI_*).
  * Without this, install defaults to provider:auto → OpenRouter + claude-opus-4.6.
  */
-/** Hermes install.sh with git SSH→HTTPS rewrite (pip deps on cloud VMs). */
+/**
+ * Hermes install.sh with git SSH→HTTPS rewrite (pip deps on cloud VMs).
+ *
+ * The installer is downloaded to a temp file and run with stdin from /dev/null
+ * plus `--non-interactive` so it NEVER blocks on an interactive prompt when run
+ * under our spinner. Two prompt classes would otherwise hang forever (the read
+ * is invisible behind the spinner):
+ *  - `prompt_yes_no` (optional ripgrep/ffmpeg, gateway) reads from /dev/tty
+ *    unless NON_INTERACTIVE=true → covered by `--non-interactive`.
+ *  - the dirty-checkout "Restore local changes now? [Y/n]" `read` is gated only
+ *    by `[ -t 0 ]`, so it fires whenever stdin is a tty (which it is on a local
+ *    install, where we inherit the user's terminal) → covered by `< /dev/null`.
+ * `--skip-setup` skips the setup/gateway wizard (we configure Hermes ourselves).
+ * Piping `curl | bash -s` can't be combined with `< /dev/null` (that branch
+ * reads the script from stdin), hence the download-to-file form.
+ */
 export function hermesInstallShellCmd(): string {
+  const url = "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh";
   return (
     'git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" && ' +
     'git config --global url."https://github.com/".insteadOf "git@github.com:" && ' +
-    "curl --proto '=https' -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup"
+    "_hi=$(mktemp 2>/dev/null || echo /tmp/hermes-install-$$.sh) && " +
+    `curl --proto '=https' -fsSL ${url} -o "$_hi" && ` +
+    'bash "$_hi" --skip-setup --non-interactive < /dev/null; ' +
+    '_rc=$?; rm -f "$_hi"; exit $_rc'
   );
 }
 
