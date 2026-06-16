@@ -1351,9 +1351,29 @@ export async function startHermesDashboard(runner: CloudRunner): Promise<void> {
 // ─── OpenCode Install Command ────────────────────────────────────────────────
 
 function openCodeInstallCmd(): string {
-  // Use $VAR not ${VAR} in the release URL: setupAutoUpdate() embeds this in a
-  // systemd-friendly template that rejects "${" (defense against JS interpolation).
-  return 'OC_ARCH=$(uname -m); case "$OC_ARCH" in aarch64) OC_ARCH=arm64;; x86_64) OC_ARCH=x64;; esac; OC_OS=$(uname -s | tr A-Z a-z); mkdir -p /tmp/opencode-install "$HOME/.opencode/bin" && curl --proto \'=https\' -fsSL -o /tmp/opencode-install/oc.tar.gz "https://github.com/sst/opencode/releases/latest/download/opencode-$OC_OS-$OC_ARCH.tar.gz" && if tar -tzf /tmp/opencode-install/oc.tar.gz | grep -qE \'(^/|\\.\\.)\'; then echo "Tarball contains unsafe paths" >&2; exit 1; fi && tar xzf /tmp/opencode-install/oc.tar.gz -C /tmp/opencode-install && mv /tmp/opencode-install/opencode "$HOME/.opencode/bin/" && rm -rf /tmp/opencode-install && for _rc in "$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_profile"; do grep -q ".opencode/bin" "$_rc" 2>/dev/null || echo \'export PATH="$HOME/.opencode/bin:$PATH"\' >> "$_rc"; done; { [ ! -f "$HOME/.zshrc" ] || grep -q ".opencode/bin" "$HOME/.zshrc" 2>/dev/null || echo \'export PATH="$HOME/.opencode/bin:$PATH"\' >> "$HOME/.zshrc"; }; export PATH="$HOME/.opencode/bin:$PATH"';
+  // sst/opencode ships .zip assets on macOS and .tar.gz on Linux. Pick the right
+  // one per-OS, extract accordingly, and CHAIN EVERYTHING with && ending in a
+  // binary check — so a failed download (e.g. the 404 when they renamed assets)
+  // fails the step instead of silently reporting "installed" (the trailing
+  // `;`-separated PATH setup previously masked the exit code).
+  // Use $VAR not ${VAR}: setupAutoUpdate() embeds this in a template that rejects "${".
+  return [
+    "OC_ARCH=$(uname -m)",
+    'case "$OC_ARCH" in aarch64) OC_ARCH=arm64;; x86_64) OC_ARCH=x64;; esac',
+    "OC_OS=$(uname -s | tr A-Z a-z)",
+    'if [ "$OC_OS" = darwin ]; then OC_EXT=zip; else OC_EXT=tar.gz; fi',
+    "rm -rf /tmp/opencode-install",
+    'mkdir -p /tmp/opencode-install "$HOME/.opencode/bin"',
+    "curl --proto '=https' -fsSL -o \"/tmp/opencode-install/oc.$OC_EXT\" \"https://github.com/sst/opencode/releases/latest/download/opencode-$OC_OS-$OC_ARCH.$OC_EXT\"",
+    'if [ "$OC_EXT" = zip ]; then unzip -o -q /tmp/opencode-install/oc.zip -d /tmp/opencode-install; else if tar -tzf /tmp/opencode-install/oc.tar.gz | grep -qE \'(^/|\\.\\.)\'; then echo "unsafe tarball" >&2; exit 1; fi; tar xzf /tmp/opencode-install/oc.tar.gz -C /tmp/opencode-install; fi',
+    'mv /tmp/opencode-install/opencode "$HOME/.opencode/bin/opencode"',
+    'chmod +x "$HOME/.opencode/bin/opencode"',
+    "rm -rf /tmp/opencode-install",
+    'for _rc in "$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_profile"; do grep -q .opencode/bin "$_rc" 2>/dev/null || echo \'export PATH="$HOME/.opencode/bin:$PATH"\' >> "$_rc"; done',
+    '{ [ ! -f "$HOME/.zshrc" ] || grep -q .opencode/bin "$HOME/.zshrc" 2>/dev/null || echo \'export PATH="$HOME/.opencode/bin:$PATH"\' >> "$HOME/.zshrc"; }',
+    'export PATH="$HOME/.opencode/bin:$PATH"',
+    'test -x "$HOME/.opencode/bin/opencode"',
+  ].join(" && ");
 }
 
 // ─── npm prefix helper ────────────────────────────────────────────────────────
