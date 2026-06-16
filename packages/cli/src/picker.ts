@@ -436,27 +436,29 @@ export function pickToTTYWithActions(config: PickConfig): PickResult {
   });
 }
 
+export interface TTYLineResult {
+  ttyUnavailable: boolean;
+  cancelled: boolean;
+  value: string;
+}
+
 /**
- * Read one line of input with the typed/pasted text hidden, reading keys
- * directly from /dev/tty rather than process.stdin.
+ * Read one line of input directly from /dev/tty rather than process.stdin.
  *
  * This works in contexts where process.stdin can't be read — notably
  * `curl | bash` installers that reattach stdin via `exec 0</dev/tty`, where
- * Bun's process.stdin fails to deliver data on macOS (the key-paste hang).
+ * Bun's process.stdin fails to deliver data on macOS (the input/paste hang).
  *
- * - Masking is automatic (raw -echo mode; we never echo the keys).
- * - Ctrl-C / Esc cancel.
- * - Bracketed paste is disabled and its markers stripped so a pasted key
- *   isn't wrapped in escape sequences.
+ * - Ctrl-C / Esc cancel (cancelled=true) — callers exit on that.
+ * - Bracketed paste is disabled and its markers stripped.
+ * - When `echo` is true, typed/pasted characters are echoed back so the prompt
+ *   is visible (use for normal text prompts); when false, input is masked
+ *   (use for secrets like API keys).
  *
  * Returns ttyUnavailable=true when /dev/tty can't be opened so the caller can
  * fall back to a process.stdin reader.
  */
-export function readHiddenLineFromTTY(): {
-  ttyUnavailable: boolean;
-  cancelled: boolean;
-  value: string;
-} {
+function readLineViaTTY(opts: { echo: boolean }): TTYLineResult {
   let buffer = "";
   let cancelled = false;
   let ttyUnavailable = false;
@@ -471,13 +473,17 @@ export function readHiddenLineFromTTY(): {
       return "";
     },
     init: (w) => {
-      // Disable bracketed paste so a pasted key arrives as plain text.
+      // Disable bracketed paste so a pasted value arrives as plain text.
       w("\x1b[?2004l");
     },
-    handleKey: (key) => {
+    handleKey: (key, w) => {
       const nl = key.search(/[\r\n]/);
       if (nl !== -1) {
-        buffer += key.slice(0, nl);
+        const head = key.slice(0, nl);
+        buffer += head;
+        if (opts.echo && head) {
+          w(head);
+        }
         return {
           done: true,
           result: buffer,
@@ -485,12 +491,21 @@ export function readHiddenLineFromTTY(): {
       }
       // Backspace / delete
       if (key === "\x7f" || key === "\x08") {
-        buffer = buffer.slice(0, -1);
+        if (buffer.length > 0) {
+          buffer = buffer.slice(0, -1);
+          if (opts.echo) {
+            w("\b \b");
+          }
+        }
         return {
           done: false,
         };
       }
       buffer += key;
+      if (opts.echo) {
+        // Echo printable input (strip bracketed-paste markers from the display too).
+        w(key.replace(/\x1b\[20[01]~/g, ""));
+      }
       return {
         done: false,
       };
@@ -502,6 +517,16 @@ export function readHiddenLineFromTTY(): {
     cancelled,
     value: buffer.replace(/\x1b\[20[01]~/g, "").trim(),
   };
+}
+
+/** Read a hidden (masked) line from /dev/tty — for secrets like API keys. */
+export function readHiddenLineFromTTY(): TTYLineResult {
+  return readLineViaTTY({ echo: false });
+}
+
+/** Read a visible line from /dev/tty — for normal text prompts (Enter to submit, Ctrl-C cancels). */
+export function readLineFromTTY(): TTYLineResult {
+  return readLineViaTTY({ echo: true });
 }
 
 // ── fallback picker ───────────────────────────────────────────────────────────

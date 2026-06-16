@@ -11,7 +11,7 @@ import { parseJsonObj } from "./parse.js";
 import { getAgentseaCloudConfigPath } from "./paths.js";
 import { asyncTryCatch, tryCatch, unwrapOr } from "./result.js";
 import { isAgentseaVerbose } from "./verbosity.js";
-import { pickToTTY } from "../picker.js";
+import { pickToTTY, readLineFromTTY } from "../picker.js";
 import { isWslLinux } from "./shell.js";
 import { captureError, captureWarning } from "./telemetry.js";
 
@@ -344,15 +344,22 @@ export async function confirm(message: string, initialValue = false): Promise<bo
   }
   resetStderrAttributes();
   process.stderr.write("\n");
-  const result = await p.confirm({
+  // Read from /dev/tty (pickToTTY) instead of Clack's process.stdin reader, which
+  // can't receive input in curl|bash / remote contexts (the input-hang bug). Falls
+  // back to a numbered /dev/tty prompt automatically if raw mode is unavailable.
+  const choice = pickToTTY({
     message,
-    initialValue,
+    options: [
+      { value: "yes", label: "Yes" },
+      { value: "no", label: "No" },
+    ],
+    defaultValue: initialValue ? "yes" : "no",
   });
-  if (p.isCancel(result)) {
+  if (choice === null) {
     process.stderr.write("\n");
     process.exit(0);
   }
-  return result === true;
+  return choice === "yes";
 }
 
 /** Prompt for a line of user input. Throws if non-interactive.
@@ -368,6 +375,20 @@ export async function prompt(question: string): Promise<string> {
   // Strip trailing ": " or ":" since clack adds its own formatting
   const message = question.replace(/:\s*$/, "").trim();
 
+  // Read from /dev/tty first — process.stdin can't be read in curl|bash / remote
+  // contexts (the input-hang bug), but /dev/tty works there. Ctrl-C cancels.
+  resetStderrAttributes();
+  process.stderr.write(`${message}: `);
+  const tty = readLineFromTTY();
+  if (!tty.ttyUnavailable) {
+    if (tty.cancelled) {
+      process.stderr.write("\n");
+      process.exit(0);
+    }
+    return tty.value;
+  }
+
+  // Fallback (no /dev/tty, e.g. piped/CI): read process.stdin via @clack.
   // Race the prompt against stdin closing unexpectedly.
   // If stdin dies (e.g., after @clack/prompts corrupts its state),
   // the close listener rejects so we don't hang forever.
