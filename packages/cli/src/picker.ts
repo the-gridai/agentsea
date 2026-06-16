@@ -543,6 +543,107 @@ export function readLineFromTTY(): TTYLineResult {
   return readLineViaTTY({ echo: true });
 }
 
+interface MultiPickConfig {
+  message: string;
+  options: PickOption[];
+  initialValues?: string[];
+}
+
+/**
+ * Multi-select read directly from /dev/tty (space toggles, ↑/↓ move, a=all, Enter
+ * confirms, Ctrl-C/Esc cancel). Like pickToTTY, this works when process.stdin can't
+ * be read (curl|bash / remote). Returns the selected values; [] on cancel; the
+ * initial values when non-interactive or /dev/tty is unavailable (never blocks).
+ */
+export function multiPickToTTY(config: MultiPickConfig): string[] {
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1" || config.options.length === 0) {
+    return config.initialValues ?? [];
+  }
+
+  const selected = new Set(config.initialValues ?? []);
+  let cursor = 0;
+  let maxW = 80;
+  let height = 0;
+  let render: (w: WriteFn, first: boolean) => void = () => {};
+
+  return withTTYKeyLoop<string[]>({
+    fallback: () => config.initialValues ?? [],
+    cancel: () => [],
+    init: (w, cols) => {
+      maxW = cols - 1;
+      height = 1 + config.options.length + 1; // title + options + footer
+      render = (wr, first) => {
+        if (!first) {
+          wr(A.up(height) + A.col1 + A.clearBelow);
+        }
+        wr(`${A.bold}${A.cyan}? ${trunc(config.message, maxW - 2)}${A.reset}\r\n`);
+        for (let i = 0; i < config.options.length; i++) {
+          const o = config.options[i];
+          const mark = selected.has(o.value) ? "\u25c9" : "\u25ef";
+          const pointer = i === cursor ? `${A.green}>${A.reset}` : " ";
+          const label = trunc(o.label, maxW - 6);
+          wr(`${pointer} ${mark} ${i === cursor ? A.bold : ""}${label}${A.reset}`);
+          if (o.hint && i === cursor) {
+            const remaining = maxW - 6 - label.length - 2;
+            if (remaining > 3) {
+              wr(`  ${A.dim}${trunc(o.hint, remaining)}${A.reset}`);
+            }
+          }
+          wr("\r\n");
+        }
+        wr(`${A.dim}  \u2191/\u2193 move  space toggle  a all  \u23ce confirm  Ctrl-C cancel${A.reset}\r\n`);
+      };
+      render(w, true);
+    },
+    handleKey: (key, w) => {
+      switch (key) {
+        case "\r":
+        case "\n": {
+          w(A.up(height) + A.col1 + A.clearBelow);
+          const labels = config.options.filter((o) => selected.has(o.value)).map((o) => o.label);
+          w(`${A.green}${A.bold}? ${config.message}:${A.reset} ${A.cyan}${labels.join(", ") || "(none)"}${A.reset}\r\n`);
+          return { done: true, result: [...selected] };
+        }
+        case " ": {
+          const v = config.options[cursor].value;
+          if (selected.has(v)) {
+            selected.delete(v);
+          } else {
+            selected.add(v);
+          }
+          render(w, false);
+          return { done: false };
+        }
+        case "a": {
+          if (selected.size === config.options.length) {
+            selected.clear();
+          } else {
+            for (const o of config.options) {
+              selected.add(o.value);
+            }
+          }
+          render(w, false);
+          return { done: false };
+        }
+        case "\x1b[A":
+        case "\x1bOA":
+        case "k":
+          cursor = (cursor - 1 + config.options.length) % config.options.length;
+          render(w, false);
+          return { done: false };
+        case "\x1b[B":
+        case "\x1bOB":
+        case "j":
+          cursor = (cursor + 1) % config.options.length;
+          render(w, false);
+          return { done: false };
+        default:
+          return { done: false };
+      }
+    },
+  });
+}
+
 // ── fallback picker ───────────────────────────────────────────────────────────
 
 /**
