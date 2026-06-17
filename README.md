@@ -2,7 +2,7 @@
 
 > **CLI-first agent VM launcher**, static-manifest Agentsea-style architecture for **The Grid**: static repo-root **`manifest.json`**, **`agentsea`** provisions against **your** cloud accounts, **`sh/<cloud>/<agent>.sh`** userdata, local history under **`~/.config/agentsea/`** — **no Agentsea web UI, no Agentsea HTTP API.**
 
-Authenticate with **`THEGRID_API_KEY`** (Grid platform) plus per-cloud tokens (`DIGITALOCEAN_TOKEN`, `HCLOUD_TOKEN`, …). The repo ships a static manifest + per-cloud userdata scripts; the CDN origin is resolved per environment (dev `https://agentsea.dev.thegrid.ai`, staging `https://agentsea.staging.thegrid.ai`, prod `https://agentsea.thegrid.ai`) — pinned by `install.sh` and overridable via **`AGENTSEA_CDN`**. See **`todo.md`** for first-party image slugs and other items to wire up.
+Authenticate with **`THEGRID_API_KEY`** (Grid platform) plus per-cloud tokens (`DIGITALOCEAN_TOKEN`, `HCLOUD_TOKEN`, …). The repo ships a static manifest + per-cloud userdata scripts; the CDN origin is resolved per environment (dev `https://agentsea.dev.thegrid.ai`, staging `https://agentsea.staging.thegrid.ai`, prod `https://agentsea.thegrid.ai`) — pinned by `install.sh` and overridable via **`AGENTSEA_CDN`**. See **`todo.md`** for public roadmap items.
 
 ## Status
 
@@ -15,7 +15,7 @@ Authenticate with **`THEGRID_API_KEY`** (Grid platform) plus per-cloud tokens (`
 | **`packages/sdk`** | `@agentsea/sdk` — manifest types + `loadManifest()` (`@agentsea/sdk/node`) |
 | **`packages/ui`** | Next.js 15 brochure: **`/`** (manifest-backed landing), **`/cli`** (CLI guide only) |
 
-Optional: **[Spectral `grid-ts`](https://github.com/Spectral-Finance/grid-ts)** for **`whoami` / Cortex preflight** — not used for provisioning.
+Optional: **The Grid SDK** for **`whoami` / Cortex preflight** — not used for provisioning.
 
 ## Layout
 
@@ -57,4 +57,4 @@ Older routes (`/spawns`, `/login`, `/settings`, …) **redirect** to **`/`** or 
 
 ## License
 
-Apache-2.0 (intent — not yet committed).
+Apache-2.0. See `LICENSE`.

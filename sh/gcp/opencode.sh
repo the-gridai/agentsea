@@ -21,7 +21,7 @@ fi
 # Remote — download bundled gcp.js from GitHub release
 GCP_JS=$(mktemp)
 trap 'rm -f "$GCP_JS"' EXIT
-curl -fsSL --proto '=https' "https://github.com/Spectral-Finance/agentsea/releases/download/gcp-latest/gcp.js" -o "$GCP_JS" \
+curl -fsSL --proto '=https' "https://github.com/the-gridai/agentsea/releases/download/gcp-latest/gcp.js" -o "$GCP_JS" \
     || { printf '\033[0;31mFailed to download gcp.js\033[0m\n' >&2; exit 1; }
 
 exec bun run "$GCP_JS" opencode "$@"

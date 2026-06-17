@@ -4,7 +4,7 @@
 #
 # Usage (via curl|bash — recommended):
 #   curl -fsSL --proto '=https' https://spawn.thegrid.ai/shared/github-auth.sh | bash
-#   curl -fsSL --proto '=https' https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/sh/shared/github-auth.sh | bash
+#   curl -fsSL --proto '=https' https://raw.githubusercontent.com/the-gridai/agentsea/main/sh/shared/github-auth.sh | bash
 #
 # Usage (sourced using absolute path or CDN URL):
 #   eval "$(curl -fsSL --proto '=https' https://spawn.thegrid.ai/shared/github-auth.sh)"

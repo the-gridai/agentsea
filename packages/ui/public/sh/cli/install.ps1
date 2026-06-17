@@ -12,7 +12,7 @@
 
 $ErrorActionPreference = "Stop"
 
-$AGENTSEA_REPO    = "Spectral-Finance/agentsea"
+$AGENTSEA_REPO    = "the-gridai/agentsea"
 $AGENTSEA_RAW_BASE = "https://raw.githubusercontent.com/$AGENTSEA_REPO/main"
 $MIN_BUN_VERSION = [version]"1.2.0"
 

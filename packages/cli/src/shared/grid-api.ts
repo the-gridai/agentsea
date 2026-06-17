@@ -105,10 +105,10 @@ export function resolveGridWebAppOrigin(): string {
 export function resolveCortexExchangeApiOrigin(): string {
   const base = resolveGridInferenceApiBase();
   if (base.includes("api.dev.thegrid.ai")) {
-    return "https://cortex.dev.spectrallabs.xyz";
+    return "https://cortex.dev.thegrid.ai";
   }
   if (base.includes("api.staging.thegrid.ai")) {
-    return "https://cortex.staging.spectrallabs.xyz";
+    return "https://cortex.staging.thegrid.ai";
   }
   return "https://cortex.thegrid.ai";
 }

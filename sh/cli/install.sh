@@ -18,7 +18,7 @@ AGENTSEA_LAUNCH_AGENT="${1:-}"
 AGENTSEA_LAUNCH_CLOUD="${2:-}"
 INSTALL_DIR=""
 
-AGENTSEA_REPO="Spectral-Finance/agentsea"
+AGENTSEA_REPO="the-gridai/agentsea"
 # Origin this installer + the agentsea CLI fetch scripts from. Per-environment
 # deploys (dev/staging/prod) replace AGENTSEA_CDN_DEFAULT below at build time via
 # packages/ui/scripts/sync-cdn-public.sh (from NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN).

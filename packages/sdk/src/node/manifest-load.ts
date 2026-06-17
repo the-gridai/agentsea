@@ -17,7 +17,7 @@ import { getErrorMessage, isPlainObject } from "../type-guards";
 import { getCdnOrigin } from "./cdn";
 import { getManifestCacheDir, getManifestCacheFile } from "./paths";
 
-export const REPO = "Spectral-Finance/agentsea" as const;
+export const REPO = "the-gridai/agentsea" as const;
 export const RAW_BASE = `https://raw.githubusercontent.com/${REPO}/main` as const;
 export const VERSION_URL =
   `https://github.com/${REPO}/releases/download/cli-latest/version` as const;

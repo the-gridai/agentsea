@@ -520,7 +520,7 @@ function showVersion(): void {
   );
   const age = getCacheAge();
   console.log(pc.dim(`  manifest cache: ${formatCacheAge(age)}`));
-  console.log(pc.dim("  https://github.com/Spectral-Finance/agentsea"));
+  console.log(pc.dim("  https://github.com/the-gridai/agentsea"));
   console.log(pc.dim(`  Run ${pc.cyan("agentsea feedback")} to tell us what to improve.`));
 }
 

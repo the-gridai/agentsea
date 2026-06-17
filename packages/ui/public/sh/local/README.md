@@ -6,7 +6,7 @@ Run agents directly on your local machine without any cloud provisioning.
 
 ## Quick Start
 
-If you have [agentsea](https://github.com/Spectral-Finance/agentsea) installed:
+If you have [agentsea](https://github.com/the-gridai/agentsea) installed:
 
 ```bash
 agentsea claude local

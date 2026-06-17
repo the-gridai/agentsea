@@ -18,7 +18,7 @@ AGENTSEA_LAUNCH_AGENT="${1:-}"
 AGENTSEA_LAUNCH_CLOUD="${2:-}"
 INSTALL_DIR=""
 
-AGENTSEA_REPO="Spectral-Finance/agentsea"
+AGENTSEA_REPO="the-gridai/agentsea"
 # Origin this installer + the agentsea CLI fetch scripts from. Per-environment
 # deploys (dev/staging/prod) replace AGENTSEA_CDN_DEFAULT below at build time via
 # packages/ui/scripts/sync-cdn-public.sh (from NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN).
@@ -299,13 +299,11 @@ ensure_in_path() {
 validate_launch_slug() {
     local label="$1"
     local value="$2"
-    case "$value" in
-        ""|*[!a-z0-9-]*|*-*|*-)
-            log_error "Invalid ${label}: ${value}"
-            echo "Use lowercase letters, digits, and hyphens only (e.g. hermes, local)."
-            exit 1
-            ;;
-    esac
+    if ! [[ "$value" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+        log_error "Invalid ${label}: ${value}"
+        echo "Use lowercase letters, digits, and hyphens only (e.g. hermes, local)."
+        exit 1
+    fi
 }
 
 launch_agentsea_if_requested() {

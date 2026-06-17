@@ -15,6 +15,18 @@ yarn-error.log*
 .env
 .env.*.local
 .env.local
+.envOLD
+.env.consumer
+
+# Local credentials and key material
+*.pem
+*.key
+id_ed25519
+id_ed25519.pub
+credentials.json
+service-account.json
+ed25519_*
+raw32.bin
 
 # OS
 .DS_Store
@@ -41,5 +53,6 @@ packages/cli/grid-spawn
 
 # Local E2E artifacts (never commit)
 e2e-agent-results.txt
+e2e-*.log
 e2e-triage-partial-*.txt
 sh/e2e/*_NOTES.txt

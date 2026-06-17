@@ -182,7 +182,7 @@ export function buildReadmeTemplate(): string {
   return [
     "# __NAME__",
     "",
-    "Exported from a [agentsea](https://github.com/Spectral-Finance/agentsea) session on `__CLOUD__`.",
+    "Exported from a [agentsea](https://github.com/the-gridai/agentsea) session on `__CLOUD__`.",
     "",
     "## Quickstart",
     "",

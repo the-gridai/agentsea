@@ -49,7 +49,7 @@ Examples for future agents:
 ## 4) Preflight checks (fail fast before spending)
 
 ```bash
-cd /home/barney/spectral/agentsea
+cd /path/to/agentsea
 npm run build --workspace=@agentsea/cli
 npm run test:cli
 ```
@@ -72,7 +72,7 @@ test -f ~/.ssh/agentsea_ed25519
 This executes provision -> verify -> input test -> teardown for one agent:
 
 ```bash
-cd /home/barney/spectral/agentsea
+cd /path/to/agentsea
 LOG="/tmp/agentsea-e2e-${AGENT}-do-$(date +%Y%m%d-%H%M%S).log"
 ./sh/e2e/e2e.sh --cloud digitalocean --sequential "${AGENT}" 2>&1 | tee "$LOG"
 echo "LOG=$LOG"

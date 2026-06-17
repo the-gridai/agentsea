@@ -42,7 +42,7 @@ export function maybeShowStarPrompt(): void {
     }
 
     // 3. Print the star message
-    p.log.message("⭐ Enjoying Agentsea? Star us on GitHub!\n   https://github.com/Spectral-Finance/agentsea");
+    p.log.message("⭐ Enjoying Agentsea? Star us on GitHub!\n   https://github.com/the-gridai/agentsea");
 
     // 4. Save the updated timestamp
     const merged = {

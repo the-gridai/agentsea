@@ -143,7 +143,7 @@ export function validateScriptContent(script: string): void {
         "Security check failed: the downloaded script contains a dangerous pattern.\n\n" +
           `Pattern detected: ${description}\n\n` +
           "This is unexpected and may indicate the file was tampered with or corrupted.\n" +
-          "Please report this at: https://github.com/Spectral-Finance/agentsea/issues",
+          "Please report this at: https://github.com/the-gridai/agentsea/issues",
       );
     }
   }
@@ -160,7 +160,7 @@ export function validateScriptContent(script: string): void {
         "  1. Check your internet connection and try again\n" +
         `  2. Run '${AGENTSEA_CLI} matrix' to verify the combination is marked as implemented\n` +
         "  3. Wait a few moments (the script may be deploying) and retry\n" +
-        "  4. If the issue persists, report it: https://github.com/Spectral-Finance/agentsea/issues",
+        "  4. If the issue persists, report it: https://github.com/the-gridai/agentsea/issues",
     );
   }
 }

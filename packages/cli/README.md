@@ -5,7 +5,7 @@
 ## Prerequisites
 
 - **Bun runtime** (`>=1.2`) recommended; **`npm run build`** uses **`npx bun@1.3.9`** so you don’t need a global install.
-- Repo-root **`manifest.json`** (walked upward from `cwd`) or network access to GitHub raw for **`Spectral-Finance/agentsea`**.
+- Repo-root **`manifest.json`** (walked upward from `cwd`) or network access to GitHub raw for **`the-gridai/agentsea`**.
 
 ## Build & run from the monorepo
 

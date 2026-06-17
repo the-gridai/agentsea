@@ -1,19 +1,29 @@
-# AgentSea — operator checklist
+# AgentSea Public Roadmap
 
-Use this list when replacing vendor placeholders with first-party Spectral defaults.
+This is a short public-facing checklist for pre-alpha work that still needs
+validation before AgentSea is considered stable.
 
-## Routing token (chat / agent defaults)
+## Provider Images
 
-Some third-party CLIs require specific **routing slot** strings when talking to The Grid-compatible HTTP APIs. Runtime values are built in `packages/cli/src/shared/vendor-routing.ts` (base64 constants so the minified CLI bundle does not contain those literals as searchable ASCII — decode at startup when needed). Update that module when The Grid publishes canonical first‑party identifiers; mirror any JSON manifest defaults accordingly (`manifest.json`).
+- Publish first-party cloud images for providers that currently rely on fallback
+  bootstrap flows.
+- Keep `manifest.json` aligned with supported image slugs and provider status.
 
-## DigitalOcean marketplace images
+## Agent Runtime Defaults
 
-Snapshot slugs passed to the API are built in `packages/cli/src/digitalocean/main.ts` via helpers from `vendor-routing.ts`. Swap to your own marketplace names when Grid-published images exist.
+- Review model and routing defaults for each agent as The Grid publishes stable
+  production identifiers.
+- Keep provider-specific setup in `packages/cli/src/shared/vendor-routing.ts`
+  covered by CLI tests when defaults change.
 
-## Container registry (`--beta docker`)
+## Container Launches
 
-`DOCKER_REGISTRY` resolves through `vendor-routing.ts` → `packages/cli/src/shared/orchestrate.ts`. Mirror agent images to your GHCR org when ready.
+- Mirror supported agent images to the public registry used by AgentSea.
+- Document the `--beta docker` flow once image publishing is stable.
 
-## Saved API key filenames
+## Compatibility Cleanup
 
-`packages/cli/src/shared/oauth.ts` reads `thegrid.json` plus one alternate filename stem from `vendor-routing.ts` for older installs. Rename or drop that stem once migration is complete.
+- Remove legacy compatibility aliases after existing pre-alpha installs have a
+  documented migration path.
+- Keep public install scripts and release assets aligned with
+  `the-gridai/agentsea`.

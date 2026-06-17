@@ -39,7 +39,7 @@ describe("grid-api", () => {
   it("maps dev consumption API to dev app and cortex origins", () => {
     process.env[THEGRID_API_URL_ENV] = "https://api.dev.thegrid.ai/v1";
     expect(resolveGridWebAppOrigin()).toBe("https://app.dev.thegrid.ai");
-    expect(resolveCortexExchangeApiOrigin()).toBe("https://cortex.dev.spectrallabs.xyz");
+    expect(resolveCortexExchangeApiOrigin()).toBe("https://cortex.dev.thegrid.ai");
     expect(resolveGridAnthropicMessagesClientBase()).toBe("https://messages-beta.api.dev.thegrid.ai");
     expect(resolveGridOpenClawMessagesBase()).toBe("https://messages-beta.api.dev.thegrid.ai/v1");
   });

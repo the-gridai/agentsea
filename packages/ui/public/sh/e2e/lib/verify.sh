@@ -443,7 +443,7 @@ input_test_hermes() {
     _TIMEOUT=\$(cat /tmp/.e2e-timeout); \
     rm -rf /tmp/e2e-test && mkdir -p /tmp/e2e-test && cd /tmp/e2e-test && git init -q; \
     PROMPT=\$(cat /tmp/.e2e-prompt | base64 -d); \
-    timeout \"\$_TIMEOUT\" hermes -z \"\$PROMPT\" --provider custom -m agent-prime --yolo < /dev/null" 2>&1) || true
+    timeout \"\$_TIMEOUT\" hermes -z \"\$PROMPT\" --provider custom:thegrid -m agent-prime --yolo < /dev/null" 2>&1) || true
   _log_input_response "hermes" "${output}"
 
   _input_test_succeeds "${app}" "hermes" "${output}"

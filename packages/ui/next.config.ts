@@ -11,7 +11,7 @@ const repoRoot = join(__dirname, "../../");
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   distDir,
-  // Pin the workspace root so Next does not climb up to the spectral parent.
+  // Pin the repo root so Next does not climb into a parent workspace.
   outputFileTracingRoot: repoRoot,
   experimental: {
     optimizePackageImports: ["@tanstack/react-query"],

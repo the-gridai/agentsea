@@ -30,7 +30,7 @@
           "bypassPermissionsModeAccepted": true
         }
       },
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/agents/claude.png",
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/agents/claude.png",
       "featured_cloud": [
         "digitalocean",
         "sprite"
@@ -89,7 +89,7 @@
           "default": "agent-prime"
         }
       },
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/agents/openclaw.png",
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/agents/openclaw.png",
       "featured_cloud": [
         "digitalocean",
         "sprite"
@@ -151,7 +151,7 @@
         "THEGRID_API_KEY": "${THEGRID_API_KEY}"
       },
       "notes": "Disabled in agentsea — agent tool loops are not reliable without Grid /v1/responses.",
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/agents/codex.png",
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/agents/codex.png",
       "featured_cloud": [],
       "creator": "OpenAI",
       "repo": "openai/codex",
@@ -180,7 +180,7 @@
         "THEGRID_API_KEY": "${THEGRID_API_KEY}"
       },
       "notes": "Uses THEGRID_API_KEY. Go-based TUI using Bubble Tea.",
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/agents/opencode.png",
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/agents/opencode.png",
       "featured_cloud": [
         "digitalocean",
         "sprite"
@@ -230,7 +230,7 @@
         "THEGRID_API_KEY": "${THEGRID_API_KEY}"
       },
       "notes": "Kilo Code native The Grid provider: ~/.config/kilo/kilo.jsonc with provider id thegrid and model thegrid/agent-prime (see thegrid.ai/docs integrations/kilocode).",
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/agents/kilocode.png",
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/agents/kilocode.png",
       "featured_cloud": [
         "digitalocean",
         "sprite"
@@ -288,7 +288,7 @@
         "OPENAI_API_KEY": "${THEGRID_API_KEY}"
       },
       "notes": "Uses THEGRID_API_KEY via ~/.hermes/config.yaml (custom_providers: thegrid → https://messages-beta.api.thegrid.ai, api_mode: anthropic_messages). No source patches — survives Hermes auto-update. Ships a local web dashboard (port 9119) — auto-exposed via SSH tunnel when run through AgentSea.",
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/agents/hermes.png",
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/agents/hermes.png",
       "featured_cloud": [
         "digitalocean",
         "sprite"
@@ -347,7 +347,7 @@
         "THEGRID_API_KEY": "${THEGRID_API_KEY}"
       },
       "notes": "Disabled in agentsea until Grid-backed Junie tool tasks pass E2E.",
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/agents/junie.png",
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/agents/junie.png",
       "featured_cloud": [],
       "creator": "JetBrains",
       "repo": "JetBrains/junie",
@@ -379,7 +379,7 @@
         "THEGRID_API_KEY": "${THEGRID_API_KEY}"
       },
       "notes": "Disabled in agentsea until Grid-backed Pi tool tasks pass E2E.",
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/agents/pi.png",
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/agents/pi.png",
       "featured_cloud": [],
       "creator": "Mario Zechner",
       "repo": "badlogic/pi-mono",
@@ -428,7 +428,7 @@
         }
       },
       "notes": "Disabled in agentsea — tool execution does not work via CLI. Use Cursor IDE with The Grid: https://thegrid.ai/docs/integrations-and-best-practices/integrations/cursor",
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/agents/cursor.png",
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/agents/cursor.png",
       "featured_cloud": [],
       "creator": "Anysphere",
       "repo": "cursor/cursor",
@@ -465,7 +465,7 @@
         "OPENAI_BASE_URL": "https://api.thegrid.ai/v1"
       },
       "notes": "Disabled in agentsea — depends on Codex agent tool loops, which are not reliable on The Grid yet.",
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/agents/t3code.png",
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/agents/t3code.png",
       "featured_cloud": [],
       "creator": "Ping.gg",
       "repo": "pingdotgg/t3code",
@@ -491,7 +491,7 @@
       "name": "Local Machine",
       "price": "Free",
       "description": "Your computer — no account or payment needed",
-      "url": "https://github.com/Spectral-Finance/agentsea",
+      "url": "https://github.com/the-gridai/agentsea",
       "type": "local",
       "auth": "none",
       "provision_method": "none (local execution)",
@@ -514,7 +514,7 @@
         "location": "nbg1",
         "image": "ubuntu-24.04"
       },
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/clouds/hetzner.png"
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/clouds/hetzner.png"
     },
     "aws": {
       "name": "AWS Lightsail",
@@ -532,7 +532,7 @@
         "blueprint": "ubuntu_24_04"
       },
       "notes": "Uses 'ubuntu' user instead of 'root'. Requires AWS CLI installed and configured.",
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/clouds/aws.png"
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/clouds/aws.png"
     },
     "digitalocean": {
       "name": "DigitalOcean",
@@ -549,7 +549,7 @@
         "region": "nyc3",
         "image": "ubuntu-24-04-x64"
       },
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/clouds/digitalocean.png"
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/clouds/digitalocean.png"
     },
     "gcp": {
       "name": "GCP Compute Engine",
@@ -567,7 +567,7 @@
         "image_family": "ubuntu-2404-lts-amd64"
       },
       "notes": "Uses current username for SSH. Requires gcloud CLI installed and configured.",
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/clouds/gcp.png"
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/clouds/gcp.png"
     },
     "daytona": {
       "name": "Daytona",
@@ -584,7 +584,7 @@
         "size": "small"
       },
       "notes": "Uses the Daytona SDK for sandbox lifecycle, file transfer, and signed preview URLs. SSH access tokens are minted on demand and never persisted.",
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/clouds/daytona.png"
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/clouds/daytona.png"
     },
     "sprite": {
       "name": "Sprite",
@@ -596,7 +596,7 @@
       "provision_method": "sprite create",
       "exec_method": "sprite exec",
       "interactive_method": "sprite exec -tty",
-      "icon": "https://raw.githubusercontent.com/Spectral-Finance/agentsea/main/assets/clouds/sprite.png"
+      "icon": "https://raw.githubusercontent.com/the-gridai/agentsea/main/assets/clouds/sprite.png"
     }
   },
   "matrix": {

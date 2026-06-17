@@ -21,7 +21,7 @@ fi
 # Remote — download bundled daytona.js from GitHub release
 DAYTONA_JS=$(mktemp)
 trap 'rm -f "$DAYTONA_JS"' EXIT
-curl -fsSL --proto '=https' "https://github.com/Spectral-Finance/agentsea/releases/download/daytona-latest/daytona.js" -o "$DAYTONA_JS" \
+curl -fsSL --proto '=https' "https://github.com/the-gridai/agentsea/releases/download/daytona-latest/daytona.js" -o "$DAYTONA_JS" \
     || { printf '\033[0;31mFailed to download daytona.js\033[0m\n' >&2; exit 1; }
 
 exec bun run "$DAYTONA_JS" kilocode "$@"
