@@ -10,7 +10,8 @@ import { asyncTryCatch, tryCatch, unwrapOr } from "../shared/result.js";
 import { maybeShowStarPrompt } from "../shared/star-prompt.js";
 import { AGENTSEA_CLI } from "../shared/cli-invocation.js";
 import { captureEvent, setTelemetryContext } from "../shared/telemetry.js";
-import { defaultAgentseaLabel, logError, validateModelId, CLACK_LOG_OPTS } from "../shared/ui.js";
+import { defaultAgentseaLabel, logError, promptText, validateModelId, CLACK_LOG_OPTS } from "../shared/ui.js";
+import { multiPickToTTY, pickToTTY } from "../picker.js";
 import { cmdLink } from "./link.js";
 import { activeServerPicker } from "./list.js";
 import { execScript, showDryRunPreview } from "./run.js";
@@ -32,12 +33,14 @@ import {
 async function selectAgent(manifest: Manifest): Promise<string> {
   const agents = agentKeys(manifest);
   const agentHints = buildAgentPickerHints(manifest);
-  const agentChoice = await p.select({
+  // /dev/tty (pickToTTY) instead of Clack's process.stdin reader — works in
+  // curl|bash / remote contexts where process.stdin can't receive input.
+  const agentChoice = pickToTTY({
     message: "Select an agent",
     options: mapToSelectOptions(agents, manifest.agents, agentHints),
-    initialValue: agents.includes("openclaw") ? "openclaw" : agents[0],
+    defaultValue: agents.includes("openclaw") ? "openclaw" : agents[0],
   });
-  if (p.isCancel(agentChoice)) {
+  if (agentChoice === null) {
     handleCancel();
   }
   return agentChoice;
@@ -114,12 +117,12 @@ async function selectCloud(
     hint: "bring your own server via IP address",
   });
 
-  const cloudChoice = await p.select({
+  const cloudChoice = pickToTTY({
     message: "Select a cloud",
     options,
-    initialValue: cloudList[0],
+    defaultValue: cloudList[0],
   });
-  if (p.isCancel(cloudChoice)) {
+  if (cloudChoice === null) {
     handleCancel();
   }
 
@@ -145,23 +148,10 @@ async function promptAgentseaName(agentSlug: string): Promise<string | undefined
   }
 
   const defaultName = defaultAgentseaLabel(agentSlug);
-  const agentseaName = await p.text({
-    message: "Name your agentsea",
-    placeholder: defaultName,
+  const agentseaName = await promptText("Name your agentsea", {
     defaultValue: defaultName,
-    validate: (value) => {
-      if (!value) {
-        return undefined;
-      }
-      if (value.length > 128) {
-        return "Name must be 128 characters or less";
-      }
-      return undefined;
-    },
+    validate: (value) => (value.length > 128 ? "Name must be 128 characters or less" : undefined),
   });
-  if (p.isCancel(agentseaName)) {
-    handleCancel();
-  }
   return agentseaName || undefined;
 }
 
@@ -230,40 +220,27 @@ async function promptSetupOptions(agentName: string): Promise<Set<string> | unde
 
   const defaultOnValues = filteredSteps.filter((s) => s.defaultOn).map((s) => s.value);
 
-  const selected = await p.multiselect({
+  // /dev/tty multiselect — works in curl|bash / remote where stdin can't be read.
+  const selected = multiPickToTTY({
     message: "Setup options (↑/↓ navigate, space=toggle, a=all, enter=confirm)",
     options: filteredSteps.map((s) => ({
       value: s.value,
       label: s.label,
       hint: s.hint,
     })),
-    initialValues: defaultOnValues.length > 0 ? defaultOnValues : undefined,
-    required: false,
+    initialValues: defaultOnValues,
   });
-
-  if (p.isCancel(selected)) {
-    return new Set<string>();
-  }
 
   const stepSet = new Set(selected);
 
   // If user selected "Custom model", prompt for the model ID and set MODEL_ID env
   if (stepSet.has("custom-model")) {
     stepSet.delete("custom-model");
-    const modelId = await p.text({
-      message: "Model ID",
-      placeholder: "provider/model-name",
-      validate: (val) => {
-        if (!val?.trim()) {
-          return "Model ID is required";
-        }
-        if (!validateModelId(val.trim())) {
-          return "Invalid format — use provider/model";
-        }
-        return undefined;
-      },
+    const modelId = await promptText("Model ID", {
+      validate: (val) =>
+        !val.trim() ? "Model ID is required" : !validateModelId(val.trim()) ? "Invalid format — use provider/model" : undefined,
     });
-    if (!p.isCancel(modelId) && modelId.trim()) {
+    if (modelId.trim()) {
       process.env.MODEL_ID = modelId.trim();
     }
   }
@@ -310,7 +287,7 @@ export async function cmdInteractive(): Promise<void> {
     captureEvent("menu_shown", {
       active_servers: activeServers.length,
     });
-    const topChoice = await p.select({
+    const topChoice = pickToTTY({
       message: "What would you like to do?",
       options: [
         {
@@ -322,8 +299,9 @@ export async function cmdInteractive(): Promise<void> {
           label: "Connect to existing server",
         },
       ],
+      defaultValue: "create",
     });
-    if (p.isCancel(topChoice)) {
+    if (topChoice === null) {
       captureEvent("menu_cancelled");
       handleCancel();
     }

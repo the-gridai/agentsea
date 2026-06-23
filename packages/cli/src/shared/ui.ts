@@ -437,6 +437,57 @@ export async function prompt(question: string): Promise<string> {
 }
 
 /**
+ * Prompt for a line of text with an optional default and validation, reading from
+ * /dev/tty (works in curl|bash / remote where process.stdin can't be read). Re-asks
+ * on validation failure; Ctrl-C exits. Falls back to Clack when /dev/tty is
+ * unavailable; returns the default when non-interactive.
+ */
+export async function promptText(
+  message: string,
+  opts?: { defaultValue?: string; validate?: (v: string) => string | undefined },
+): Promise<string> {
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
+    return opts?.defaultValue ?? "";
+  }
+  for (;;) {
+    resetStderrAttributes();
+    const hint = opts?.defaultValue ? ` (${opts.defaultValue})` : "";
+    process.stderr.write(`${message}${hint}: `);
+    const tty = readLineFromTTY();
+    if (tty.ttyUnavailable) {
+      const validate = opts?.validate;
+      const r = await p.text({
+        message,
+        placeholder: opts?.defaultValue,
+        defaultValue: opts?.defaultValue,
+        validate: validate ? (v) => validate(v ?? "") : undefined,
+      });
+      if (p.isCancel(r)) {
+        process.stderr.write("\n");
+        process.exit(0);
+      }
+      return (((r as string) || opts?.defaultValue) ?? "").trim();
+    }
+    if (tty.cancelled) {
+      process.stderr.write("\n");
+      process.exit(0);
+    }
+    let value = tty.value.trim();
+    if (!value && opts?.defaultValue) {
+      value = opts.defaultValue;
+    }
+    if (opts?.validate) {
+      const err = opts.validate(value);
+      if (err) {
+        logWarn(err);
+        continue;
+      }
+    }
+    return value;
+  }
+}
+
+/**
  * Display an interactive select from pipe-delimited items.
  * Items format: "id|label" per line.
  * Uses @clack/prompts when available (local checkout), falls back to numbered list.
@@ -958,27 +1009,13 @@ export async function promptGridCatalogModelId(
     return choice;
   }
 
-  for (;;) {
-    const typed = await p.text({
-      message: "Model ID (from The Grid catalogue)",
-      placeholder: "provider/model-name",
-      validate: (val) => {
-        if (!val?.trim()) {
-          return "Model ID is required";
-        }
-        if (!validateModelId(val.trim())) {
-          return "Invalid format — use provider/model";
-        }
-        return undefined;
-      },
-    });
-    if (p.isCancel(typed)) {
-      return undefined;
-    }
-    if (typed.trim() && validateModelId(typed.trim())) {
-      return typed.trim();
-    }
-  }
+  // /dev/tty input (promptText loops until valid); Clack's stdin reader can't
+  // receive input in curl|bash / remote contexts.
+  const typed = await promptText("Model ID (from The Grid catalogue)", {
+    validate: (val) =>
+      !val.trim() ? "Model ID is required" : !validateModelId(val.trim()) ? "Invalid format — use provider/model" : undefined,
+  });
+  return typed.trim() || undefined;
 }
 
 /** Convert display name to kebab-case. */
