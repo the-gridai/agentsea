@@ -2,7 +2,7 @@
   "name": "agentsea",
   "version": "0.1.0",
   "private": true,
-  "description": "AgentSea — a multi-tenant control plane for AI agent VMs that wires The Grid (Cortex) into one-command spawns on cloud providers.",
+  "description": "Launch any AI coding agent on any cloud — one command, your cloud account, wired to The Grid API.",
   "workspaces": [
     "packages/*"
   ],
