@@ -60,6 +60,12 @@ function getHelpUsageSection(): string {
   agentsea tree                         Show recursive agentsea tree (parent/child relationships)
   agentsea tree --json                  Output agentsea tree as JSON
   agentsea history export               Dump history as JSON to stdout
+  agentsea auth login                  Browser/device OAuth login + key setup
+  agentsea auth status                 Show OAuth session + saved key status
+  agentsea auth logout                 Revoke OAuth session + clear saved auth state
+  agentsea auth keys                   List Grid consumption API keys (aliases: ls)
+  agentsea auth keys create [name]     Create a new consumption API key
+  agentsea auth keys revoke <id>       Revoke a consumption API key by id
   agentsea feedback "message"            Send feedback to the AgentSea team
   agentsea uninstall                    Uninstall agentsea CLI and optionally remove data
   agentsea update                       Check for CLI updates
@@ -101,11 +107,16 @@ function getHelpExamplesSection(): string {
 
 function getHelpAuthSection(): string {
   return `${pc.bold("AUTHENTICATION")}
-  All agents use The Grid consumption API for LLM access (not trading keys). Create one at:
+  All agents use The Grid consumption API for LLM access (not trading keys). You can:
+  1) run ${pc.cyan("agentsea auth login")} to OAuth login and create/reuse a key automatically, or
+  2) create a key manually at:
   ${pc.cyan("https://app.thegrid.ai")}
 
   For non-interactive use, set environment variables:
   ${pc.dim("THEGRID_API_KEY")}=sk-or-v1-... agentsea claude sprite
+
+  OAuth key management requires ${pc.cyan("keys:manage")} scope.
+  If missing, AgentSea shows guidance and falls back to manual key entry.
 
   Each cloud provider has its own auth requirements.
   Run ${pc.cyan("agentsea <cloud>")} to see setup instructions for a specific provider.`;
@@ -138,6 +149,7 @@ function getHelpEnvVarsSection(): string {
   ${pc.cyan("AGENTSEA_HOME")}                Override agentsea data directory (default: ~/.config/agentsea)
   ${pc.cyan("AGENTSEA_DEBUG=1")}             Show debug output (unicode detection, etc.)
   ${pc.cyan("AGENTSEA_VERBOSE=1")}           Verbose provisioning logs (same effect as ${pc.cyan("--verbose")})
+  ${pc.cyan("AGENTSEA_GRID_OAUTH=0")}        Disable OAuth auto-attempt during provisioning (default is enabled)
   ${pc.cyan("AGENTSEA_ENABLED_STEPS")}       Comma-separated setup steps (set by --steps/--config)
   ${pc.cyan("AGENTSEA_SETUP_PROMPT=1")}     Show setup multiselect on direct \`agent cloud\` runs (or use --setup-prompt)
   ${pc.cyan("AGENTSEA_PROMPT_FOR_NAME=1")}  Ask for agentsea name even on direct runs (default is an auto-generated name)

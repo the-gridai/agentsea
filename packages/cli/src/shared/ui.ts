@@ -113,6 +113,20 @@ export function logAlwaysStep(msg: string): void {
   p.log.step(msg, CLACK_LOG_OPTS);
 }
 
+export function gridOAuthKeysManageGuidance(grantedScopes: readonly string[]): string {
+  const rendered = grantedScopes.length > 0 ? grantedScopes.join(", ") : "(none)";
+  return (
+    "Grid OAuth is missing `keys:manage`, so AgentSea cannot create/reuse consumption keys.\n" +
+    `Granted scopes: ${rendered}\n` +
+    "Re-run `agentsea auth login` and approve key management, or set THEGRID_API_KEY manually."
+  );
+}
+
+export function logGridOAuthFallbackToManual(): void {
+  logWarn("Falling back to manual Grid API key entry.");
+  logAlwaysInfo("Tip: run `agentsea auth login` to pre-authenticate and avoid manual key prompts.");
+}
+
 /** Overwrite the current line with a status message (no newline). Call logStepDone() when finished.
  *  Falls back to newline-separated output when stderr is not a TTY (e.g., piped or captured). */
 export function logStepInline(msg: string): void {
@@ -420,6 +434,57 @@ export async function prompt(question: string): Promise<string> {
     process.exit(0);
   }
   return (r.data || "").trim();
+}
+
+/**
+ * Prompt for a line of text with an optional default and validation, reading from
+ * /dev/tty (works in curl|bash / remote where process.stdin can't be read). Re-asks
+ * on validation failure; Ctrl-C exits. Falls back to Clack when /dev/tty is
+ * unavailable; returns the default when non-interactive.
+ */
+export async function promptText(
+  message: string,
+  opts?: { defaultValue?: string; validate?: (v: string) => string | undefined },
+): Promise<string> {
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
+    return opts?.defaultValue ?? "";
+  }
+  for (;;) {
+    resetStderrAttributes();
+    const hint = opts?.defaultValue ? ` (${opts.defaultValue})` : "";
+    process.stderr.write(`${message}${hint}: `);
+    const tty = readLineFromTTY();
+    if (tty.ttyUnavailable) {
+      const validate = opts?.validate;
+      const r = await p.text({
+        message,
+        placeholder: opts?.defaultValue,
+        defaultValue: opts?.defaultValue,
+        validate: validate ? (v) => validate(v ?? "") : undefined,
+      });
+      if (p.isCancel(r)) {
+        process.stderr.write("\n");
+        process.exit(0);
+      }
+      return (((r as string) || opts?.defaultValue) ?? "").trim();
+    }
+    if (tty.cancelled) {
+      process.stderr.write("\n");
+      process.exit(0);
+    }
+    let value = tty.value.trim();
+    if (!value && opts?.defaultValue) {
+      value = opts.defaultValue;
+    }
+    if (opts?.validate) {
+      const err = opts.validate(value);
+      if (err) {
+        logWarn(err);
+        continue;
+      }
+    }
+    return value;
+  }
 }
 
 /**
@@ -944,27 +1009,13 @@ export async function promptGridCatalogModelId(
     return choice;
   }
 
-  for (;;) {
-    const typed = await p.text({
-      message: "Model ID (from The Grid catalogue)",
-      placeholder: "provider/model-name",
-      validate: (val) => {
-        if (!val?.trim()) {
-          return "Model ID is required";
-        }
-        if (!validateModelId(val.trim())) {
-          return "Invalid format — use provider/model";
-        }
-        return undefined;
-      },
-    });
-    if (p.isCancel(typed)) {
-      return undefined;
-    }
-    if (typed.trim() && validateModelId(typed.trim())) {
-      return typed.trim();
-    }
-  }
+  // /dev/tty input (promptText loops until valid); Clack's stdin reader can't
+  // receive input in curl|bash / remote contexts.
+  const typed = await promptText("Model ID (from The Grid catalogue)", {
+    validate: (val) =>
+      !val.trim() ? "Model ID is required" : !validateModelId(val.trim()) ? "Invalid format — use provider/model" : undefined,
+  });
+  return typed.trim() || undefined;
 }
 
 /** Convert display name to kebab-case. */
