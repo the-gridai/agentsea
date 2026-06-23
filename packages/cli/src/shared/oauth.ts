@@ -1,25 +1,50 @@
-// shared/oauth.ts — The Grid API key handling (manual entry; OAuth TBD).
-//
-// Enterprise / automation: there is no browser OAuth for The Grid in this CLI yet.
-// Use a key issued from your The Grid organization (or CI secret) and set THEGRID_API_KEY,
-// or persist via ~/.config/agentsea/thegrid.json after a successful run.
-// For SSO-backed orgs, follow your internal docs for API key issuance until first-party
-// OAuth is wired here.
+// shared/oauth.ts — The Grid API key handling for AgentSea.
+// Supports:
+// - manual consumption API key entry
+// - first-party Grid OAuth device flow + consumption key management
+// Provisioning OAuth auto-attempt is enabled by default.
+// Set AGENTSEA_GRID_OAUTH=0 to opt out and force manual-only fallback behavior.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { getErrorMessage, isString } from "@agentsea/sdk";
+import {
+  attachGridConsumptionKeyCache,
+  createGridConsumptionApiKey,
+  findMatchingCachedGridConsumptionKey,
+  listGridConsumptionApiKeys,
+  revokeGridConsumptionApiKey,
+  type GridConsumptionApiKey,
+} from "./grid-exchange-client.js";
+import {
+  GRID_OAUTH_DEFAULT_SCOPES,
+  pollGridOAuthToken,
+  requestGridDeviceCode,
+  revokeGridOAuthToken,
+} from "./grid-oauth-client.js";
+import {
+  buildGridOAuthSession,
+  clearGridOAuthSession,
+  hasGridOAuthScope,
+  loadGridOAuthSession,
+  resolveGridOAuthClientId,
+  saveGridOAuthSession,
+  type GridOAuthSession,
+} from "./grid-oauth-session.js";
 import { parseJsonObj } from "./parse.js";
 import { readHiddenLineFromTTY } from "../picker.js";
-import { gridInferenceModelsUrl, resolveGridWebAppOrigin } from "./grid-api.js";
+import { gridInferenceModelsUrl, resolveGridExchangeApiOrigin, resolveGridWebAppOrigin } from "./grid-api.js";
 import { getAgentseaCloudConfigPath } from "./paths.js";
-import { asyncTryCatchIf, isFileError, isNetworkError, tryCatch } from "./result.js";
+import { asyncTryCatch, asyncTryCatchIf, isFileError, isNetworkError, tryCatch } from "./result.js";
+import { captureEvent } from "./telemetry.js";
 import {
   logDebug,
   logError,
   logWarn,
   logAlwaysInfo,
   logAlwaysStep,
+  gridOAuthKeysManageGuidance,
+  logGridOAuthFallbackToManual,
   openBrowser,
   prepareStdinForClack,
   resetStderrAttributes,
@@ -32,6 +57,19 @@ import { LEGACY_SAVED_API_KEY_CONFIG_STEM } from "./vendor-routing.js";
 export const GRID_CONSUMPTION_API_KEY_PROMPT_LABEL = "Grid API key:";
 export const GRID_CONSUMPTION_API_KEY_HINT =
   "Create a consumption API key at https://app.thegrid.ai — not a trading key.";
+export const AGENTSEA_GRID_OAUTH_ENV = "AGENTSEA_GRID_OAUTH";
+const GRID_OAUTH_REQUIRED_SCOPE = "keys:manage";
+
+export class GridOAuthScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GridOAuthScopeError";
+  }
+}
+
+function isGridOAuthScopeError(error: unknown): boolean {
+  return error instanceof GridOAuthScopeError;
+}
 
 // ─── Key Validation ──────────────────────────────────────────────────────────
 
@@ -262,6 +300,290 @@ export function loadSavedTheGridApiKey(): string | null {
   return null;
 }
 
+export function clearSavedTheGridApiKey(): void {
+  for (const slug of ["thegrid", LEGACY_SAVED_API_KEY_CONFIG_STEM]) {
+    const result = tryCatch(() => rmSync(getAgentseaCloudConfigPath(slug), { force: true }));
+    if (!result.ok) {
+      logDebug(`Failed clearing saved Grid key for ${slug}: ${String(result.error)}`);
+    }
+  }
+}
+
+function resolveGridOAuthScopes(): string[] {
+  const raw = process.env.AGENTSEA_GRID_OAUTH_SCOPES?.trim();
+  if (!raw) {
+    return [...GRID_OAUTH_DEFAULT_SCOPES];
+  }
+  const scopes = raw
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (scopes.length === 0) {
+    return [...GRID_OAUTH_DEFAULT_SCOPES];
+  }
+  return [...new Set(scopes)];
+}
+
+function isNonInteractiveOAuthContext(): boolean {
+  return process.env.AGENTSEA_NON_INTERACTIVE === "1" || (!process.stdout.isTTY && !process.stderr.isTTY);
+}
+
+function oauthScopeFailureMessage(scopes: readonly string[]): string {
+  return gridOAuthKeysManageGuidance(scopes);
+}
+
+function shouldAttemptGridOAuthForProvisioning(): boolean {
+  const raw = process.env[AGENTSEA_GRID_OAUTH_ENV]?.trim().toLowerCase();
+  if (!raw) {
+    return true;
+  }
+  return raw !== "0" && raw !== "false";
+}
+
+function buildAgentseaOAuthKeyName(agentSlug?: string, cloudSlug?: string): string {
+  const sanitize = (part: string | undefined): string =>
+    (part ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 24);
+  const suffix = Date.now().toString(36);
+  const bits = ["agentsea", sanitize(agentSlug) || "agent", sanitize(cloudSlug) || "cloud", suffix];
+  return bits.join("-").slice(0, 96);
+}
+
+function looksLikeKeysManageScopeFailure(error: unknown): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  return msg.includes("keys:manage") || msg.includes("insufficient_scope") || msg.includes("insufficient scope");
+}
+
+async function runGridDeviceFlowLogin(source: "provision" | "auth_login"): Promise<GridOAuthSession> {
+  if (isNonInteractiveOAuthContext()) {
+    throw new Error(
+      "OAuth login requires an interactive terminal/browser. Run `agentsea auth login` first, or set THEGRID_API_KEY.",
+    );
+  }
+  const oauthBaseUrl = resolveGridExchangeApiOrigin();
+  const clientId = resolveGridOAuthClientId();
+  const scopes = resolveGridOAuthScopes();
+  captureEvent("oauth_started", {
+    source,
+  });
+
+  const deviceCode = await requestGridDeviceCode(oauthBaseUrl, clientId, scopes);
+  const verificationUrl = deviceCode.verification_uri_complete?.trim() || deviceCode.verification_uri;
+
+  logAlwaysStep("Authorize AgentSea with The Grid account access.");
+  logAlwaysInfo(`Enter code ${deviceCode.user_code} at ${deviceCode.verification_uri}`);
+  logAlwaysInfo("If signup/login redirects away, return to the verification page and enter the code.");
+  if (process.env.AGENTSEA_OPEN_GRID_APP !== "0") {
+    openBrowser(verificationUrl);
+  }
+
+  const poll = await runWithSpinner("Waiting for OAuth authorization…", () =>
+    pollGridOAuthToken(oauthBaseUrl, clientId, deviceCode.device_code, deviceCode.interval, deviceCode.expires_in),
+  );
+
+  if (poll.status === "denied") {
+    captureEvent("oauth_failed", {
+      source,
+      reason: "denied",
+    });
+    throw new Error("OAuth authorization was denied.");
+  }
+  if (poll.status === "expired") {
+    captureEvent("oauth_failed", {
+      source,
+      reason: "expired",
+    });
+    throw new Error("OAuth device code expired before authorization completed.");
+  }
+  if (poll.status === "error") {
+    captureEvent("oauth_failed", {
+      source,
+      reason: "poll_error",
+    });
+    throw new Error(poll.message);
+  }
+
+  let session = buildGridOAuthSession(poll.tokens, oauthBaseUrl, clientId);
+  if (!hasGridOAuthScope(session, GRID_OAUTH_REQUIRED_SCOPE)) {
+    captureEvent("oauth_failed", {
+      source,
+      reason: "missing_keys_manage_scope",
+    });
+    throw new GridOAuthScopeError(oauthScopeFailureMessage(session.oauth_scopes));
+  }
+  saveGridOAuthSession(session);
+  captureEvent("oauth_succeeded", {
+    source,
+  });
+  return session;
+}
+
+async function ensureGridConsumptionKeyFromOAuth(
+  session: GridOAuthSession,
+  agentSlug?: string,
+  cloudSlug?: string,
+): Promise<{ apiKey: string; session: GridOAuthSession }> {
+  let activeSession = session;
+  try {
+    const listed = await listGridConsumptionApiKeys(activeSession);
+    activeSession = listed.session;
+
+    const savedCandidate = loadSavedTheGridApiKey() ?? process.env.THEGRID_API_KEY;
+    const cached = findMatchingCachedGridConsumptionKey(activeSession, listed.keys, savedCandidate ?? undefined);
+    if (cached) {
+      if (await verifyTheGridApiKey(cached)) {
+        return {
+          apiKey: cached,
+          session: activeSession,
+        };
+      }
+      logWarn("Cached OAuth-derived Grid key is no longer valid; creating a fresh key.");
+    }
+
+    const created = await createGridConsumptionApiKey(activeSession, buildAgentseaOAuthKeyName(agentSlug, cloudSlug));
+    activeSession = created.session;
+    const key = created.key.key?.trim() ?? "";
+    if (!key) {
+      throw new Error("Grid Exchange did not return a consumable API key secret.");
+    }
+    if (!(await verifyTheGridApiKey(key))) {
+      throw new Error("OAuth-created Grid API key failed validation.");
+    }
+
+    activeSession = attachGridConsumptionKeyCache(activeSession, created.key);
+    saveGridOAuthSession(activeSession);
+    return {
+      apiKey: key,
+      session: activeSession,
+    };
+  } catch (error) {
+    if (looksLikeKeysManageScopeFailure(error)) {
+      throw new GridOAuthScopeError(oauthScopeFailureMessage(activeSession.oauth_scopes));
+    }
+    throw error;
+  }
+}
+
+export type GridOAuthStatus = {
+  oauthConfigured: boolean;
+  sessionPresent: boolean;
+  expiresAt?: string;
+  scopes: string[];
+  hasKeysManageScope: boolean;
+  hasSavedApiKey: boolean;
+  oauthBaseUrl?: string;
+};
+
+export function getGridOAuthStatus(): GridOAuthStatus {
+  const session = loadGridOAuthSession();
+  return {
+    oauthConfigured: shouldAttemptGridOAuthForProvisioning(),
+    sessionPresent: session !== null,
+    ...(session?.token_expires_at
+      ? {
+          expiresAt: session.token_expires_at,
+        }
+      : {}),
+    scopes: session?.oauth_scopes ?? [],
+    hasKeysManageScope: session ? hasGridOAuthScope(session, GRID_OAUTH_REQUIRED_SCOPE) : false,
+    hasSavedApiKey: hasSavedTheGridKey(),
+    ...(session?.oauth_base_url
+      ? {
+          oauthBaseUrl: session.oauth_base_url,
+        }
+      : {}),
+  };
+}
+
+/**
+ * Return an authenticated Grid OAuth session with the `keys:manage` scope,
+ * reusing the saved session when possible and running the device flow otherwise.
+ */
+async function ensureAuthenticatedGridSession(source: "auth_login" | "provision"): Promise<GridOAuthSession> {
+  const session = process.env.AGENTSEA_REAUTH === "1" ? null : loadGridOAuthSession();
+  if (session && hasGridOAuthScope(session, GRID_OAUTH_REQUIRED_SCOPE)) {
+    return session;
+  }
+  return runGridDeviceFlowLogin(source);
+}
+
+/** Run an exchange-client key operation, mapping scope failures to GridOAuthScopeError. */
+async function withGridKeyManagement<T>(
+  fn: (session: GridOAuthSession) => Promise<{ session: GridOAuthSession; value: T }>,
+): Promise<T> {
+  const session = await ensureAuthenticatedGridSession("auth_login");
+  try {
+    const result = await fn(session);
+    saveGridOAuthSession(result.session);
+    return result.value;
+  } catch (error) {
+    if (looksLikeKeysManageScopeFailure(error)) {
+      throw new GridOAuthScopeError(oauthScopeFailureMessage(session.oauth_scopes));
+    }
+    throw error;
+  }
+}
+
+/** List the consumption API keys on the authenticated Grid account. */
+export async function listGridConsumptionKeysViaOAuth(): Promise<GridConsumptionApiKey[]> {
+  return withGridKeyManagement(async (session) => {
+    const result = await listGridConsumptionApiKeys(session);
+    return { session: result.session, value: result.keys };
+  });
+}
+
+/** Create a new named consumption API key and return it (the secret is present only on create). */
+export async function createGridConsumptionKeyViaOAuth(
+  name: string,
+  expiresAt?: string,
+): Promise<GridConsumptionApiKey> {
+  return withGridKeyManagement(async (session) => {
+    const created = await createGridConsumptionApiKey(session, name, expiresAt);
+    return { session: created.session, value: created.key };
+  });
+}
+
+/** Revoke a consumption API key by id. */
+export async function revokeGridConsumptionKeyViaOAuth(keyId: string): Promise<void> {
+  await withGridKeyManagement(async (session) => {
+    const result = await revokeGridConsumptionApiKey(session, keyId);
+    return { session: result.session, value: undefined };
+  });
+}
+
+export async function loginWithGridOAuthAndKey(agentSlug?: string, cloudSlug?: string): Promise<string> {
+  const source: "auth_login" | "provision" = agentSlug || cloudSlug ? "provision" : "auth_login";
+  const session = await ensureAuthenticatedGridSession(source);
+
+  const keyResult = await ensureGridConsumptionKeyFromOAuth(session, agentSlug, cloudSlug);
+  saveGridOAuthSession(keyResult.session);
+  process.env.THEGRID_API_KEY = keyResult.apiKey;
+  await saveTheGridApiKey(keyResult.apiKey);
+  captureEvent("oauth_succeeded", {
+    source,
+    key_acquired: true,
+  });
+  return keyResult.apiKey;
+}
+
+export async function logoutGridOAuth(): Promise<void> {
+  const session = loadGridOAuthSession();
+  if (session) {
+    const revokeAccess = asyncTryCatch(() => revokeGridOAuthToken(session.oauth_base_url, session.access_token));
+    const revokeRefresh = asyncTryCatch(() => revokeGridOAuthToken(session.oauth_base_url, session.refresh_token));
+    const [accessR, refreshR] = await Promise.all([revokeAccess, revokeRefresh]);
+    if (!accessR.ok || !refreshR.ok) {
+      logWarn("Logged out locally, but token revoke could not be fully confirmed.");
+    }
+  }
+  clearGridOAuthSession();
+  clearSavedTheGridApiKey();
+  delete process.env.THEGRID_API_KEY;
+}
+
 // ─── Main API Key Acquisition ────────────────────────────────────────────────
 
 function showApiKeyIntro(): void {
@@ -422,9 +744,6 @@ async function promptApiKey(): Promise<string | null> {
 }
 
 export async function getOrPromptApiKey(agentSlug?: string, cloudSlug?: string): Promise<string> {
-  void agentSlug;
-  void cloudSlug;
-
   // 1. Check env var
   if (process.env.THEGRID_API_KEY) {
     logAlwaysInfo("Using Grid API key from environment");
@@ -448,7 +767,33 @@ export async function getOrPromptApiKey(agentSlug?: string, cloudSlug?: string):
     }
   }
 
-  // 3. Manual entry (retry loop — never exits unless user says no)
+  // 3. Try Grid OAuth device flow + consumption key management before manual fallback.
+  if (shouldAttemptGridOAuthForProvisioning()) {
+    const oauthResult = await asyncTryCatch(() => loginWithGridOAuthAndKey(agentSlug, cloudSlug));
+    if (oauthResult.ok) {
+      logAlwaysInfo("Using Grid API key from OAuth session");
+      return oauthResult.data;
+    }
+    if (isGridOAuthScopeError(oauthResult.error)) {
+      logWarn(getErrorMessage(oauthResult.error));
+      logGridOAuthFallbackToManual();
+    } else {
+      logWarn(`OAuth did not complete: ${getErrorMessage(oauthResult.error)}`);
+      logGridOAuthFallbackToManual();
+    }
+    captureEvent("oauth_fallback_manual", {
+      source: "provision",
+    });
+  }
+
+  // 4. No prompts in headless mode — fail with explicit guidance.
+  if (process.env.AGENTSEA_NON_INTERACTIVE === "1") {
+    throw new Error(
+      "No valid THEGRID_API_KEY found in headless mode. Set THEGRID_API_KEY or run `agentsea auth login` before headless provisioning.",
+    );
+  }
+
+  // 5. Manual entry (retry loop — never exits unless user says no)
   for (;;) {
     showApiKeyIntro();
 
