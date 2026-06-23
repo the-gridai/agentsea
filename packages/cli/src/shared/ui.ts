@@ -113,6 +113,20 @@ export function logAlwaysStep(msg: string): void {
   p.log.step(msg, CLACK_LOG_OPTS);
 }
 
+export function gridOAuthKeysManageGuidance(grantedScopes: readonly string[]): string {
+  const rendered = grantedScopes.length > 0 ? grantedScopes.join(", ") : "(none)";
+  return (
+    "Grid OAuth is missing `keys:manage`, so AgentSea cannot create/reuse consumption keys.\n" +
+    `Granted scopes: ${rendered}\n` +
+    "Re-run `agentsea auth login` and approve key management, or set THEGRID_API_KEY manually."
+  );
+}
+
+export function logGridOAuthFallbackToManual(): void {
+  logWarn("Falling back to manual Grid API key entry.");
+  logAlwaysInfo("Tip: run `agentsea auth login` to pre-authenticate and avoid manual key prompts.");
+}
+
 /** Overwrite the current line with a status message (no newline). Call logStepDone() when finished.
  *  Falls back to newline-separated output when stderr is not a TTY (e.g., piped or captured). */
 export function logStepInline(msg: string): void {

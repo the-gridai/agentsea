@@ -9,6 +9,7 @@ import { getErrorMessage, isString, toRecord } from "@agentsea/sdk";
 import pc from "picocolors";
 import pkg from "../package.json" with { type: "json" };
 import {
+  cmdAuth,
   cmdAgentInfo,
   cmdAgentInteractive,
   cmdAgents,
@@ -844,6 +845,10 @@ async function dispatchCommand(
   }
   if (cmd === "pull-history") {
     await cmdPullHistory();
+    return;
+  }
+  if (cmd === "auth") {
+    await cmdAuth(filteredArgs.slice(1));
     return;
   }
   if (LIST_COMMANDS.has(cmd)) {

@@ -28,7 +28,18 @@ GitHub Releases hosts `digitalocean-latest` artifacts used by userdata shims und
 
 ## Auth
 
-Platform LLM/key usage is **`THEGRID_API_KEY`** (Grid dashboard). Persisted reuse (optional steps) writes **`~/.config/agentsea/thegrid.json`**. An alternate filename from early releases may still be read; see **`packages/cli/src/shared/oauth.ts`**.
+Platform LLM/key usage is **`THEGRID_API_KEY`** (Grid consumption key).
+
+- Interactive OAuth bootstrap: `agentsea auth login` (device flow) creates/reuses a consumption key and saves:
+  - API key at **`~/.config/agentsea/thegrid.json`**
+  - OAuth session at **`~/.config/agentsea/thegrid-oauth.json`**
+- Session inspection/logout: `agentsea auth status`, `agentsea auth logout`.
+- Provisioning auto-OAuth is enabled by default:
+  - order is `THEGRID_API_KEY` env -> saved key -> OAuth key acquisition -> manual prompt fallback.
+  - set **`AGENTSEA_GRID_OAUTH=0`** to disable auto-OAuth and use manual fallback only.
+  - OAuth key management requires `keys:manage`; missing scope shows guidance then falls back to manual key entry.
+
+An alternate API-key filename from early releases may still be read; see **`packages/cli/src/shared/oauth.ts`**.
 
 When you run the CLI from a checkout, a **repo-root `.env`** next to **`manifest.json`** is loaded automatically (does not replace variables already set in your shell). To point at a checkout when your current directory is elsewhere, set **`AGENTSEA_ROOT`** to that repository path (legacy: `AGENTSEA_ROOT`). Set **`AGENTSEA_DEBUG=1`** or **`AGENTSEA_DEBUG_ENV=1`** to log which `.env` path was loaded (never prints secret values).
 

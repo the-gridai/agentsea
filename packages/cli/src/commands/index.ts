@@ -14,6 +14,8 @@ export {
 } from "./export.js";
 // feedback.ts — cmdFeedback
 export { cmdFeedback } from "./feedback.js";
+// auth.ts — cmdAuth
+export { cmdAuth } from "./auth.js";
 // fix.ts — cmdFix, fixAgentsea
 export { cmdFix, fixAgentsea } from "./fix.js";
 // help.ts — cmdHelp

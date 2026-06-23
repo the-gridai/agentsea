@@ -59,6 +59,11 @@ export function getAgentseaPreferencesPath(): string {
   return join(getAgentseaDir(), "preferences.json");
 }
 
+/** OAuth device-flow session for The Grid exchange APIs. */
+export function getGridOAuthSessionPath(): string {
+  return join(getAgentseaDir(), "thegrid-oauth.json");
+}
+
 export function getInstallRefPath(): string {
   return join(getAgentseaDir(), ".ref");
 }
