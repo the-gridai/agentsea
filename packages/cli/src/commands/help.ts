@@ -63,6 +63,9 @@ function getHelpUsageSection(): string {
   agentsea auth login                  Browser/device OAuth login + key setup
   agentsea auth status                 Show OAuth session + saved key status
   agentsea auth logout                 Revoke OAuth session + clear saved auth state
+  agentsea auth keys                   List Grid consumption API keys (aliases: ls)
+  agentsea auth keys create [name]     Create a new consumption API key
+  agentsea auth keys revoke <id>       Revoke a consumption API key by id
   agentsea feedback "message"            Send feedback to the AgentSea team
   agentsea uninstall                    Uninstall agentsea CLI and optionally remove data
   agentsea update                       Check for CLI updates

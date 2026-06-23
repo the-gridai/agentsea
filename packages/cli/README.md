@@ -34,6 +34,10 @@ Platform LLM/key usage is **`THEGRID_API_KEY`** (Grid consumption key).
   - API key at **`~/.config/agentsea/thegrid.json`**
   - OAuth session at **`~/.config/agentsea/thegrid-oauth.json`**
 - Session inspection/logout: `agentsea auth status`, `agentsea auth logout`.
+- Consumption key management (requires `keys:manage`):
+  - `agentsea auth keys` — list the consumption API keys on your Grid account.
+  - `agentsea auth keys create [name]` — create a new key (the secret is printed once; a name is generated if omitted).
+  - `agentsea auth keys revoke <id>` — revoke a key by id.
 - Provisioning auto-OAuth is enabled by default:
   - order is `THEGRID_API_KEY` env -> saved key -> OAuth key acquisition -> manual prompt fallback.
   - set **`AGENTSEA_GRID_OAUTH=0`** to disable auto-OAuth and use manual fallback only.

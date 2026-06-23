@@ -13,6 +13,8 @@ import {
   createGridConsumptionApiKey,
   findMatchingCachedGridConsumptionKey,
   listGridConsumptionApiKeys,
+  revokeGridConsumptionApiKey,
+  type GridConsumptionApiKey,
 } from "./grid-exchange-client.js";
 import {
   GRID_OAUTH_DEFAULT_SCOPES,
@@ -310,22 +312,16 @@ export function clearSavedTheGridApiKey(): void {
 function resolveGridOAuthScopes(): string[] {
   const raw = process.env.AGENTSEA_GRID_OAUTH_SCOPES?.trim();
   if (!raw) {
-    return [
-      ...GRID_OAUTH_DEFAULT_SCOPES,
-    ];
+    return [...GRID_OAUTH_DEFAULT_SCOPES];
   }
   const scopes = raw
     .split(/[\s,]+/)
     .map((s) => s.trim())
     .filter(Boolean);
   if (scopes.length === 0) {
-    return [
-      ...GRID_OAUTH_DEFAULT_SCOPES,
-    ];
+    return [...GRID_OAUTH_DEFAULT_SCOPES];
   }
-  return [
-    ...new Set(scopes),
-  ];
+  return [...new Set(scopes)];
 }
 
 function isNonInteractiveOAuthContext(): boolean {
@@ -352,12 +348,7 @@ function buildAgentseaOAuthKeyName(agentSlug?: string, cloudSlug?: string): stri
       .replace(/^-+|-+$/g, "")
       .slice(0, 24);
   const suffix = Date.now().toString(36);
-  const bits = [
-    "agentsea",
-    sanitize(agentSlug) || "agent",
-    sanitize(cloudSlug) || "cloud",
-    suffix,
-  ];
+  const bits = ["agentsea", sanitize(agentSlug) || "agent", sanitize(cloudSlug) || "cloud", suffix];
   return bits.join("-").slice(0, 96);
 }
 
@@ -390,13 +381,8 @@ async function runGridDeviceFlowLogin(source: "provision" | "auth_login"): Promi
   }
 
   const poll = await runWithSpinner("Waiting for OAuth authorization…", () =>
-    pollGridOAuthToken(
-      oauthBaseUrl,
-      clientId,
-      deviceCode.device_code,
-      deviceCode.interval,
-      deviceCode.expires_in,
-    ));
+    pollGridOAuthToken(oauthBaseUrl, clientId, deviceCode.device_code, deviceCode.interval, deviceCode.expires_in),
+  );
 
   if (poll.status === "denied") {
     captureEvent("oauth_failed", {
@@ -512,12 +498,65 @@ export function getGridOAuthStatus(): GridOAuthStatus {
   };
 }
 
+/**
+ * Return an authenticated Grid OAuth session with the `keys:manage` scope,
+ * reusing the saved session when possible and running the device flow otherwise.
+ */
+async function ensureAuthenticatedGridSession(source: "auth_login" | "provision"): Promise<GridOAuthSession> {
+  const session = process.env.AGENTSEA_REAUTH === "1" ? null : loadGridOAuthSession();
+  if (session && hasGridOAuthScope(session, GRID_OAUTH_REQUIRED_SCOPE)) {
+    return session;
+  }
+  return runGridDeviceFlowLogin(source);
+}
+
+/** Run an exchange-client key operation, mapping scope failures to GridOAuthScopeError. */
+async function withGridKeyManagement<T>(
+  fn: (session: GridOAuthSession) => Promise<{ session: GridOAuthSession; value: T }>,
+): Promise<T> {
+  const session = await ensureAuthenticatedGridSession("auth_login");
+  try {
+    const result = await fn(session);
+    saveGridOAuthSession(result.session);
+    return result.value;
+  } catch (error) {
+    if (looksLikeKeysManageScopeFailure(error)) {
+      throw new GridOAuthScopeError(oauthScopeFailureMessage(session.oauth_scopes));
+    }
+    throw error;
+  }
+}
+
+/** List the consumption API keys on the authenticated Grid account. */
+export async function listGridConsumptionKeysViaOAuth(): Promise<GridConsumptionApiKey[]> {
+  return withGridKeyManagement(async (session) => {
+    const result = await listGridConsumptionApiKeys(session);
+    return { session: result.session, value: result.keys };
+  });
+}
+
+/** Create a new named consumption API key and return it (the secret is present only on create). */
+export async function createGridConsumptionKeyViaOAuth(
+  name: string,
+  expiresAt?: string,
+): Promise<GridConsumptionApiKey> {
+  return withGridKeyManagement(async (session) => {
+    const created = await createGridConsumptionApiKey(session, name, expiresAt);
+    return { session: created.session, value: created.key };
+  });
+}
+
+/** Revoke a consumption API key by id. */
+export async function revokeGridConsumptionKeyViaOAuth(keyId: string): Promise<void> {
+  await withGridKeyManagement(async (session) => {
+    const result = await revokeGridConsumptionApiKey(session, keyId);
+    return { session: result.session, value: undefined };
+  });
+}
+
 export async function loginWithGridOAuthAndKey(agentSlug?: string, cloudSlug?: string): Promise<string> {
   const source: "auth_login" | "provision" = agentSlug || cloudSlug ? "provision" : "auth_login";
-  let session = process.env.AGENTSEA_REAUTH === "1" ? null : loadGridOAuthSession();
-  if (!session || !hasGridOAuthScope(session, GRID_OAUTH_REQUIRED_SCOPE)) {
-    session = await runGridDeviceFlowLogin(source);
-  }
+  const session = await ensureAuthenticatedGridSession(source);
 
   const keyResult = await ensureGridConsumptionKeyFromOAuth(session, agentSlug, cloudSlug);
   saveGridOAuthSession(keyResult.session);
