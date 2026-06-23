@@ -50,7 +50,16 @@ if (!isServer && isAnalyticsEnabled) {
     // site, so cross-property funnels/reports built on that name include
     // agentsea.
     track_pageview: "url-with-path-and-query-string",
-    persistence: "localStorage",
+    // Cross-subdomain identity: the same prod token is shared by thegrid.ai
+    // (landing), thegrid.ai/manifesto (manifesto), app.thegrid.ai (app), and
+    // agentsea.thegrid.ai (this app). To count a person crossing subdomains as
+    // ONE distinct_id, the identity store must live in a cookie scoped to the
+    // registrable domain (.thegrid.ai), not in origin-scoped localStorage.
+    // `cross_subdomain_cookie` is a no-op unless persistence is "cookie" (the
+    // SDK's Persistence type is only "cookie" | "localStorage"), so both options
+    // must change together and must match across all repos.
+    persistence: "cookie",
+    cross_subdomain_cookie: true,
     // Disable automatic referrer capture; we seed the real first-touch source
     // from our own attribution store below (mirrors grid-ui).
     save_referrer: false,

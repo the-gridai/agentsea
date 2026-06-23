@@ -1,47 +1,112 @@
-# Agent Sea
+# AgentSea
 
-> **CLI-first agent VM launcher**, static-manifest Agentsea-style architecture for **The Grid**: static repo-root **`manifest.json`**, **`agentsea`** provisions against **your** cloud accounts, **`sh/<cloud>/<agent>.sh`** userdata, local history under **`~/.config/agentsea/`** — **no Agentsea web UI, no Agentsea HTTP API.**
+**Launch any AI coding agent on any cloud — with one command.**
 
-Authenticate with **`THEGRID_API_KEY`** (Grid platform) plus per-cloud tokens (`DIGITALOCEAN_TOKEN`, `HCLOUD_TOKEN`, …). The repo ships a static manifest + per-cloud userdata scripts; the CDN origin is resolved per environment (dev `https://agentsea.dev.thegrid.ai`, staging `https://agentsea.staging.thegrid.ai`, prod `https://agentsea.thegrid.ai`) — pinned by `install.sh` and overridable via **`AGENTSEA_CDN`**. See **`todo.md`** for public roadmap items.
-
-## Status
-
-**Pre-alpha.**
-
-| Path | Role |
-|------|------|
-| **`manifest.json`**, **`sh/`**, **`assets/`** | Public matrix contract + CDN-installable userdata + icons |
-| **`packages/cli`** | `agentsea` — Bun bundle (`npm run build:cli` → `packages/cli/cli.js`) |
-| **`packages/sdk`** | `@agentsea/sdk` — manifest types + `loadManifest()` (`@agentsea/sdk/node`) |
-| **`packages/ui`** | Next.js 15 brochure: **`/`** (manifest-backed landing), **`/cli`** (CLI guide only) |
-
-Optional: **The Grid SDK** for **`whoami` / Cortex preflight** — not used for provisioning.
-
-## Layout
-
-```
-agentsea/
-├── manifest.json
-├── sh/
-├── assets/
-├── packages/
-│   ├── sdk/
-│   ├── cli/
-│   └── ui/
-├── package.json
-└── tsconfig.base.json
+```bash
+curl -fsSL https://agentsea.thegrid.ai/cli/install.sh | bash
+agentsea claude digitalocean
 ```
 
-## Quick start
+That's it: AgentSea provisions a fresh, sandboxed environment in your own cloud
+account, installs the agent, wires up inference through The Grid API, and drops
+you into an interactive session.
+
+## What is AgentSea?
+
+AgentSea is a command-line launcher for AI coding agents. Instead of manually
+spinning up a server, installing an agent, and configuring API keys every time,
+you run a single command and AgentSea handles provisioning, setup, and
+authentication for you.
+
+Agents run on **your** infrastructure — your laptop or a VM in your own cloud
+account — and reach LLMs through [The Grid](https://thegrid.ai), an
+OpenAI-compatible inference API. You bring your cloud account and your Grid key;
+AgentSea does the wiring.
+
+## What it does
+
+- **One-command launch** — `agentsea <agent> <cloud>` provisions a VM, installs
+  the agent, and connects you.
+- **Agent-agnostic** — OpenClaw, Claude Code, Codex, OpenCode, Hermes, Kilo Code,
+  and more. Switch agents by changing one word.
+- **Bring your own cloud** — DigitalOcean, Hetzner, AWS Lightsail, GCP, and local.
+  Your account, your keys, your bill, your data.
+- **Fully sandboxed** — each agent gets an isolated VM and credential boundary,
+  so sessions never cross-talk.
+- **Grid-backed inference** — all agents route LLM calls through The Grid API,
+  so budgets, keys, and usage stay on-platform.
+- **Run it locally** — no cloud account required; `agentsea <agent> local`
+  installs the agent directly on your machine.
+
+## Who is it for
+
+- **Developers** who want to spin up a disposable AI coding agent without
+  babysitting servers or copying API keys around.
+- **Teams** who need each agent run isolated in its own VM and credential scope.
+- **Anyone on The Grid** who wants to point an agent at Grid-backed inference in
+  seconds.
+
+## Quickstart
+
+**1. Install the CLI** (macOS, Linux, or WSL — needs `bash`, `curl`, `ssh`, `jq`):
+
+```bash
+curl -fsSL https://agentsea.thegrid.ai/cli/install.sh | bash
+```
+
+**2. Authenticate with The Grid:**
+
+```bash
+agentsea auth login
+```
+
+This runs a browser/device login and saves a consumption key. (You can also set
+`THEGRID_API_KEY` manually — create one at https://app.thegrid.ai.)
+
+**3. Launch an agent:**
+
+```bash
+# On your own machine — no cloud account needed
+agentsea claude local
+
+# On a cloud VM (uses your provider token, e.g. DIGITALOCEAN_ACCESS_TOKEN)
+agentsea claude digitalocean
+```
+
+**Useful commands:**
+
+```bash
+agentsea                 # interactive agent + cloud picker
+agentsea agents          # list available agents
+agentsea clouds          # list supported clouds
+agentsea list            # browse and rerun past launches
+agentsea status          # show live state of your servers
+agentsea delete          # tear down a server
+agentsea --help          # full reference
+```
+
+Cloud provider tokens use each provider's standard env var
+(`DIGITALOCEAN_ACCESS_TOKEN`, `HCLOUD_TOKEN`, …). Run `agentsea <cloud>` to see
+the setup steps for a specific provider.
+
+## Repo layout
+
+| Path            | What's inside                                                            |
+| --------------- | ------------------------------------------------------------------------ |
+| `manifest.json` | Public catalogue of agents, clouds, and their availability               |
+| `sh/`           | Per-cloud bootstrap scripts (`sh/<cloud>/<agent>.sh`)                    |
+| `assets/`       | Agent and cloud icons                                                    |
+| `packages/cli`  | The `agentsea` command-line tool                                         |
+| `packages/sdk`  | `@agentsea/sdk` — shared manifest types and loader                       |
+| `packages/ui`   | The marketing site at [agentsea.thegrid.ai](https://agentsea.thegrid.ai) |
+
+## Development
 
 ```bash
 npm install
 
-# Marketing site → http://localhost:3011
-npm run dev
-
-# Bun-bundled CLI (needs `npx` network on first Bun download, or use global `bun`)
-npm run build:cli
+npm run dev          # marketing site → http://localhost:3011
+npm run build:cli    # build the CLI bundle
 npm run agentsea -- --help
 
 npm run typecheck
@@ -49,12 +114,11 @@ npm run lint
 npm run build
 ```
 
-CDN / one-liner base URL defaults with **`AGENTSEA_CDN`**; the marketing env mirror is **`NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN`**.
-
-For local provisioning, copy **`.env.example`** → **`.env`** at the repo root (ignored by git). **`agentsea`** loads it automatically when your shell is under this tree, or set **`AGENTSEA_ROOT`** to point at it.
-
-Older routes (`/spawns`, `/login`, `/settings`, …) **redirect** to **`/`** or **`/cli`**.
+For local provisioning, copy `.env.example` → `.env` at the repo root (ignored by
+git); `agentsea` loads it automatically when your shell is under this tree, or
+set `AGENTSEA_ROOT` to point at it. See `todo.md` for the public roadmap and
+`CONTRIBUTING.md` to get involved.
 
 ## License
 
-Apache-2.0. See `LICENSE`.
+Apache-2.0. See [`LICENSE`](LICENSE).

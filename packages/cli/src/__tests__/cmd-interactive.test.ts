@@ -50,6 +50,44 @@ const {
   isCancel: (value: unknown) => isCancelValues.has(value),
 });
 
+// The interactive picker now reads from /dev/tty (picker.js) instead of Clack.
+// Mock the input functions, but GATE interception with `interceptPicker` so this
+// process-global mock only affects THESE tests — other files (e.g. picker-cov,
+// which asserts the real implementation) delegate to the real picker.
+const realPicker: typeof import("../picker.js") = await import("../picker.js");
+// Capture the REAL function objects now — Bun re-points the namespace bindings to
+// the mock, so we must hold concrete refs to delegate to (else infinite recursion).
+const realFns = {
+  pickToTTY: realPicker.pickToTTY,
+  pickToTTYWithActions: realPicker.pickToTTYWithActions,
+  multiPickToTTY: realPicker.multiPickToTTY,
+  readLineFromTTY: realPicker.readLineFromTTY,
+  readHiddenLineFromTTY: realPicker.readHiddenLineFromTTY,
+  pickFallback: realPicker.pickFallback,
+  parsePickerInput: realPicker.parsePickerInput,
+};
+let interceptPicker = false;
+mock.module("../picker.js", () => ({
+  ...realFns,
+  pickToTTY: mock((config: Parameters<typeof realFns.pickToTTY>[0]) => {
+    if (!interceptPicker) {
+      return realFns.pickToTTY(config);
+    }
+    const value = selectReturnValues[selectCallIndex] ?? "claude";
+    selectCallIndex++;
+    return isCancelValues.has(value) ? null : value;
+  }),
+  multiPickToTTY: mock((config: Parameters<typeof realFns.multiPickToTTY>[0]) =>
+    interceptPicker ? ([] as string[]) : realFns.multiPickToTTY(config),
+  ),
+  readLineFromTTY: mock(() =>
+    interceptPicker ? { ttyUnavailable: false, cancelled: false, value: "" } : realFns.readLineFromTTY(),
+  ),
+  readHiddenLineFromTTY: mock(() =>
+    interceptPicker ? { ttyUnavailable: false, cancelled: false, value: "" } : realFns.readHiddenLineFromTTY(),
+  ),
+}));
+
 // Import commands after mock setup
 const { cmdInteractive } = await import("../commands/index.js");
 
@@ -78,6 +116,7 @@ describe("cmdInteractive", () => {
     mockSpinnerMessage.mockClear();
 
     // Reset per-test mutable state
+    interceptPicker = true;
     selectCallIndex = 0;
     selectReturnValues = [];
     isCancelValues = new Set();
@@ -94,6 +133,7 @@ describe("cmdInteractive", () => {
   });
 
   afterEach(() => {
+    interceptPicker = false;
     global.fetch = originalFetch;
     processExitSpy.mockRestore();
     restoreMocks(consoleMocks.log, consoleMocks.error);

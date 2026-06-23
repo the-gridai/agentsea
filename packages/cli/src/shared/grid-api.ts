@@ -1,5 +1,7 @@
 /** Env var for overriding The Grid OpenAI-compatible inference API base (e.g. dev/staging). */
 export const THEGRID_API_URL_ENV = "THEGRID_API_URL";
+/** Optional override for Grid OAuth/Exchange API origin (no `/api/v1` suffix). */
+export const AGENTSEA_GRID_OAUTH_BASE_URL_ENV = "AGENTSEA_GRID_OAUTH_BASE_URL";
 
 /** Production inference API base (`GET ?/models`, `POST ?/chat/completions`). */
 export const DEFAULT_GRID_INFERENCE_API_BASE = "https://api.thegrid.ai/v1";
@@ -111,4 +113,30 @@ export function resolveCortexExchangeApiOrigin(): string {
     return "https://cortex.staging.thegrid.ai";
   }
   return "https://cortex.thegrid.ai";
+}
+
+/** Grid Exchange/OAuth API origin (`/api/v1/oauth/*`, `/api/v1/api-keys`). */
+export const DEFAULT_GRID_EXCHANGE_API_ORIGIN = "https://cortex.thegrid.ai";
+
+function normalizeOrigin(url: string): string {
+  return url.trim().replace(/\/+$/, "");
+}
+
+/**
+ * Resolve Exchange OAuth host for device flow and key management.
+ * Override with `AGENTSEA_GRID_OAUTH_BASE_URL` when needed (dev/staging/local).
+ */
+export function resolveGridExchangeApiOrigin(): string {
+  const override = process.env[AGENTSEA_GRID_OAUTH_BASE_URL_ENV]?.trim();
+  if (override) {
+    return normalizeOrigin(override);
+  }
+  const base = resolveGridInferenceApiBase();
+  if (base.includes("api.dev.thegrid.ai")) {
+    return "https://cortex.dev.thegrid.ai";
+  }
+  if (base.includes("api.staging.thegrid.ai")) {
+    return "https://cortex.staging.thegrid.ai";
+  }
+  return DEFAULT_GRID_EXCHANGE_API_ORIGIN;
 }

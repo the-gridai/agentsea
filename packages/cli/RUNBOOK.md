@@ -19,4 +19,8 @@
 ## The Grid API key
 
 - Keys are validated against `GET https://api.thegrid.ai/v1/models` when possible.
-- Enterprise: use `THEGRID_API_KEY` from your org; browser OAuth for The Grid is not implemented in this CLI yet (`packages/cli/src/shared/oauth.ts`).
+- `agentsea auth login` runs Grid OAuth device flow and creates/reuses a consumption key.
+- `agentsea auth status` shows session/key state; `agentsea auth logout` clears local OAuth + saved key state.
+- Auto-OAuth during provisioning is enabled by default; set `AGENTSEA_GRID_OAUTH=0` to disable it.
+- Headless guidance: if no key is available, set `THEGRID_API_KEY` or pre-login with `agentsea auth login`.
+- If OAuth token lacks `keys:manage`, AgentSea shows guidance and falls back to manual key entry.
