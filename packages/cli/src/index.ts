@@ -46,6 +46,7 @@ import {
 import { expandEqualsFlags, findUnknownFlag } from "./flags.js";
 import { agentKeys, cloudKeys, getCacheAge, loadManifest } from "./manifest.js";
 import { expandFastProvisionVariant, getFeatureFlag, initFeatureFlags } from "./shared/feature-flags.js";
+import { refreshGridInstrumentSpecs } from "./shared/grid-instruments.js";
 import { getInstallRefPath } from "./shared/paths.js";
 import { asyncTryCatch, asyncTryCatchIf, isFileError, isNetworkError, tryCatch, tryCatchIf } from "./shared/result.js";
 import { captureError, initTelemetry, setTelemetryContext } from "./shared/telemetry.js";
@@ -976,7 +977,11 @@ async function main(): Promise<void> {
   const preOutputIdx = args.indexOf("--output");
   const isJsonOutput = preOutputIdx !== -1 && args[preOutputIdx + 1] === "json";
 
+  // Refresh instrument specs from grid-defaults.json concurrently with the update check so
+  // provisioning uses live catalogue limits without adding startup latency. Never throws.
+  const specsRefresh = refreshGridInstrumentSpecs();
   await checkForUpdates(isJsonOutput);
+  await specsRefresh;
 
   const [prompt, filteredArgs] = await resolvePrompt(args);
 

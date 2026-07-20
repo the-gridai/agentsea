@@ -195,7 +195,7 @@ describe("grid doc parity (configure uploads)", () => {
     expect(uploaded).toContain("key_env: THEGRID_API_KEY");
     expect(uploaded).toContain("provider: custom:thegrid");
     expect(uploaded).toContain("default: agent-prime");
-    expect(uploaded).toContain("context_length: 128000");
+    expect(uploaded).toContain("context_length: 196608");
     expect(uploaded).toContain("supports_vision: false");
     expect(uploaded).toContain("model_aliases:");
     expect(uploaded).toContain("agent_standard:");
@@ -214,7 +214,7 @@ describe("grid doc parity (configure uploads)", () => {
     expect(uploaded).toContain('"thegrid"');
     expect(uploaded).toContain("api.thegrid.ai");
     expect(uploaded).toContain("code-prime");
-    expect(uploaded).toContain('"context": 128000');
+    expect(uploaded).toContain('"context": 196608');
     expect(uploaded).toContain('"modalities"');
     expect(uploaded).toContain('"text"');
   });
@@ -224,7 +224,7 @@ describe("grid doc parity (configure uploads)", () => {
     const { agents: localAgents } = createCloudAgents(runner);
     await localAgents.pi.configure!("test-key");
     const uploaded = [...runner.uploads.values()].join("\n");
-    expect(uploaded).toContain('"contextWindow": 128000');
+    expect(uploaded).toContain('"contextWindow": 196608');
     expect(uploaded).toContain('"input"');
     expect(uploaded).toContain('"text"');
     expect(uploaded).toContain("code-prime");

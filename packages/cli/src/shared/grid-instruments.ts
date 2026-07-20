@@ -1,10 +1,14 @@
-// Per-agent Grid instrument defaults — aligned with thegrid.ai integration docs.
+// Per-agent Grid instrument defaults — sourced from grid-defaults.json (repo root), the
+// catalogue file published by the Grid registry generator.
 
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { RAW_BASE } from "../manifest.js";
 import { GRID_INFERENCE_DEFAULT_MODEL_ID, OPENCLAW_GRID_MODEL_MAX_TOKENS } from "./vendor-routing.js";
 
 export type GridInstrumentInputModality = "text" | "image";
 
-/** Model capability metadata from the Cortex instrument catalogue (ai_specs). */
+/** Model capability metadata from the Grid instrument catalogue. */
 export type GridInstrumentModelSpec = {
   /** Total context window (input + output budget) in tokens. */
   contextWindow: number;
@@ -14,19 +18,27 @@ export type GridInstrumentModelSpec = {
   input: readonly GridInstrumentInputModality[];
 };
 
+/** One `models[]` entry of grid-defaults.json (registry-generator schema). */
+type GridDefaultsModel = {
+  id: string;
+  maxTokens: number;
+  contextWindow: number;
+  input: GridInstrumentInputModality[];
+};
+
 /**
- * Static Cortex `ai_specs` mirror for provision-time agent configs.
- * Source: `GET https://cortex.thegrid.ai/api/v1/instruments/by-symbol/:symbol`
- * (context_window, max_output_length). Re-sync when catalogue changes.
+ * Fallback mirror of `grid-defaults.json` (repo root) for when the live file cannot be
+ * loaded (bundled CLI, offline, before refresh). The grid-defaults-parity test asserts this
+ * stays in sync with the committed file — update BOTH when the catalogue changes.
  */
-const MODEL_SPECS: Record<string, GridInstrumentModelSpec> = {
-  "agent-prime": { contextWindow: 128_000, maxOutputTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS, input: ["text"] },
+const FALLBACK_MODEL_SPECS: Record<string, GridInstrumentModelSpec> = {
+  "agent-prime": { contextWindow: 196_608, maxOutputTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS, input: ["text"] },
   "agent-standard": { contextWindow: 128_000, maxOutputTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS, input: ["text"] },
   "agent-max": { contextWindow: 1_000_000, maxOutputTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS, input: ["text"] },
-  "code-prime": { contextWindow: 128_000, maxOutputTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS, input: ["text"] },
+  "code-prime": { contextWindow: 196_608, maxOutputTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS, input: ["text"] },
   "code-standard": { contextWindow: 128_000, maxOutputTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS, input: ["text"] },
   "code-max": { contextWindow: 1_000_000, maxOutputTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS, input: ["text"] },
-  "text-prime": { contextWindow: 128_000, maxOutputTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS, input: ["text"] },
+  "text-prime": { contextWindow: 196_608, maxOutputTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS, input: ["text"] },
   "text-standard": { contextWindow: 128_000, maxOutputTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS, input: ["text"] },
   "text-max": { contextWindow: 1_000_000, maxOutputTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS, input: ["text"] },
 };
@@ -36,6 +48,103 @@ const DEFAULT_MODEL_SPEC: GridInstrumentModelSpec = {
   maxOutputTokens: OPENCLAW_GRID_MODEL_MAX_TOKENS,
   input: ["text"],
 };
+
+let MODEL_SPECS: Record<string, GridInstrumentModelSpec> = FALLBACK_MODEL_SPECS;
+
+function isGridDefaultsModel(value: unknown): value is GridDefaultsModel {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  const m = value as Record<string, unknown>;
+  return (
+    typeof m.id === "string" &&
+    typeof m.contextWindow === "number" &&
+    m.contextWindow > 0 &&
+    typeof m.maxTokens === "number" &&
+    Array.isArray(m.input) &&
+    m.input.every((i) => i === "text" || i === "image")
+  );
+}
+
+/**
+ * Build the spec map from a parsed grid-defaults.json body. Context window and modalities come
+ * from the catalogue; the per-response output cap stays the harness-level default (never above
+ * the catalogue's instrument cap).
+ */
+export function specsFromGridDefaults(doc: unknown): Record<string, GridInstrumentModelSpec> | null {
+  if (doc === null || typeof doc !== "object") {
+    return null;
+  }
+  const models = (doc as { models?: unknown }).models;
+  if (!Array.isArray(models) || models.length === 0 || !models.every(isGridDefaultsModel)) {
+    return null;
+  }
+  const specs: Record<string, GridInstrumentModelSpec> = {};
+  for (const model of models) {
+    specs[model.id.toLowerCase()] = {
+      contextWindow: model.contextWindow,
+      maxOutputTokens: Math.min(OPENCLAW_GRID_MODEL_MAX_TOKENS, model.maxTokens),
+      input: model.input,
+    };
+  }
+  return specs;
+}
+
+/** Walk up from cwd (max 10 dirs) to find the repo-root grid-defaults.json (dev checkouts). */
+function findLocalGridDefaults(): string | null {
+  let dir = process.cwd();
+  for (let i = 0; i < 10; i++) {
+    const candidate = join(dir, "grid-defaults.json");
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  return null;
+}
+
+const GRID_DEFAULTS_FETCH_TIMEOUT = 3_000;
+
+/**
+ * Refresh instrument specs from grid-defaults.json: local repo file first (dev checkouts),
+ * then GitHub raw (installed CLIs). Never throws; on any failure the fallback mirror stays in
+ * effect. Callers overlap this with other startup awaits so it adds no latency on the happy path.
+ */
+export async function refreshGridInstrumentSpecs(): Promise<void> {
+  if (process.env.NODE_ENV === "test" || process.env.BUN_ENV === "test") {
+    return;
+  }
+  try {
+    const localPath = findLocalGridDefaults();
+    if (localPath) {
+      const specs = specsFromGridDefaults(JSON.parse(readFileSync(localPath, "utf-8")));
+      if (specs) {
+        MODEL_SPECS = specs;
+        return;
+      }
+    }
+    const res = await fetch(`${RAW_BASE}/grid-defaults.json`, {
+      signal: AbortSignal.timeout(GRID_DEFAULTS_FETCH_TIMEOUT),
+    });
+    if (!res.ok) {
+      return;
+    }
+    const specs = specsFromGridDefaults(await res.json());
+    if (specs) {
+      MODEL_SPECS = specs;
+    }
+  } catch {
+    // Offline or malformed feed — the committed fallback mirror keeps provisioning correct.
+  }
+}
+
+export function _resetGridInstrumentSpecsForTesting(): void {
+  MODEL_SPECS = FALLBACK_MODEL_SPECS;
+}
 
 /** Resolve catalogue model capabilities for agent provisioning (context, output cap, modalities). */
 export function resolveGridInstrumentModelSpec(instrumentId: string): GridInstrumentModelSpec {
@@ -166,7 +275,7 @@ export function resolveHarnessGridInstruments(
   const primary = normalizeUserCatalogModelId(userPrimary) ?? profile.primary;
   const envUtility = normalizeUserCatalogModelId(process.env.AGENTSEA_HEARTBEAT_MODEL_ID);
   const utility = profile.utility
-    ? normalizeUserCatalogModelId(userUtility) ?? envUtility ?? profile.utility
+    ? (normalizeUserCatalogModelId(userUtility) ?? envUtility ?? profile.utility)
     : undefined;
   const registered = uniqueInstrumentIds([primary, utility, ...(profile.extras ?? [])]);
   return {
@@ -180,4 +289,3 @@ export function resolveHarnessGridInstruments(
 export function defaultGridModelForAgent(agentSlug: string): string {
   return resolveGridInstrumentProfile(agentSlug).primary;
 }
-
