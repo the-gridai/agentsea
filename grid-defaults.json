@@ -1,0 +1,127 @@
+{
+  "provider": "thegrid",
+  "bases": {
+    "inference": "https://api.thegrid.ai/v1",
+    "messages": "https://messages-beta.api.thegrid.ai"
+  },
+  "apiKeyEnv": "THEGRID_API_KEY",
+  "models": [
+    {
+      "id": "agent-max",
+      "maxTokens": 128000,
+      "contextWindow": 1000000,
+      "input": [
+        "text"
+      ],
+      "costPer1mIn": 1.5885,
+      "costPer1mOut": 1.5885
+    },
+    {
+      "id": "agent-prime",
+      "maxTokens": 30000,
+      "contextWindow": 196608,
+      "input": [
+        "text"
+      ],
+      "costPer1mIn": 0.1422,
+      "costPer1mOut": 0.1422
+    },
+    {
+      "id": "agent-standard",
+      "maxTokens": 16000,
+      "contextWindow": 128000,
+      "input": [
+        "text"
+      ],
+      "costPer1mIn": 0.02,
+      "costPer1mOut": 0.02
+    },
+    {
+      "id": "code-max",
+      "maxTokens": 128000,
+      "contextWindow": 1000000,
+      "input": [
+        "text"
+      ],
+      "costPer1mIn": 1.7553,
+      "costPer1mOut": 1.7553
+    },
+    {
+      "id": "code-prime",
+      "maxTokens": 30000,
+      "contextWindow": 196608,
+      "input": [
+        "text"
+      ],
+      "costPer1mIn": 0.1493,
+      "costPer1mOut": 0.1493
+    },
+    {
+      "id": "code-standard",
+      "maxTokens": 16000,
+      "contextWindow": 128000,
+      "input": [
+        "text"
+      ],
+      "costPer1mIn": 0.0288,
+      "costPer1mOut": 0.0288
+    },
+    {
+      "id": "text-max",
+      "maxTokens": 128000,
+      "contextWindow": 1000000,
+      "input": [
+        "text"
+      ],
+      "costPer1mIn": 1.68,
+      "costPer1mOut": 1.68
+    },
+    {
+      "id": "text-prime",
+      "maxTokens": 30000,
+      "contextWindow": 196608,
+      "input": [
+        "text"
+      ],
+      "costPer1mIn": 0.1017,
+      "costPer1mOut": 0.1017
+    },
+    {
+      "id": "text-standard",
+      "maxTokens": 16000,
+      "contextWindow": 128000,
+      "input": [
+        "text"
+      ],
+      "costPer1mIn": 0.03,
+      "costPer1mOut": 0.03
+    }
+  ],
+  "tools": [
+    {
+      "slug": "opencode",
+      "surface": "openai-completions",
+      "baseUrl": "https://api.thegrid.ai/v1"
+    },
+    {
+      "slug": "cline",
+      "surface": "openai-completions",
+      "baseUrl": "https://api.thegrid.ai/v1"
+    },
+    {
+      "slug": "kilocode",
+      "surface": "openai-completions",
+      "baseUrl": "https://api.thegrid.ai/v1"
+    },
+    {
+      "slug": "aider",
+      "surface": "openai-completions",
+      "baseUrl": "https://api.thegrid.ai/v1"
+    },
+    {
+      "slug": "hermes",
+      "surface": "anthropic-messages",
+      "baseUrl": "https://messages-beta.api.thegrid.ai"
+    }
+  ]
+}

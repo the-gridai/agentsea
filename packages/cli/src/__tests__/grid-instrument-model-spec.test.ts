@@ -6,10 +6,10 @@ import {
 import { OPENCLAW_GRID_MODEL_MAX_TOKENS } from "../shared/vendor-routing.js";
 
 describe("grid instrument model specs", () => {
-  it("uses Cortex catalogue context windows (not oversized defaults)", () => {
-    expect(resolveGridInstrumentModelSpec("agent-prime").contextWindow).toBe(128_000);
-    expect(resolveGridInstrumentModelSpec("code-prime").contextWindow).toBe(128_000);
-    expect(resolveGridInstrumentModelSpec("text-prime").contextWindow).toBe(128_000);
+  it("uses Grid catalogue context windows (grid-defaults.json, not oversized defaults)", () => {
+    expect(resolveGridInstrumentModelSpec("agent-prime").contextWindow).toBe(196_608);
+    expect(resolveGridInstrumentModelSpec("code-prime").contextWindow).toBe(196_608);
+    expect(resolveGridInstrumentModelSpec("text-prime").contextWindow).toBe(196_608);
     expect(resolveGridInstrumentModelSpec("agent-max").contextWindow).toBe(1_000_000);
     expect(resolveGridInstrumentModelSpec("code-max").contextWindow).toBe(1_000_000);
     expect(resolveGridInstrumentModelSpec("text-max").contextWindow).toBe(1_000_000);
