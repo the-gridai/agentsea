@@ -19,6 +19,7 @@ const dmMono = DM_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://agentsea.thegrid.ai"),
   title: "AgentSea — AI agents on any cloud | The Grid",
   description:
     "Pick an agent, pick a cloud, one CLI. Provision VMs, Grid API key, browser terminal — AgentSea for The Grid.",
@@ -29,6 +30,7 @@ export const metadata: Metadata = {
     title: "AgentSea — AI agents on any cloud",
     description: "Pick an agent, pick a cloud, one CLI. Provision VMs wired to The Grid API.",
     type: "website",
+    url: "https://agentsea.thegrid.ai/",
   },
 };
 

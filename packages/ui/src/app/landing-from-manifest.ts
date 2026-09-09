@@ -1,12 +1,6 @@
 import type { Metadata } from "next";
 import type { AgentSortMode, Manifest } from "@agentsea/sdk";
-import {
-  agentKeys,
-  allAgentKeys,
-  cloudKeys,
-  DEFAULT_AGENT_SORT_MODE,
-  matrixStatus,
-} from "@agentsea/sdk";
+import { agentKeys, allAgentKeys, cloudKeys, DEFAULT_AGENT_SORT_MODE, matrixStatus } from "@agentsea/sdk";
 
 import {
   CHAT_VERIFIED_AGENT_SLUGS,
@@ -15,9 +9,7 @@ import {
   LINODE_PLACEHOLDER,
 } from "./home-public-constants";
 
-const CHAT_VERIFIED_ORDER = new Map<string, number>(
-  CHAT_VERIFIED_AGENT_SLUGS.map((slug, i) => [slug, i]),
-);
+const CHAT_VERIFIED_ORDER = new Map<string, number>(CHAT_VERIFIED_AGENT_SLUGS.map((slug, i) => [slug, i]));
 
 export { DEFAULT_AGENT_SORT_MODE };
 export type { AgentSortMode };
@@ -43,15 +35,7 @@ export function isCloudImplementedForAgent(m: Manifest, cloud: string, agentSlug
 }
 
 /** Cloud slugs included in sitemap and static `/{agent}/{cloud}` routes. */
-export const INDEXED_CLOUD_SLUGS = [
-  "local",
-  "digitalocean",
-  "hetzner",
-  "aws",
-  "gcp",
-  "daytona",
-  "sprite",
-] as const;
+export const INDEXED_CLOUD_SLUGS = ["local", "digitalocean", "hetzner", "aws", "gcp", "daytona", "sprite"] as const;
 
 export function agentCloudPath(agentSlug: string, cloudSlug: string): string {
   return `/${agentSlug}/${cloudSlug}`;
@@ -77,7 +61,7 @@ export function implementedAgentCloudPairs(m: Manifest): Array<{ agent: string; 
 }
 
 function publicOriginBase(): string {
-  return process.env.NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN?.replace(/\/+$/, "") ?? "https://spawn.thegrid.ai";
+  return process.env.NEXT_PUBLIC_AGENTSEA_PUBLIC_ORIGIN?.replace(/\/+$/, "") ?? "https://agentsea.thegrid.ai";
 }
 
 /** Per-route title, description, canonical URL, and Open Graph / Twitter tags for launch pages. */
@@ -245,10 +229,7 @@ export function sortHomeAgents(agents: readonly HomeAgentVm[], mode: AgentSortMo
   });
 }
 
-export function homeAgentsFromManifest(
-  m: Manifest,
-  mode: AgentSortMode = DEFAULT_AGENT_SORT_MODE,
-): HomeAgentVm[] {
+export function homeAgentsFromManifest(m: Manifest, mode: AgentSortMode = DEFAULT_AGENT_SORT_MODE): HomeAgentVm[] {
   const rows: HomeAgentVm[] = [];
 
   for (const slug of allAgentKeys(m, mode)) {

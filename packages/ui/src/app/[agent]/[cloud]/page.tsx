@@ -16,6 +16,8 @@ type PageProps = {
   params: Promise<{ agent: string; cloud: string }>;
 };
 
+export const dynamicParams = false;
+
 export async function generateMetadata({ params }: PageProps) {
   const { agent: agentSlug, cloud: cloudSlug } = await params;
   const manifest = await loadManifest(false);

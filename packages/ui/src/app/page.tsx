@@ -1,14 +1,23 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 
 import { HomeAgentGridStatic } from "./home-agent-grid-static";
 import { HomeLaunchFlow } from "./home-launch-flow";
 import { THE_GRID_EXTERNAL_URL } from "./home-public-constants";
-import { homeAgentCloudAvailability, homeAgentsFromManifest, homeCloudOptionsFromManifest } from "./landing-from-manifest";
+import {
+  homeAgentCloudAvailability,
+  homeAgentsFromManifest,
+  homeCloudOptionsFromManifest,
+} from "./landing-from-manifest";
 import { SiteHeader } from "./site-header";
 import styles from "./page.module.scss";
 
 import { loadManifest } from "@agentsea/sdk/node";
+
+export const metadata: Metadata = {
+  alternates: { canonical: "https://agentsea.thegrid.ai/" },
+};
 
 export default async function HomePage() {
   const manifest = await loadManifest(false);
@@ -24,9 +33,7 @@ export default async function HomePage() {
             <h1 id="hero-title" className={styles["hero__title"]}>
               Launch AI agents locally or on the cloud
             </h1>
-            <p className={styles["hero__tagline"]}>
-              Any agent, on your infrastructure — wired to The Grid API.
-            </p>
+            <p className={styles["hero__tagline"]}>Any agent, on your infrastructure — wired to The Grid API.</p>
           </section>
 
           <Suspense fallback={<HomeAgentGridStatic agents={agents} />}>
@@ -51,6 +58,14 @@ export default async function HomePage() {
           <span className={styles["footer__sep"]}>·</span>
           <Link href="/how-it-works" className={styles["footer__link"]}>
             How it works
+          </Link>
+          <span className={styles["footer__sep"]}>·</span>
+          <Link href="/openclaw/local" className={styles["footer__link"]}>
+            OpenClaw guide
+          </Link>
+          <span className={styles["footer__sep"]}>·</span>
+          <Link href="/hermes/local" className={styles["footer__link"]}>
+            Hermes guide
           </Link>
           <span className={styles["footer__sep"]}>·</span>
           <a href={THE_GRID_EXTERNAL_URL} rel="noopener noreferrer" className={styles["footer__link"]}>
