@@ -1,6 +1,6 @@
 import type { MetadataRoute } from "next";
 
-import { implementedAgentCloudPairs, agentCloudPath } from "./landing-from-manifest";
+import { agentCloudPath, publiclyDiscoverableAgentCloudPairs } from "./landing-from-manifest";
 
 import { loadManifest } from "@agentsea/sdk/node";
 
@@ -18,7 +18,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${base}/how-it-works` },
   ];
 
-  for (const { agent, cloud } of implementedAgentCloudPairs(manifest)) {
+  for (const { agent, cloud } of publiclyDiscoverableAgentCloudPairs(manifest)) {
     entries.push({
       url: `${base}${agentCloudPath(agent, cloud)}`,
     });

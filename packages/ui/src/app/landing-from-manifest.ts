@@ -7,6 +7,7 @@ import {
   HOME_CLOUD_COMING_SOON,
   HOME_CLOUD_SLUGS,
   LINODE_PLACEHOLDER,
+  type HomeCloudSlug,
 } from "./home-public-constants";
 
 const CHAT_VERIFIED_ORDER = new Map<string, number>(CHAT_VERIFIED_AGENT_SLUGS.map((slug, i) => [slug, i]));
@@ -34,8 +35,8 @@ export function isCloudImplementedForAgent(m: Manifest, cloud: string, agentSlug
   return matrixStatus(m, cloud, agentSlug) === "implemented";
 }
 
-/** Cloud slugs included in sitemap and static `/{agent}/{cloud}` routes. */
-export const INDEXED_CLOUD_SLUGS = ["local", "digitalocean", "hetzner", "aws", "gcp", "daytona", "sprite"] as const;
+/** Cloud slugs supported by static `/{agent}/{cloud}` routes, including CLI-only providers. */
+export const ROUTABLE_CLOUD_SLUGS = ["local", "digitalocean", "hetzner", "aws", "gcp", "daytona", "sprite"] as const;
 
 export function agentCloudPath(agentSlug: string, cloudSlug: string): string {
   return `/${agentSlug}/${cloudSlug}`;
@@ -51,13 +52,24 @@ export function displayCloudName(cloudSlug: string, cloudName: string): string {
 export function implementedAgentCloudPairs(m: Manifest): Array<{ agent: string; cloud: string }> {
   const pairs: Array<{ agent: string; cloud: string }> = [];
   for (const agentSlug of agentKeys(m)) {
-    for (const cloudSlug of INDEXED_CLOUD_SLUGS) {
+    for (const cloudSlug of ROUTABLE_CLOUD_SLUGS) {
       if (isCloudImplementedForAgent(m, cloudSlug, agentSlug)) {
         pairs.push({ agent: agentSlug, cloud: cloudSlug });
       }
     }
   }
   return pairs;
+}
+
+/** Implemented pairs exposed in the homepage UX and therefore appropriate for the public sitemap. */
+export function publiclyDiscoverableAgentCloudPairs(m: Manifest): Array<{ agent: string; cloud: string }> {
+  return implementedAgentCloudPairs(m).filter(({ agent, cloud }) => {
+    return (
+      CHAT_VERIFIED_ORDER.has(agent) &&
+      HOME_CLOUD_SLUGS.includes(cloud as HomeCloudSlug) &&
+      !HOME_CLOUD_COMING_SOON.has(cloud)
+    );
+  });
 }
 
 function publicOriginBase(): string {
