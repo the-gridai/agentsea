@@ -1,0 +1,30 @@
+# AgentSea
+
+> AgentSea launches supported AI coding agents locally or on cloud infrastructure, pre-wired to The Grid inference API.
+
+## Start here
+
+- Homepage: https://agentsea.thegrid.ai/
+- CLI reference: https://agentsea.thegrid.ai/cli
+- How AgentSea works: https://agentsea.thegrid.ai/how-it-works
+- Why AgentSea: https://agentsea.thegrid.ai/why-agentsea
+- Sitemap: https://agentsea.thegrid.ai/sitemap.xml
+- Public agent and cloud manifest: https://agentsea.thegrid.ai/manifest.json
+- Source repository: https://github.com/the-gridai/agentsea
+
+## Priority launch guides
+
+- OpenClaw locally: https://agentsea.thegrid.ai/openclaw/local
+- OpenClaw on DigitalOcean: https://agentsea.thegrid.ai/openclaw/digitalocean
+- Hermes Agent locally: https://agentsea.thegrid.ai/hermes/local
+- Hermes Agent on DigitalOcean: https://agentsea.thegrid.ai/hermes/digitalocean
+
+Use the sitemap to enumerate every supported agent and cloud launch guide. Every launch guide has a self-referencing canonical URL and contains the exact AgentSea command for that combination.
+
+## The Grid
+
+- The Grid homepage: https://thegrid.ai/
+- The Grid agent map: https://thegrid.ai/llms.txt
+- Integration documentation: https://thegrid.ai/docs/integrations-and-best-practices/integrations
+- OpenClaw integration: https://thegrid.ai/docs/integrations-and-best-practices/integrations/openclaw.md
+- Hermes Agent integration: https://thegrid.ai/docs/integrations-and-best-practices/integrations/hermes-agent.md

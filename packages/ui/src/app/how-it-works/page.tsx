@@ -3,11 +3,7 @@ import Link from "next/link";
 
 import { CopyCode } from "../copy-code";
 import { hoodStepsForCloud } from "../how-it-works-steps";
-import {
-  AGENTSEA_INSTALL_URL,
-  AGENTSEA_PUBLIC_ORIGIN,
-  THE_GRID_EXTERNAL_URL,
-} from "../home-public-constants";
+import { AGENTSEA_INSTALL_URL, AGENTSEA_PUBLIC_ORIGIN, THE_GRID_EXTERNAL_URL } from "../home-public-constants";
 import { SiteHeader } from "../site-header";
 import styles from "../cli/page.module.scss";
 import homeStyles from "../page.module.scss";
@@ -20,6 +16,7 @@ export const metadata: Metadata = {
   title: "How it works",
   description:
     "How AgentSea provisions cloud VMs, wires The Grid API, and connects you to interactive AI agents — from install to SSH session.",
+  alternates: { canonical: "https://agentsea.thegrid.ai/how-it-works" },
   openGraph: {
     title: "How it works — AgentSea",
     description:
@@ -113,11 +110,9 @@ export default function HowItWorksPage() {
             </ol>
             <p className={styles["referenceSection__p"]}>
               Bootstrap scripts are served from the CDN at{" "}
-              <code className={styles["inlineCode"]}>
-                {AGENTSEA_PUBLIC_ORIGIN}/&lt;cloud&gt;/&lt;agent&gt;.sh
-              </code>
-              . The VM inherits <code className={styles["inlineCode"]}>THEGRID_API_KEY</code> and OpenAI-compatible
-              base URLs targeting the Grid API.
+              <code className={styles["inlineCode"]}>{AGENTSEA_PUBLIC_ORIGIN}/&lt;cloud&gt;/&lt;agent&gt;.sh</code>. The
+              VM inherits <code className={styles["inlineCode"]}>THEGRID_API_KEY</code> and OpenAI-compatible base URLs
+              targeting the Grid API.
             </p>
           </section>
 
@@ -141,8 +136,8 @@ export default function HowItWorksPage() {
                 <strong>Open Dashboard</strong> for Hermes / OpenClaw UIs
               </li>
               <li>
-                <code className={styles["inlineCode"]}>agentsea &lt;agent&gt; &lt;cloud&gt;</code> — provision a
-                fresh environment with Grid credentials wired
+                <code className={styles["inlineCode"]}>agentsea &lt;agent&gt; &lt;cloud&gt;</code> — provision a fresh
+                environment with Grid credentials wired
               </li>
               <li>
                 <code className={styles["inlineCode"]}>THEGRID_API_KEY</code> — consumption key from{" "}

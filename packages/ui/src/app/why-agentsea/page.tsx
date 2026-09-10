@@ -10,6 +10,7 @@ export const metadata: Metadata = {
   title: "Why AgentSea",
   description:
     "AgentSea is the fastest way to deploy Grid-backed AI agents on infrastructure you control — agent-agnostic, bring your own cloud, fully sandboxed.",
+  alternates: { canonical: "https://agentsea.thegrid.ai/why-agentsea" },
   openGraph: {
     title: "Why AgentSea",
     description:
@@ -33,8 +34,8 @@ export default function WhyAgentSeaPage() {
           <header className={styles["referenceHero"]}>
             <h1 className={styles["referenceHero__title"]}>Why AgentSea?</h1>
             <p className={styles["referenceHero__p"]}>
-              The fastest way to deploy Grid-backed agents on infrastructure you control. Pick an agent and
-              environment on the{" "}
+              The fastest way to deploy Grid-backed agents on infrastructure you control. Pick an agent and environment
+              on the{" "}
               <Link href="/" className={styles["fallback__link"]}>
                 homepage
               </Link>{" "}

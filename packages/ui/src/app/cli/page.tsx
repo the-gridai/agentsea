@@ -36,6 +36,7 @@ export async function generateMetadata({ searchParams }: CliGuidePageProps): Pro
     return {
       title: "CLI Reference",
       description: "Install and use the agentsea CLI: commands, environment variables, and tokens.",
+      alternates: { canonical: "https://agentsea.thegrid.ai/cli" },
     };
   }
 
@@ -44,6 +45,7 @@ export async function generateMetadata({ searchParams }: CliGuidePageProps): Pro
     return {
       title: "CLI Reference",
       description: "Install and use the agentsea CLI: commands, environment variables, and tokens.",
+      alternates: { canonical: "https://agentsea.thegrid.ai/cli" },
     };
   }
 
@@ -56,6 +58,7 @@ export async function generateMetadata({ searchParams }: CliGuidePageProps): Pro
   return {
     title: "CLI reference — AgentSea",
     description: "Install and use the agentsea CLI: commands, environment variables, and tokens.",
+    alternates: { canonical: "https://agentsea.thegrid.ai/cli" },
   };
 }
 
