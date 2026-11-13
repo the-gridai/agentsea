@@ -37,8 +37,8 @@ export function isCloudImplementedForAgent(m: Manifest, cloud: string, agentSlug
 /** Cloud slugs supported by static `/{agent}/{cloud}` routes, including CLI-only providers. */
 export const ROUTABLE_CLOUD_SLUGS = ["local", "digitalocean", "hetzner", "aws", "gcp", "daytona", "sprite"] as const;
 
-/** Public deployment guides for supported providers; Sprite and Daytona are not yet verified for search discovery. */
-export const SEARCH_DISCOVERABLE_CLOUD_SLUGS = ["local", "digitalocean", "hetzner", "aws", "gcp"] as const;
+/** Promote only providers verified in the public launch flow. */
+export const SEARCH_DISCOVERABLE_CLOUD_SLUGS = ["local", "digitalocean"] as const;
 const SEARCH_DISCOVERABLE_CLOUDS = new Set<string>(SEARCH_DISCOVERABLE_CLOUD_SLUGS);
 
 export function agentCloudPath(agentSlug: string, cloudSlug: string): string {
