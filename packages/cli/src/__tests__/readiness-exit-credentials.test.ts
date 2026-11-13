@@ -69,7 +69,10 @@ describe("runDigitalOceanReadinessGate exit credentials", () => {
       getDropletCount: async () => 0,
       preloadDigitalOceanApiTokenForReadiness: () => true,
     }));
+    // Keep the real exports: Bun may load other test files while this module mock is active.
+    const shared = await import("../commands/shared.js");
     mock.module("../commands/shared.js", () => ({
+      ...shared,
       isInteractiveTTY: () => false,
     }));
     mock.module("../digitalocean/readiness-checklist.js", () => ({
