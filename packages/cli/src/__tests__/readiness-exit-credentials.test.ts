@@ -57,7 +57,9 @@ describe("runDigitalOceanReadinessGate exit credentials", () => {
   it("does not re-prompt for API key when env key is already valid", async () => {
     // Never mock ../shared/oauth.js — mock.module replaces verifyTheGridApiKey globally
     // and breaks oauth-validation-cache.test.ts when Bun runs files in parallel (CI).
+    const digitalocean = await import("../digitalocean/digitalocean.js");
     mock.module("../digitalocean/digitalocean.js", () => ({
+      ...digitalocean,
       areSshKeysRegisteredOnDigitalOcean: async () => true,
       ensureDoToken: async () => {},
       ensureSshKey: async () => {},
@@ -69,10 +71,15 @@ describe("runDigitalOceanReadinessGate exit credentials", () => {
       getDropletCount: async () => 0,
       preloadDigitalOceanApiTokenForReadiness: () => true,
     }));
+    // Keep the real exports: Bun may load other test files while this module mock is active.
+    const shared = await import("../commands/shared.js");
     mock.module("../commands/shared.js", () => ({
+      ...shared,
       isInteractiveTTY: () => false,
     }));
+    const readinessChecklist = await import("../digitalocean/readiness-checklist.js");
     mock.module("../digitalocean/readiness-checklist.js", () => ({
+      ...readinessChecklist,
       renderReadinessChecklist: () => {},
     }));
 
